@@ -3,5 +3,15 @@
     "clave": "zt2026",
     "nombre": "Leonardo",
     "vence": "2027-12-31"
+  },
+  "cliente1": {
+    "clave": "trading123",
+    "nombre": "Juan Perez",
+    "vence": "2026-12-31"
+  },
+  "greynellys": {
+    "clave": "greytd",
+    "nombre": "GREYNELLYS",
+    "vence": "2026-12-15"
   }
 }
