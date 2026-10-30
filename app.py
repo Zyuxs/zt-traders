@@ -433,4 +433,17 @@ else:
         st.session_state.pesos = cargar_patrones()
         st.session_state.resultado_guardado = True
     
-    time
+    time.sleep(0.5)
+    st.rerun()
+
+st.markdown("---")
+st.markdown("### Historial")
+hist = cargar_historial()
+if hist:
+    for op in reversed(hist[-10:]):
+        emoji = "✅" if op['resultado'] == 'GANADA' else ""
+        st.write(f"{emoji} {op['fecha']} - {op['señal']} - {op['resultado']}")
+else:
+    st.info("La IA está empezando a entrenar desde cero.")
+
+st.markdown(f'<div class="footer">ZT TRADERS | Usuario: {st.session_state.usuario_actual}</div>', unsafe_allow_html=True)
