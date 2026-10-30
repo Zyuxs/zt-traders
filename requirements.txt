@@ -3,3 +3,4 @@ pandas
 yfinance
 ta
 numpy
+scikit-learn
