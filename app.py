@@ -264,7 +264,7 @@ if 'estado' not in st.session_state: st.session_state.estado = 'esperando'
 if 'par_sel' not in st.session_state: st.session_state.par_sel = 'EUR/USD'
 if 'senal' not in st.session_state: st.session_state.senal = None
 if 'pesos' not in st.session_state: st.session_state.pesos = cargar_patrones()
-if 'ciclo_iniciado' not in st.session_state: st.session_state.ciclo_iniciado = False
+if 'sincronizado' not in st.session_state: st.session_state.sincronizado = False
 if 'inicio_ciclo' not in st.session_state: st.session_state.inicio_ciclo = None
 if 'resultado_guardado' not in st.session_state: st.session_state.resultado_guardado = False
 
@@ -311,7 +311,7 @@ with col_reset:
         st.session_state.pesos = cargar_patrones()
         st.session_state.estado = 'esperando'
         st.session_state.senal = None
-        st.session_state.ciclo_iniciado = False
+        st.session_state.sincronizado = False
         st.session_state.inicio_ciclo = None
         st.session_state.resultado_guardado = False
         st.success("Contadores reseteados")
@@ -350,20 +350,22 @@ with c4:
 st.markdown("---")
 
 # ==========================================
-# LÓGICA SIMPLE Y LIMPIA
+# LÓGICA CORREGIDA
 # ==========================================
-# 1. Al abrir: espera al :00 segundos
-# 2. Una vez sincronizada: ciclo continuo sin parar
-# 3. Solo UN cronómetro grande (el radar)
+# 1. Sincronización azul: SOLO al inicio (una vez)
+# 2. Analizando: Sin cronómetro, solo texto
+# 3. Señal (5s): Con cronómetro grande
+# 4. Operación (60s): Con cronómetro grande
+# 5. Vuelve a analizar (sin pasar por sincronización)
 # ==========================================
 
 ahora = datetime.now()
 segundo_actual = ahora.second
 
-# FASE 0: ESPERAR AL :00 (solo al inicio)
-if not st.session_state.ciclo_iniciado:
+# FASE 0: SINCRONIZACIÓN (solo al inicio, una vez)
+if not st.session_state.sincronizado:
     if segundo_actual == 0:
-        st.session_state.ciclo_iniciado = True
+        st.session_state.sincronizado = True
         st.session_state.inicio_ciclo = ahora
         st.session_state.estado = 'analizando'
         st.rerun()
@@ -377,7 +379,7 @@ if not st.session_state.ciclo_iniciado:
 # Calcular tiempo desde el inicio del ciclo
 tiempo_transcurrido = (ahora - st.session_state.inicio_ciclo).total_seconds()
 
-# FASE 1: ANÁLISIS (0-54 segundos)
+# FASE 1: ANÁLISIS (0-54 segundos) - SIN CRONÓMETRO
 if tiempo_transcurrido < 55:
     if st.session_state.estado != 'analizando':
         st.session_state.estado = 'analizando'
@@ -387,13 +389,13 @@ if tiempo_transcurrido < 55:
     if st.session_state.senal is None:
         st.session_state.senal = analizar_par(codigo)
     
-    segundos_restantes = 54 - int(tiempo_transcurrido)
     st.markdown('<div class="signal-box signal-wait">ANALIZANDO...</div>', unsafe_allow_html=True)
-    st.markdown(f'<div class="radar radar-yellow"><div class="radar-number radar-number-yellow">{segundos_restantes}</div></div>', unsafe_allow_html=True)
-    time.sleep(0.5)
+    # SIN CRONÓMETRO - solo texto
+    st.markdown('<div class="info-panel" style="text-align:center;"><strong>La IA está analizando el mercado...</strong></div>', unsafe_allow_html=True)
+    time.sleep(1)
     st.rerun()
 
-# FASE 2: SEÑAL (55-59 segundos)
+# FASE 2: SEÑAL (55-59 segundos) - CON CRONÓMETRO
 elif tiempo_transcurrido < 60:
     if st.session_state.estado != 'senal':
         st.session_state.estado = 'senal'
@@ -409,11 +411,12 @@ elif tiempo_transcurrido < 60:
     
     st.markdown(f'<div class="signal-box {clase_box}">{tipo}</div>', unsafe_allow_html=True)
     st.markdown(f'<div class="info-panel"><strong>Punto:</strong> {round(señal["precio"], 5)} | <strong>Confianza:</strong> {señal["confianza"]:.1f}%</div>', unsafe_allow_html=True)
+    # CRONÓMETRO GRANDE
     st.markdown(f'<div class="radar {clase_radar}"><div class="radar-number {clase_numero}">{segundos_restantes}</div></div>', unsafe_allow_html=True)
     time.sleep(0.3)
     st.rerun()
 
-# FASE 3: OPERACIÓN (60-119 segundos)
+# FASE 3: OPERACIÓN (60-119 segundos) - CON CRONÓMETRO
 elif tiempo_transcurrido < 120:
     if st.session_state.estado != 'operando':
         st.session_state.estado = 'operando'
@@ -429,6 +432,7 @@ elif tiempo_transcurrido < 120:
     
     st.markdown(f'<div class="signal-box {clase_box}">{tipo}</div>', unsafe_allow_html=True)
     st.markdown(f'<div class="info-panel"><strong>Entrada:</strong> {round(señal["precio"], 5)} | <strong>Confianza:</strong> {señal["confianza"]:.1f}%</div>', unsafe_allow_html=True)
+    # CRONÓMETRO GRANDE
     st.markdown(f'<div class="radar {clase_radar}"><div class="radar-number {clase_numero}">{segundos_restantes_op}</div></div>', unsafe_allow_html=True)
     st.warning("No cierres esta pagina")
     
@@ -450,10 +454,11 @@ elif tiempo_transcurrido < 120:
     time.sleep(0.5)
     st.rerun()
 
-# FASE 4: REINICIAR CICLO (después de 120 segundos)
+# FASE 4: REINICIAR CICLO (después de 120 segundos) - SIN SINCRONIZACIÓN
 else:
-    st.session_state.ciclo_iniciado = False
-    st.session_state.inicio_ciclo = None
+    # Reiniciar directamente a análisis, sin pasar por sincronización
+    st.session_state.inicio_ciclo = ahora
+    st.session_state.estado = 'analizando'
     st.session_state.senal = None
     st.session_state.resultado_guardado = False
     st.rerun()
