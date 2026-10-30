@@ -8,7 +8,6 @@ import os
 from datetime import datetime
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.model_selection import cross_val_score
-import numpy as np
 
 st.set_page_config(page_title="ZT TRADERS", layout="centered", page_icon="🎯")
 
@@ -267,6 +266,7 @@ if 'senal' not in st.session_state: st.session_state.senal = None
 if 'pesos' not in st.session_state: st.session_state.pesos = cargar_patrones()
 if 'ciclo_iniciado' not in st.session_state: st.session_state.ciclo_iniciado = False
 if 'inicio_ciclo' not in st.session_state: st.session_state.inicio_ciclo = None
+if 'resultado_guardado' not in st.session_state: st.session_state.resultado_guardado = False
 
 CSS = """
 <style>
@@ -313,11 +313,12 @@ with col_reset:
         st.session_state.senal = None
         st.session_state.ciclo_iniciado = False
         st.session_state.inicio_ciclo = None
+        st.session_state.resultado_guardado = False
         st.success("Contadores reseteados")
         time.sleep(1)
         st.rerun()
 
-st.markdown(f'<div class="main-header"><h1>ZT TRADERS</h1><p>Bienvenido: {st.session_state.usuario_actual} | Sincronizado con Velas de 1 Minuto</p></div>', unsafe_allow_html=True)
+st.markdown(f'<div class="main-header"><h1>ZT TRADERS</h1><p>Bienvenido: {st.session_state.usuario_actual}</p></div>', unsafe_allow_html=True)
 
 col1, col2 = st.columns([2, 1])
 with col1:
@@ -326,9 +327,7 @@ with col1:
 with col2:
     ahora = datetime.now()
     hora_actual = ahora.strftime('%H:%M:%S')
-    segundo_actual = ahora.second
-    minuto_actual = ahora.minute
-    st.markdown(f'<div class="stat-box"><strong style="color:#ffd700;">HORA</strong><br><span style="color:#00ff88; font-size:22px;">{hora_actual}</span><br><small style="color:#aaa;">Seg :{segundo_actual:02d} | Min :{minuto_actual:02d}</small></div>', unsafe_allow_html=True)
+    st.markdown(f'<div class="stat-box"><strong style="color:#ffd700;">HORA</strong><br><span style="color:#00ff88; font-size:22px;">{hora_actual}</span></div>', unsafe_allow_html=True)
 
 codigo = PARES[par_nombre]
 
@@ -351,53 +350,51 @@ with c4:
 st.markdown("---")
 
 # ==========================================
-# LÓGICA DE SINCRONIZACIÓN PERFECTA
+# LÓGICA SIMPLE Y LIMPIA
 # ==========================================
-# El ciclo dura 120 segundos (2 minutos):
-# - 55 segundos: Análisis
-# - 5 segundos: Señal
-# - 60 segundos: Operación
+# 1. Al abrir: espera al :00 segundos
+# 2. Una vez sincronizada: ciclo continuo sin parar
+# 3. Solo UN cronómetro grande (el radar)
 # ==========================================
 
-# FASE 0: ESPERAR AL INICIO DE UN MINUTO (:00 segundos)
+ahora = datetime.now()
+segundo_actual = ahora.second
+
+# FASE 0: ESPERAR AL :00 (solo al inicio)
 if not st.session_state.ciclo_iniciado:
     if segundo_actual == 0:
-        # ¡Es el momento perfecto! Iniciar ciclo
         st.session_state.ciclo_iniciado = True
         st.session_state.inicio_ciclo = ahora
         st.session_state.estado = 'analizando'
+        st.rerun()
     else:
-        # Esperar al siguiente :00
-        segundos_para_inicio = 60 - segundo_actual
-        st.markdown('<div class="signal-box signal-align">⏳ SINCRONIZANDO CON VELAS...</div>', unsafe_allow_html=True)
-        st.markdown(f'<div class="radar radar-blue"><div class="radar-number radar-number-blue">ESPERANDO<br>:00 SEGUNDOS<br><br>{segundos_para_inicio}s</div></div>', unsafe_allow_html=True)
-        st.markdown(f'<div class="info-panel"><strong>Par:</strong> {par_nombre}<br><strong>Fase:</strong> Sincronización inicial<br><strong>Hora actual:</strong> {hora_actual}<br><strong>Inicia en:</strong> {segundos_para_inicio} segundos<br><strong>Cuando sea:</strong> :00 segundos exactos</div>', unsafe_allow_html=True)
+        segundos_espera = 60 - segundo_actual
+        st.markdown('<div class="signal-box signal-align">SINCRONIZANDO...</div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="radar radar-blue"><div class="radar-number radar-number-blue">{segundos_espera}s</div></div>', unsafe_allow_html=True)
         time.sleep(0.5)
         st.rerun()
 
-# Calcular tiempo transcurrido desde el inicio del ciclo
+# Calcular tiempo desde el inicio del ciclo
 tiempo_transcurrido = (ahora - st.session_state.inicio_ciclo).total_seconds()
 
-# Determinar fase según tiempo transcurrido
+# FASE 1: ANÁLISIS (0-54 segundos)
 if tiempo_transcurrido < 55:
-    # FASE 1: ANÁLISIS (0-54 segundos)
     if st.session_state.estado != 'analizando':
         st.session_state.estado = 'analizando'
         st.session_state.senal = None
+        st.session_state.resultado_guardado = False
     
-    # Analizar UNA VEZ al inicio
     if st.session_state.senal is None:
         st.session_state.senal = analizar_par(codigo)
     
     segundos_restantes = 54 - int(tiempo_transcurrido)
-    st.markdown('<div class="signal-box signal-wait">🔵 ANALIZANDO MERCADO...</div>', unsafe_allow_html=True)
-    st.markdown('<div class="radar radar-yellow"><div class="radar-number radar-number-yellow">ANALIZANDO<br>IA ACTIVA</div></div>', unsafe_allow_html=True)
-    st.markdown(f'<div class="info-panel"><strong>Par:</strong> {par_nombre}<br><strong>Fase:</strong> Análisis de indicadores<br><strong>Tiempo transcurrido:</strong> {int(tiempo_transcurrido)}s<br><strong>Señal en:</strong> {segundos_restantes} segundos</div>', unsafe_allow_html=True)
+    st.markdown('<div class="signal-box signal-wait">ANALIZANDO...</div>', unsafe_allow_html=True)
+    st.markdown(f'<div class="radar radar-yellow"><div class="radar-number radar-number-yellow">{segundos_restantes}</div></div>', unsafe_allow_html=True)
     time.sleep(0.5)
     st.rerun()
 
+# FASE 2: SEÑAL (55-59 segundos)
 elif tiempo_transcurrido < 60:
-    # FASE 2: SEÑAL (55-59 segundos)
     if st.session_state.estado != 'senal':
         st.session_state.estado = 'senal'
     
@@ -405,21 +402,19 @@ elif tiempo_transcurrido < 60:
     es_call = señal['señal'] == 'CALL'
     segundos_restantes = 59 - int(tiempo_transcurrido)
     
-    tipo = " ENTRAR AHORA! (CALL)" if es_call else "🔴 ENTRAR AHORA! (PUT)"
+    tipo = "CALL" if es_call else "PUT"
     clase_box = "signal-call" if es_call else "signal-put"
     clase_radar = "radar-green" if es_call else "radar-red"
     clase_numero = "radar-number-green" if es_call else "radar-number-red"
     
     st.markdown(f'<div class="signal-box {clase_box}">{tipo}</div>', unsafe_allow_html=True)
-    hora_entrada = ahora.strftime('%H:%M:%S')
-    st.markdown(f'<div class="info-panel"><strong> Hora:</strong> {hora_entrada}<br><strong>Punto:</strong> {round(señal["precio"], 5)}<br><strong>Confianza:</strong> {señal["confianza"]:.1f}%<br><strong>Razon:</strong> {señal["razon"]}</div>', unsafe_allow_html=True)
+    st.markdown(f'<div class="info-panel"><strong>Punto:</strong> {round(señal["precio"], 5)} | <strong>Confianza:</strong> {señal["confianza"]:.1f}%</div>', unsafe_allow_html=True)
     st.markdown(f'<div class="radar {clase_radar}"><div class="radar-number {clase_numero}">{segundos_restantes}</div></div>', unsafe_allow_html=True)
-    st.markdown('<p style="text-align:center; color:#ffd700; font-size:18px;">SEGUNDOS PARA DECIDIR</p>', unsafe_allow_html=True)
     time.sleep(0.3)
     st.rerun()
 
+# FASE 3: OPERACIÓN (60-119 segundos)
 elif tiempo_transcurrido < 120:
-    # FASE 3: OPERACIÓN (60-119 segundos)
     if st.session_state.estado != 'operando':
         st.session_state.estado = 'operando'
     
@@ -427,20 +422,18 @@ elif tiempo_transcurrido < 120:
     es_call = señal['señal'] == 'CALL'
     segundos_restantes_op = 119 - int(tiempo_transcurrido)
     
-    tipo = " CALL EN CURSO" if es_call else " PUT EN CURSO"
+    tipo = "CALL" if es_call else "PUT"
     clase_box = "signal-call" if es_call else "signal-put"
     clase_radar = "radar-green" if es_call else "radar-red"
     clase_numero = "radar-number-green" if es_call else "radar-number-red"
     
-    st.markdown('<div class="info-panel" style="text-align:center;"><strong>⏳ OPERACIÓN EN CURSO (60s)</strong></div>', unsafe_allow_html=True)
     st.markdown(f'<div class="signal-box {clase_box}">{tipo}</div>', unsafe_allow_html=True)
-    st.markdown(f'<div class="info-panel"><strong>🎯 Entrada:</strong> {round(señal["precio"], 5)}<br><strong>💪 Confianza:</strong> {señal["confianza"]:.1f}%<br><strong>⏱️ Expira en:</strong> {segundos_restantes_op}s</div>', unsafe_allow_html=True)
+    st.markdown(f'<div class="info-panel"><strong>Entrada:</strong> {round(señal["precio"], 5)} | <strong>Confianza:</strong> {señal["confianza"]:.1f}%</div>', unsafe_allow_html=True)
     st.markdown(f'<div class="radar {clase_radar}"><div class="radar-number {clase_numero}">{segundos_restantes_op}</div></div>', unsafe_allow_html=True)
-    st.markdown('<p style="text-align:center; color:#ffaa00; font-size:18px;">SEGUNDOS RESTANTES</p>', unsafe_allow_html=True)
-    st.warning("⚠️ No cierres esta página")
+    st.warning("No cierres esta pagina")
     
     # Evaluar resultado al final
-    if tiempo_transcurrido >= 119:
+    if tiempo_transcurrido >= 119 and not st.session_state.resultado_guardado:
         precio_entrada = señal['precio']
         precio_actual = obtener_precio_actual(codigo)
         resultado_interno = 'PERDIDA'
@@ -452,23 +445,21 @@ elif tiempo_transcurrido < 120:
         indicadores = señal.get('indicadores', {})
         aprender_en_segundo_plano(señal['señal'], resultado_interno, indicadores)
         st.session_state.pesos = cargar_patrones()
-        
-        # Reiniciar ciclo
-        st.session_state.ciclo_iniciado = False
-        st.session_state.inicio_ciclo = None
-        st.session_state.senal = None
+        st.session_state.resultado_guardado = True
     
     time.sleep(0.5)
     st.rerun()
 
+# FASE 4: REINICIAR CICLO (después de 120 segundos)
 else:
-    # Si algo sale mal, reiniciar
     st.session_state.ciclo_iniciado = False
     st.session_state.inicio_ciclo = None
+    st.session_state.senal = None
+    st.session_state.resultado_guardado = False
     st.rerun()
 
 st.markdown("---")
-st.markdown("### 📊 Historial de Entrenamiento ML")
+st.markdown("### Historial")
 hist = cargar_historial()
 if hist:
     for op in reversed(hist[-10:]):
@@ -477,4 +468,4 @@ if hist:
 else:
     st.info("La IA está empezando a entrenar desde cero.")
 
-st.markdown(f'<div class="footer">ZT TRADERS | Usuario: {st.session_state.usuario_actual} | Ciclo: 55s análisis + 5s señal + 60s operación</div>', unsafe_allow_html=True)
+st.markdown(f'<div class="footer">ZT TRADERS | Usuario: {st.session_state.usuario_actual}</div>', unsafe_allow_html=True)
