@@ -260,13 +260,12 @@ PARES = {
 }
 
 # Inicialización
-if 'estado' not in st.session_state: st.session_state.estado = 'esperando'
+if 'estado' not in st.session_state: st.session_state.estado = 'analizando'
 if 'par_sel' not in st.session_state: st.session_state.par_sel = 'EUR/USD'
 if 'senal' not in st.session_state: st.session_state.senal = None
 if 'pesos' not in st.session_state: st.session_state.pesos = cargar_patrones()
-if 'inicio_ciclo' not in st.session_state: st.session_state.inicio_ciclo = None
+if 'minuto_operacion' not in st.session_state: st.session_state.minuto_operacion = None
 if 'resultado_guardado' not in st.session_state: st.session_state.resultado_guardado = False
-if 'calibrado' not in st.session_state: st.session_state.calibrado = False
 
 CSS = """
 <style>
@@ -282,11 +281,9 @@ body { background: #000; color: #fff; font-family: Arial, sans-serif; }
 .radar { width: 240px; height: 240px; border-radius: 50%; display: flex; align-items: center; justify-content: center; margin: 25px auto; }
 .radar-green { border: 4px solid #00ff00; background: radial-gradient(circle, #0a2a1a, #000); box-shadow: 0 0 40px rgba(0, 255, 0, 0.6); }
 .radar-red { border: 4px solid #ff0000; background: radial-gradient(circle, #2a0a0a, #000); box-shadow: 0 0 40px rgba(255, 0, 0, 0.6); }
-.radar-yellow { border: 4px solid #ffd700; background: radial-gradient(circle, #2a2a1a, #000); box-shadow: 0 0 40px rgba(255, 215, 0, 0.6); }
 .radar-number { font-size: 90px; font-weight: bold; text-shadow: 0 0 25px currentColor; }
 .radar-number-green { color: #00ff00; }
 .radar-number-red { color: #ff0000; }
-.radar-number-yellow { color: #ffd700; font-size: 24px; text-align: center; }
 .info-panel { background: #1a1a2e; border: 2px solid #00ff88; border-radius: 10px; padding: 15px; margin: 12px 0; }
 .info-panel strong { color: #00ff88; }
 .stat-box { background: #1a1a2e; border: 2px solid #ffd700; border-radius: 10px; padding: 12px; text-align: center; }
@@ -306,11 +303,10 @@ with col_reset:
         if os.path.exists(ARCHIVO_HISTORIAL): os.remove(ARCHIVO_HISTORIAL)
         if os.path.exists(ARCHIVO_PATRONES): os.remove(ARCHIVO_PATRONES)
         st.session_state.pesos = cargar_patrones()
-        st.session_state.estado = 'esperando'
+        st.session_state.estado = 'analizando'
         st.session_state.senal = None
-        st.session_state.inicio_ciclo = None
+        st.session_state.minuto_operacion = None
         st.session_state.resultado_guardado = False
-        st.session_state.calibrado = False
         st.success("Contadores reseteados")
         time.sleep(1)
         st.rerun()
@@ -347,75 +343,70 @@ with c4:
 st.markdown("---")
 
 # ==========================================
-# LÓGICA CON CALIBRACIÓN EN :59 (SOLUCIÓN DE LEONARDO)
+# LÓGICA SIMPLE BASADA EN EL RELOJ
 # ==========================================
-# 1. Al abrir: espera al segundo :59 (invisible, sin mostrar nada)
-# 2. Una vez calibrado: ciclo de 120s (55s análisis + 5s señal + 60s operación)
-# 3. Cronómetro SOLO en señal y operación
-# 4. Nunca más pasa por calibración
+# Minuto PAR (0, 2, 4...): Análisis (seg 0-54) + Señal (seg 55-59)
+# Minuto IMPAR (1, 3, 5...): Operación (seg 0-59)
+# Sin calibración, sin espera, siempre sincronizado
 # ==========================================
 
 ahora = datetime.now()
+minuto_actual = ahora.minute
 segundo_actual = ahora.second
+minuto_es_par = (minuto_actual % 2 == 0)
 
-# CALIBRACIÓN INICIAL: esperar al :59 (una sola vez, invisible)
-if not st.session_state.calibrado:
-    if segundo_actual == 59:
-        st.session_state.calibrado = True
-        st.session_state.inicio_ciclo = ahora
-        st.session_state.estado = 'analizando'
+# Si estamos en minuto PAR: Análisis + Señal
+if minuto_es_par:
+    if segundo_actual < 55:
+        # FASE ANÁLISIS (seg 0-54)
+        if st.session_state.estado != 'analizando':
+            st.session_state.estado = 'analizando'
+            st.session_state.senal = None
+            st.session_state.resultado_guardado = False
+        
+        if st.session_state.senal is None:
+            st.session_state.senal = analizar_par(codigo)
+        
+        st.markdown('<div class="signal-box signal-wait">ANALIZANDO...</div>', unsafe_allow_html=True)
+        st.markdown('<div class="info-panel" style="text-align:center;"><strong>La IA está analizando el mercado...</strong></div>', unsafe_allow_html=True)
+        time.sleep(1)
         st.rerun()
+    
     else:
-        # Esperar en silencio (sin mostrar cronómetro azul)
+        # FASE SEÑAL (seg 55-59)
+        if st.session_state.estado != 'senal':
+            st.session_state.estado = 'senal'
+            if st.session_state.senal is None:
+                st.session_state.senal = analizar_par(codigo)
+        
+        señal = st.session_state.senal
+        es_call = señal['señal'] == 'CALL'
+        segundos_restantes = 59 - segundo_actual
+        
+        tipo = "CALL" if es_call else "PUT"
+        clase_box = "signal-call" if es_call else "signal-put"
+        clase_radar = "radar-green" if es_call else "radar-red"
+        clase_numero = "radar-number-green" if es_call else "radar-number-red"
+        
+        st.markdown(f'<div class="signal-box {clase_box}">{tipo}</div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="info-panel"><strong>Punto:</strong> {round(señal["precio"], 5)} | <strong>Confianza:</strong> {señal["confianza"]:.1f}%</div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="radar {clase_radar}"><div class="radar-number {clase_numero}">{segundos_restantes}</div></div>', unsafe_allow_html=True)
         time.sleep(0.3)
         st.rerun()
 
-# Calcular tiempo transcurrido desde el inicio del ciclo
-tiempo_transcurrido = (ahora - st.session_state.inicio_ciclo).total_seconds()
-
-# FASE 1: ANÁLISIS (0-54 segundos) - SIN CRONÓMETRO
-if tiempo_transcurrido < 55:
-    if st.session_state.estado != 'analizando':
-        st.session_state.estado = 'analizando'
-        st.session_state.senal = None
-        st.session_state.resultado_guardado = False
-    
-    if st.session_state.senal is None:
-        st.session_state.senal = analizar_par(codigo)
-    
-    st.markdown('<div class="signal-box signal-wait">ANALIZANDO...</div>', unsafe_allow_html=True)
-    st.markdown('<div class="info-panel" style="text-align:center;"><strong>La IA está analizando el mercado...</strong></div>', unsafe_allow_html=True)
-    time.sleep(1)
-    st.rerun()
-
-# FASE 2: SEÑAL (55-59 segundos) - CON CRONÓMETRO
-elif tiempo_transcurrido < 60:
-    if st.session_state.estado != 'senal':
-        st.session_state.estado = 'senal'
-    
-    señal = st.session_state.senal
-    es_call = señal['señal'] == 'CALL'
-    segundos_restantes = 59 - int(tiempo_transcurrido)
-    
-    tipo = "CALL" if es_call else "PUT"
-    clase_box = "signal-call" if es_call else "signal-put"
-    clase_radar = "radar-green" if es_call else "radar-red"
-    clase_numero = "radar-number-green" if es_call else "radar-number-red"
-    
-    st.markdown(f'<div class="signal-box {clase_box}">{tipo}</div>', unsafe_allow_html=True)
-    st.markdown(f'<div class="info-panel"><strong>Punto:</strong> {round(señal["precio"], 5)} | <strong>Confianza:</strong> {señal["confianza"]:.1f}%</div>', unsafe_allow_html=True)
-    st.markdown(f'<div class="radar {clase_radar}"><div class="radar-number {clase_numero}">{segundos_restantes}</div></div>', unsafe_allow_html=True)
-    time.sleep(0.3)
-    st.rerun()
-
-# FASE 3: OPERACIÓN (60-119 segundos) - CON CRONÓMETRO
-elif tiempo_transcurrido < 120:
+# Si estamos en minuto IMPAR: Operación
+else:
     if st.session_state.estado != 'operando':
         st.session_state.estado = 'operando'
     
     señal = st.session_state.senal
+    if señal is None:
+        # Si no hay señal (primera vez), crear una por defecto
+        señal = señal_por_defecto(codigo)
+        st.session_state.senal = señal
+    
     es_call = señal['señal'] == 'CALL'
-    segundos_restantes_op = 119 - int(tiempo_transcurrido)
+    segundos_restantes_op = 59 - segundo_actual
     
     tipo = "CALL" if es_call else "PUT"
     clase_box = "signal-call" if es_call else "signal-put"
@@ -427,8 +418,8 @@ elif tiempo_transcurrido < 120:
     st.markdown(f'<div class="radar {clase_radar}"><div class="radar-number {clase_numero}">{segundos_restantes_op}</div></div>', unsafe_allow_html=True)
     st.warning("No cierres esta pagina")
     
-    # Evaluar resultado al final
-    if tiempo_transcurrido >= 119 and not st.session_state.resultado_guardado:
+    # Evaluar resultado al final del minuto impar
+    if segundo_actual == 59 and not st.session_state.resultado_guardado:
         precio_entrada = señal['precio']
         precio_actual = obtener_precio_actual(codigo)
         resultado_interno = 'PERDIDA'
@@ -442,25 +433,4 @@ elif tiempo_transcurrido < 120:
         st.session_state.pesos = cargar_patrones()
         st.session_state.resultado_guardado = True
     
-    time.sleep(0.5)
-    st.rerun()
-
-# FASE 4: REINICIAR CICLO (después de 120 segundos)
-else:
-    st.session_state.inicio_ciclo = ahora
-    st.session_state.estado = 'analizando'
-    st.session_state.senal = None
-    st.session_state.resultado_guardado = False
-    st.rerun()
-
-st.markdown("---")
-st.markdown("### Historial")
-hist = cargar_historial()
-if hist:
-    for op in reversed(hist[-10:]):
-        emoji = "✅" if op['resultado'] == 'GANADA' else "❌"
-        st.write(f"{emoji} {op['fecha']} - {op['señal']} - {op['resultado']}")
-else:
-    st.info("La IA está empezando a entrenar desde cero.")
-
-st.markdown(f'<div class="footer">ZT TRADERS | Usuario: {st.session_state.usuario_actual}</div>', unsafe_allow_html=True)
+    time
