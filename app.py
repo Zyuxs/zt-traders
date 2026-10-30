@@ -2,7 +2,7 @@ import streamlit as st
 import pandas as pd
 import yfinance as yf
 import ta
-import time
+import time as time_module
 import json
 import os
 from datetime import datetime
@@ -159,11 +159,6 @@ def predecir_con_ml(modelo, indicadores):
     except:
         return 50.0
 
-def señal_por_defecto(codigo_par, rsi=50.0):
-    dirección = 'CALL' if rsi < 50 else 'PUT'
-    indicadores = {'rsi': rsi, 'stoch': 50, 'macd': 0, 'adx': 20, 'bb_position': 0.5, 'sma_cross': 0, 'direccion': dirección}
-    return {'señal': dirección, 'precio': 0.0, 'rsi': rsi, 'confianza': 10, 'razon': f"Señal por defecto (RSI {rsi:.0f})", 'indicadores': indicadores}
-
 def analizar_par(codigo_par):
     try:
         datos_1m = yf.download(codigo_par, period="2d", interval="1m", progress=False)
@@ -174,7 +169,15 @@ def analizar_par(codigo_par):
         datos_1m = datos_1m[['Open', 'High', 'Low', 'Close']].copy()
         datos_5m = datos_5m[['Open', 'High', 'Low', 'Close']].copy()
         if len(datos_1m) < 30 or len(datos_5m) < 30:
-            return señal_por_defecto(codigo_par)
+            rsi_temp = 50.0
+            try:
+                if len(datos_1m) > 0:
+                    datos_1m['RSI'] = ta.momentum.RSIIndicator(datos_1m['Close'], window=14).rsi()
+                    rsi_temp = float(datos_1m['RSI'].iloc[-1]) if not pd.isna(datos_1m['RSI'].iloc[-1]) else 50.0
+            except:
+                pass
+            dirección = 'CALL' if rsi_temp < 50 else 'PUT'
+            return {'señal': dirección, 'precio': 0.0, 'rsi': rsi_temp, 'confianza': 10, 'razon': f"Señal básica (RSI {rsi_temp:.0f})", 'indicadores': {'rsi': rsi_temp, 'stoch': 50, 'macd': 0, 'adx': 20, 'bb_position': 0.5, 'sma_cross': 0, 'direccion': dirección}}
 
         datos_1m['RSI'] = ta.momentum.RSIIndicator(datos_1m['Close'], window=14).rsi()
         datos_1m['STOCH'] = ta.momentum.StochasticOscillator(datos_1m['High'], datos_1m['Low'], datos_1m['Close']).stoch()
@@ -239,7 +242,7 @@ def analizar_par(codigo_par):
 
         return {'señal': dirección, 'precio': precio, 'rsi': rsi, 'confianza': 10, 'razon': f"Señal básica (RSI {rsi:.0f})", 'indicadores': indicadores}
     except:
-        return señal_por_defecto(codigo_par)
+        return {'señal': 'CALL', 'precio': 0.0, 'rsi': 50, 'confianza': 10, 'razon': "Error en análisis", 'indicadores': {'rsi': 50, 'stoch': 50, 'macd': 0, 'adx': 20, 'bb_position': 0.5, 'sma_cross': 0, 'direccion': 'CALL'}}
 
 def obtener_precio_actual(codigo_par):
     try:
@@ -252,11 +255,24 @@ def obtener_precio_actual(codigo_par):
         return None
 
 PARES = {
+    # Forex
     'EUR/USD': 'EURUSD=X', 'GBP/USD': 'GBPUSD=X', 'USD/JPY': 'USDJPY=X',
     'AUD/USD': 'AUDUSD=X', 'EUR/JPY': 'EURJPY=X', 'AUD/CAD': 'AUDCAD=X',
     'EUR/GBP': 'EURGBP=X', 'GBP/JPY': 'GBPJPY=X', 'NZD/USD': 'NZDUSD=X',
     'USD/CAD': 'USDCAD=X', 'USD/CHF': 'USDCHF=X', 'AUD/JPY': 'AUDJPY=X',
-    'BTC/USD': 'BTC-USD', 'ETH/USD': 'ETH-USD'
+    
+    # Criptomonedas (nombres como en IQ Option)
+    'Bitcoin': 'BTC-USD',
+    'Ethereum': 'ETH-USD',
+    'Polkadot': 'DOT-USD',
+    'Worldcoin': 'WLD-USD',
+    'Binance Coin': 'BNB-USD',
+    'Cardano': 'ADA-USD',
+    'Solana': 'SOL-USD',
+    'Ripple': 'XRP-USD',
+    'Dogecoin': 'DOGE-USD',
+    'Polygon': 'MATIC-USD',
+    'Litecoin': 'LTC-USD'
 }
 
 # Inicialización
@@ -264,8 +280,8 @@ if 'estado' not in st.session_state: st.session_state.estado = 'analizando'
 if 'par_sel' not in st.session_state: st.session_state.par_sel = 'EUR/USD'
 if 'senal' not in st.session_state: st.session_state.senal = None
 if 'pesos' not in st.session_state: st.session_state.pesos = cargar_patrones()
-if 'minuto_operacion' not in st.session_state: st.session_state.minuto_operacion = None
 if 'resultado_guardado' not in st.session_state: st.session_state.resultado_guardado = False
+if 'minuto_anterior' not in st.session_state: st.session_state.minuto_anterior = None
 
 CSS = """
 <style>
@@ -277,7 +293,6 @@ body { background: #000; color: #fff; font-family: Arial, sans-serif; }
 .signal-call { background: linear-gradient(135deg, #00cc00, #00ff00); border: 4px solid #00ff00; color: white; box-shadow: 0 0 40px rgba(0, 255, 0, 0.6); }
 .signal-put { background: linear-gradient(135deg, #cc0000, #ff0000); border: 4px solid #ff0000; color: white; box-shadow: 0 0 40px rgba(255, 0, 0, 0.6); }
 .signal-wait { background: #1a1a2e; border: 3px solid #ffd700; color: #ffd700; }
-.signal-neutral { background: #1a1a2e; border: 3px solid #00ff88; color: #00ff88; }
 .radar { width: 240px; height: 240px; border-radius: 50%; display: flex; align-items: center; justify-content: center; margin: 25px auto; }
 .radar-green { border: 4px solid #00ff00; background: radial-gradient(circle, #0a2a1a, #000); box-shadow: 0 0 40px rgba(0, 255, 0, 0.6); }
 .radar-red { border: 4px solid #ff0000; background: radial-gradient(circle, #2a0a0a, #000); box-shadow: 0 0 40px rgba(255, 0, 0, 0.6); }
@@ -305,10 +320,10 @@ with col_reset:
         st.session_state.pesos = cargar_patrones()
         st.session_state.estado = 'analizando'
         st.session_state.senal = None
-        st.session_state.minuto_operacion = None
         st.session_state.resultado_guardado = False
+        st.session_state.minuto_anterior = None
         st.success("Contadores reseteados")
-        time.sleep(1)
+        time_module.sleep(1)
         st.rerun()
 
 st.markdown(f'<div class="main-header"><h1>ZT TRADERS</h1><p>Bienvenido: {st.session_state.usuario_actual}</p></div>', unsafe_allow_html=True)
@@ -343,11 +358,7 @@ with c4:
 st.markdown("---")
 
 # ==========================================
-# LÓGICA SIMPLE BASADA EN EL RELOJ
-# ==========================================
-# Minuto PAR (0, 2, 4...): Análisis (seg 0-54) + Señal (seg 55-59)
-# Minuto IMPAR (1, 3, 5...): Operación (seg 0-59)
-# Sin calibración, sin espera, siempre sincronizado
+# LÓGICA: MINUTO PAR = ANÁLISIS+SEÑAL, MINUTO IMPAR = OPERACIÓN
 # ==========================================
 
 ahora = datetime.now()
@@ -355,10 +366,16 @@ minuto_actual = ahora.minute
 segundo_actual = ahora.second
 minuto_es_par = (minuto_actual % 2 == 0)
 
-# Si estamos en minuto PAR: Análisis + Señal
+# Resetear resultado_guardado cuando cambia el minuto
+if st.session_state.minuto_anterior is None:
+    st.session_state.minuto_anterior = minuto_actual
+elif st.session_state.minuto_anterior != minuto_actual:
+    st.session_state.resultado_guardado = False
+    st.session_state.minuto_anterior = minuto_actual
+
 if minuto_es_par:
+    # MINUTO PAR: Análisis (seg 0-54) + Señal (seg 55-59)
     if segundo_actual < 55:
-        # FASE ANÁLISIS (seg 0-54)
         if st.session_state.estado != 'analizando':
             st.session_state.estado = 'analizando'
             st.session_state.senal = None
@@ -369,11 +386,9 @@ if minuto_es_par:
         
         st.markdown('<div class="signal-box signal-wait">ANALIZANDO...</div>', unsafe_allow_html=True)
         st.markdown('<div class="info-panel" style="text-align:center;"><strong>La IA está analizando el mercado...</strong></div>', unsafe_allow_html=True)
-        time.sleep(1)
+        time_module.sleep(1)
         st.rerun()
-    
     else:
-        # FASE SEÑAL (seg 55-59)
         if st.session_state.estado != 'senal':
             st.session_state.estado = 'senal'
             if st.session_state.senal is None:
@@ -391,18 +406,17 @@ if minuto_es_par:
         st.markdown(f'<div class="signal-box {clase_box}">{tipo}</div>', unsafe_allow_html=True)
         st.markdown(f'<div class="info-panel"><strong>Punto:</strong> {round(señal["precio"], 5)} | <strong>Confianza:</strong> {señal["confianza"]:.1f}%</div>', unsafe_allow_html=True)
         st.markdown(f'<div class="radar {clase_radar}"><div class="radar-number {clase_numero}">{segundos_restantes}</div></div>', unsafe_allow_html=True)
-        time.sleep(0.3)
+        time_module.sleep(0.3)
         st.rerun()
 
-# Si estamos en minuto IMPAR: Operación
 else:
+    # MINUTO IMPAR: Operación (seg 0-59)
     if st.session_state.estado != 'operando':
         st.session_state.estado = 'operando'
     
     señal = st.session_state.senal
     if señal is None:
-        # Si no hay señal (primera vez), crear una por defecto
-        señal = señal_por_defecto(codigo)
+        señal = analizar_par(codigo)
         st.session_state.senal = señal
     
     es_call = señal['señal'] == 'CALL'
@@ -418,8 +432,7 @@ else:
     st.markdown(f'<div class="radar {clase_radar}"><div class="radar-number {clase_numero}">{segundos_restantes_op}</div></div>', unsafe_allow_html=True)
     st.warning("No cierres esta pagina")
     
-    # Evaluar resultado al final del minuto impar
-    if segundo_actual == 59 and not st.session_state.resultado_guardado:
+    if segundo_actual >= 58 and not st.session_state.resultado_guardado:
         precio_entrada = señal['precio']
         precio_actual = obtener_precio_actual(codigo)
         resultado_interno = 'PERDIDA'
@@ -428,12 +441,16 @@ else:
                 resultado_interno = 'GANADA'
             elif not es_call and precio_actual < precio_entrada:
                 resultado_interno = 'GANADA'
-        indicadores = señal.get('indicadores', {})
-        aprender_en_segundo_plano(señal['señal'], resultado_interno, indicadores)
-        st.session_state.pesos = cargar_patrones()
+        elif precio_entrada == 0.0:
+            resultado_interno = None
+        
+        if resultado_interno is not None:
+            indicadores = señal.get('indicadores', {})
+            aprender_en_segundo_plano(señal['señal'], resultado_interno, indicadores)
+            st.session_state.pesos = cargar_patrones()
         st.session_state.resultado_guardado = True
     
-    time.sleep(0.5)
+    time_module.sleep(0.5)
     st.rerun()
 
 st.markdown("---")
@@ -441,7 +458,7 @@ st.markdown("### Historial")
 hist = cargar_historial()
 if hist:
     for op in reversed(hist[-10:]):
-        emoji = "✅" if op['resultado'] == 'GANADA' else ""
+        emoji = "✅" if op['resultado'] == 'GANADA' else "❌"
         st.write(f"{emoji} {op['fecha']} - {op['señal']} - {op['resultado']}")
 else:
     st.info("La IA está empezando a entrenar desde cero.")
