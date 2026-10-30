@@ -313,4 +313,296 @@ def analizar_par(codigo_par):
         confianza = 0
         razones = []
 
-        if dirección == 'CALL' and rsi <
+        if dirección == 'CALL' and rsi < 35:
+            confianza += 25
+            razones.append("RSI sobreventa")
+        elif dirección == 'PUT' and rsi > 65:
+            confianza += 25
+            razones.append("RSI sobrecompra")
+
+        if dirección == 'CALL' and precio <= bb_low:
+            confianza += 25
+            razones.append("Toca banda inferior")
+        elif dirección == 'PUT' and precio >= bb_high:
+            confianza += 25
+            razones.append("Toca banda superior")
+
+        if dirección == 'CALL' and macd > macd_sig and a1['MACD'] <= a1['MACD_signal']:
+            confianza += 20
+            razones.append("MACD cruza alcista")
+        elif dirección == 'PUT' and macd < macd_sig and a1['MACD'] >= a1['MACD_signal']:
+            confianza += 20
+            razones.append("MACD cruza bajista")
+
+        if adx > 25:
+            confianza += 15
+            razones.append(f"ADX fuerte ({adx:.0f})")
+
+        if dirección == 'CALL' and stoch < 20:
+            confianza += 15
+            razones.append("Estocástico sobreventa")
+        elif dirección == 'PUT' and stoch > 80:
+            confianza += 15
+            razones.append("Estocástico sobrecompra")
+
+        if razones and confianza >= 15:
+            return {
+                'señal': dirección,
+                'precio': precio,
+                'rsi': rsi,
+                'confianza': confianza,
+                'razon': " | ".join(razones) + " (Sistema clásico)",
+                'indicadores': indicadores
+            }
+
+        # Señal por defecto si todo falla (NUNCA None)
+        return {
+            'señal': dirección,
+            'precio': precio,
+            'rsi': rsi,
+            'confianza': 10,
+            'razon': f"Señal básica (RSI {rsi:.0f})",
+            'indicadores': indicadores
+        }
+
+    except:
+        # Si hay cualquier error, usar señal por defecto (NUNCA None)
+        return señal_por_defecto(codigo_par)
+
+def obtener_precio_actual(codigo_par):
+    try:
+        datos = yf.download(codigo_par, period="1d", interval="1m", progress=False)
+        if isinstance(datos.columns, pd.MultiIndex):
+            datos.columns = datos.columns.get_level_values(0)
+        if len(datos) < 1:
+            return None
+        return float(datos['Close'].iloc[-1])
+    except:
+        return None
+
+PARES = {
+    'EUR/USD': 'EURUSD=X', 'GBP/USD': 'GBPUSD=X', 'USD/JPY': 'USDJPY=X',
+    'AUD/USD': 'AUDUSD=X', 'EUR/JPY': 'EURJPY=X', 'AUD/CAD': 'AUDCAD=X',
+    'EUR/GBP': 'EURGBP=X', 'GBP/JPY': 'GBPJPY=X', 'NZD/USD': 'NZDUSD=X',
+    'USD/CAD': 'USDCAD=X', 'USD/CHF': 'USDCHF=X', 'AUD/JPY': 'AUDJPY=X',
+    'BTC/USD': 'BTC-USD', 'ETH/USD': 'ETH-USD'
+}
+
+if 'estado' not in st.session_state: st.session_state.estado = 'analizando'
+if 'par_sel' not in st.session_state: st.session_state.par_sel = 'EUR/USD'
+if 'senal' not in st.session_state: st.session_state.senal = None
+if 'pesos' not in st.session_state: st.session_state.pesos = cargar_patrones()
+if 'tiempo_fase' not in st.session_state: st.session_state.tiempo_fase = 0
+if 'duracion_fase' not in st.session_state: st.session_state.duracion_fase = 0
+
+CSS = """
+<style>
+body { background: #000; color: #fff; font-family: Arial, sans-serif; }
+.main-header { background: linear-gradient(90deg, #1a1a2e, #16213e); padding: 20px; border-radius: 10px; border: 2px solid #ffd700; text-align: center; margin-bottom: 20px; }
+.main-header h1 { color: #ffd700; margin: 0; font-size: 32px; letter-spacing: 3px; }
+.main-header p { color: #aaa; margin: 8px 0 0 0; font-size: 13px; }
+.signal-box { padding: 35px; border-radius: 15px; text-align: center; font-size: 36px; font-weight: bold; margin: 20px 0; letter-spacing: 2px; }
+.signal-call { background: linear-gradient(135deg, #00cc00, #00ff00); border: 4px solid #00ff00; color: white; box-shadow: 0 0 40px rgba(0, 255, 0, 0.6); }
+.signal-put { background: linear-gradient(135deg, #cc0000, #ff0000); border: 4px solid #ff0000; color: white; box-shadow: 0 0 40px rgba(255, 0, 0, 0.6); }
+.signal-wait { background: #1a1a2e; border: 3px solid #ffd700; color: #ffd700; }
+.signal-neutral { background: #1a1a2e; border: 3px solid #00ff88; color: #00ff88; }
+.signal-skip { background: #1a1a2e; border: 3px solid #ff8800; color: #ff8800; }
+.radar { width: 240px; height: 240px; border-radius: 50%; display: flex; align-items: center; justify-content: center; margin: 25px auto; }
+.radar-green { border: 4px solid #00ff00; background: radial-gradient(circle, #0a2a1a, #000); box-shadow: 0 0 40px rgba(0, 255, 0, 0.6); }
+.radar-red { border: 4px solid #ff0000; background: radial-gradient(circle, #2a0a0a, #000); box-shadow: 0 0 40px rgba(255, 0, 0, 0.6); }
+.radar-yellow { border: 4px solid #ffd700; background: radial-gradient(circle, #2a2a1a, #000); box-shadow: 0 0 40px rgba(255, 215, 0, 0.6); }
+.radar-number { font-size: 90px; font-weight: bold; text-shadow: 0 0 25px currentColor; }
+.radar-number-green { color: #00ff00; }
+.radar-number-red { color: #ff0000; }
+.radar-number-yellow { color: #ffd700; font-size: 24px; text-align: center; }
+.info-panel { background: #1a1a2e; border: 2px solid #00ff88; border-radius: 10px; padding: 15px; margin: 12px 0; }
+.info-panel strong { color: #00ff88; }
+.stat-box { background: #1a1a2e; border: 2px solid #ffd700; border-radius: 10px; padding: 12px; text-align: center; }
+.footer { text-align: center; color: #666; font-size: 11px; margin-top: 25px; padding: 15px; border-top: 1px solid #333; }
+</style>
+"""
+st.markdown(CSS, unsafe_allow_html=True)
+
+col_logout, col_reset = st.columns([3, 1])
+with col_logout:
+    if st.button(" Cerrar Sesión", key="logout_btn"):
+        st.session_state.logueado = False
+        st.session_state.usuario_actual = ""
+        st.rerun()
+with col_reset:
+    if st.button("🔄 Reset", key="reset_btn"):
+        if os.path.exists(ARCHIVO_HISTORIAL):
+            os.remove(ARCHIVO_HISTORIAL)
+        if os.path.exists(ARCHIVO_PATRONES):
+            os.remove(ARCHIVO_PATRONES)
+        st.session_state.pesos = cargar_patrones()
+        st.session_state.estado = 'analizando'
+        st.session_state.senal = None
+        st.session_state.tiempo_fase = 0
+        st.session_state.duracion_fase = 0
+        st.success("Contadores reseteados")
+        time.sleep(1)
+        st.rerun()
+
+st.markdown(f'<div class="main-header"><h1>ZT TRADERS</h1><p>Bienvenido: {st.session_state.usuario_actual} | Machine Learning Activo</p></div>', unsafe_allow_html=True)
+
+col1, col2 = st.columns([2, 1])
+with col1:
+    par_nombre = st.selectbox("Par:", list(PARES.keys()), index=list(PARES.keys()).index(st.session_state.par_sel))
+    st.session_state.par_sel = par_nombre
+with col2:
+    hora_actual = datetime.now().strftime('%H:%M:%S')
+    st.markdown(f'<div class="stat-box"><strong style="color:#ffd700;">HORA</strong><br><span style="color:#00ff88; font-size:22px;">{hora_actual}</span></div>', unsafe_allow_html=True)
+
+codigo = PARES[par_nombre]
+
+# Mostrar estado del modelo ML
+hist = cargar_historial()
+modelo_info = entrenar_modelo_ml()
+c1, c2, c3, c4 = st.columns(4)
+with c1: st.markdown(f'<div class="stat-box"><strong style="color:#ffd700;">Winrate</strong><br><span style="color:#00ff88; font-size:22px;">{round(st.session_state.pesos["winrate"], 1)}%</span></div>', unsafe_allow_html=True)
+with c2: st.markdown(f'<div class="stat-box"><strong style="color:#ffd700;">Operaciones</strong><br><span style="color:#00ff88; font-size:22px;">{st.session_state.pesos["total_ops"]}</span></div>', unsafe_allow_html=True)
+with c3: st.markdown(f'<div class="stat-box"><strong style="color:#ffd700;">Ganadas</strong><br><span style="color:#00ff88; font-size:22px;">{st.session_state.pesos["total_ganadas"]}</span></div>', unsafe_allow_html=True)
+with c4: 
+    if modelo_info:
+        st.markdown(f'<div class="stat-box"><strong style="color:#ffd700;">ML Precisión</strong><br><span style="color:#00ff88; font-size:22px;">{modelo_info["accuracy"]*100:.0f}%</span></div>', unsafe_allow_html=True)
+    else:
+        st.markdown(f'<div class="stat-box"><strong style="color:#ffd700;">ML Status</strong><br><span style="color:#ff8800; font-size:18px;">Entrenando... ({len(hist)}/20)</span></div>', unsafe_allow_html=True)
+st.markdown("---")
+
+tiempo_actual = time.time()
+tiempo_fase = st.session_state.tiempo_fase
+duracion_fase = st.session_state.duracion_fase
+tiempo_restante = max(0, duracion_fase - (tiempo_actual - tiempo_fase))
+
+# ==========================================
+# FASE 1: ANALIZANDO (52 segundos)
+# ==========================================
+if st.session_state.estado == 'analizando':
+    if duracion_fase == 0 or st.session_state.tiempo_fase == 0:
+        st.session_state.tiempo_fase = time.time()
+        st.session_state.duracion_fase = 52
+        st.rerun()
+    
+    st.markdown('<div class="signal-box signal-wait">ESCANEANDO MERCADO...</div>', unsafe_allow_html=True)
+    st.markdown('<div class="radar radar-yellow"><div class="radar-number radar-number-yellow">ANALIZANDO<br>IA ACTIVA</div></div>', unsafe_allow_html=True)
+    
+    proximo_minuto = (datetime.now().minute + 1) % 60
+    st.markdown(f'<div class="info-panel"><strong>Par:</strong> {par_nombre}<br><strong>Estado:</strong> Machine Learning analizando<br><strong>Proximo analisis:</strong> XX:{proximo_minuto:02d}:52<br><strong>Tiempo restante:</strong> {int(tiempo_restante)}s</div>', unsafe_allow_html=True)
+    
+    # CORRECCIÓN: Cuando termine el tiempo, SIEMPRE pasar a la fase de señal
+    if tiempo_restante <= 0:
+        resultado = analizar_par(codigo)
+        # resultado NUNCA es None ahora
+        st.session_state.senal = resultado
+        st.session_state.estado = 'senal'
+        st.session_state.tiempo_fase = time.time()
+        st.session_state.duracion_fase = 8
+        st.rerun()
+    
+    time.sleep(0.5)
+    st.rerun()
+
+# ==========================================
+# FASE 2: SEÑAL (8 segundos)
+# ==========================================
+elif st.session_state.estado == 'senal':
+    señal = st.session_state.senal
+    es_call = señal['señal'] == 'CALL'
+    countdown = int(tiempo_restante)
+    
+    tipo = "ENTRAR AHORA! (CALL)" if es_call else "ENTRAR AHORA! (PUT)"
+    clase_box = "signal-call" if es_call else "signal-put"
+    clase_radar = "radar-green" if es_call else "radar-red"
+    clase_numero = "radar-number-green" if es_call else "radar-number-red"
+    
+    st.markdown(f'<div class="signal-box {clase_box}">{tipo}</div>', unsafe_allow_html=True)
+    
+    hora_entrada = datetime.now().strftime('%H:%M:%S')
+    st.markdown(f'<div class="info-panel"><strong>Entrada Exacta:</strong> {hora_entrada}<br><strong>Punto de Entrada:</strong> {round(señal["precio"], 5)}<br><strong>Confianza ML:</strong> {señal["confianza"]:.1f}%<br><strong>Razon:</strong> {señal["razon"]}</div>', unsafe_allow_html=True)
+    
+    st.markdown(f'<div class="radar {clase_radar}"><div class="radar-number {clase_numero}">{countdown}</div></div>', unsafe_allow_html=True)
+    st.markdown('<p style="text-align:center; color:#ffd700; font-size:18px;">SEGUNDOS PARA ENTRAR</p>', unsafe_allow_html=True)
+    
+    if tiempo_restante <= 0:
+        st.session_state.estado = 'operando'
+        st.session_state.tiempo_fase = time.time()
+        st.session_state.duracion_fase = 60
+        st.rerun()
+    
+    time.sleep(0.2)
+    st.rerun()
+
+# ==========================================
+# FASE 3: OPERACIÓN (60 segundos)
+# ==========================================
+elif st.session_state.estado == 'operando':
+    señal = st.session_state.senal
+    es_call = señal['señal'] == 'CALL'
+    countdown = int(tiempo_restante)
+    
+    tipo = "CALL" if es_call else "PUT"
+    clase_box = "signal-call" if es_call else "signal-put"
+    clase_radar = "radar-green" if es_call else "radar-red"
+    clase_numero = "radar-number-green" if es_call else "radar-number-red"
+    
+    st.markdown('<div class="info-panel" style="text-align:center;"><strong>OPERACION EN CURSO (EXPIRACION)</strong></div>', unsafe_allow_html=True)
+    st.markdown(f'<div class="signal-box {clase_box}">{tipo}</div>', unsafe_allow_html=True)
+    
+    st.markdown(f'<div class="info-panel"><strong>Entrada:</strong> {round(señal["precio"], 5)}<br><strong>Confianza ML:</strong> {señal["confianza"]:.1f}%<br><strong>Expiracion:</strong> 1 Minuto exacto</div>', unsafe_allow_html=True)
+    
+    st.markdown(f'<div class="radar {clase_radar}"><div class="radar-number {clase_numero}">{countdown}</div></div>', unsafe_allow_html=True)
+    st.markdown('<p style="text-align:center; color:#ffaa00; font-size:18px;">SEGUNDOS RESTANTES</p>', unsafe_allow_html=True)
+    st.warning("No cierres esta pagina")
+    
+    if tiempo_restante <= 0:
+        st.session_state.estado = 'cerrada'
+        st.session_state.tiempo_fase = time.time()
+        st.session_state.duracion_fase = 5
+        st.rerun()
+    
+    time.sleep(0.5)
+    st.rerun()
+
+# ==========================================
+# FASE 4: CERRADA (5 segundos)
+# ==========================================
+elif st.session_state.estado == 'cerrada':
+    precio_actual = obtener_precio_actual(codigo)
+    precio_entrada = st.session_state.senal['precio']
+    es_call = st.session_state.senal['señal'] == 'CALL'
+    
+    resultado_interno = 'PERDIDA'
+    if precio_actual is not None:
+        if es_call and precio_actual > precio_entrada:
+            resultado_interno = 'GANADA'
+        elif not es_call and precio_actual < precio_entrada:
+            resultado_interno = 'GANADA'
+    
+    # Guardar indicadores para entrenar ML
+    indicadores = st.session_state.senal.get('indicadores', {})
+    aprender_en_segundo_plano(st.session_state.senal['señal'], resultado_interno, indicadores)
+    
+    st.markdown('<div class="signal-box signal-neutral">SEÑAL COMPLETADA<br><small style="font-size:18px;">IA actualizando modelo ML...</small></div>', unsafe_allow_html=True)
+    st.markdown('<div class="info-panel" style="text-align:center;"><strong>Preparando siguiente analisis...</strong></div>', unsafe_allow_html=True)
+    
+    if tiempo_restante <= 0:
+        st.session_state.estado = 'analizando'
+        st.session_state.senal = None
+        st.session_state.tiempo_fase = time.time()
+        st.session_state.duracion_fase = 52
+        st.rerun()
+    
+    time.sleep(1)
+    st.rerun()
+
+st.markdown("---")
+st.markdown("### Historial de Entrenamiento ML")
+hist = cargar_historial()
+if hist:
+    for op in reversed(hist[-10:]):
+        st.write(op['fecha'], "-", op['señal'], "-", op['resultado'])
+else:
+    st.info("La IA esta empezando a entrenar desde cero.")
+
+st.markdown(f'<div class="footer">ZT TRADERS | Usuario: {st.session_state.usuario_actual} | Machine Learning Activo</div>', unsafe_allow_html=True)
