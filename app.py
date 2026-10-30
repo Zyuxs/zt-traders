@@ -8,7 +8,6 @@ import os
 from datetime import datetime
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.model_selection import cross_val_score
-import numpy as np
 
 st.set_page_config(page_title="ZT TRADERS", layout="centered", page_icon="🎯")
 
@@ -260,12 +259,21 @@ PARES = {
     'BTC/USD': 'BTC-USD', 'ETH/USD': 'ETH-USD'
 }
 
-if 'estado' not in st.session_state: st.session_state.estado = 'analizando'
-if 'par_sel' not in st.session_state: st.session_state.par_sel = 'EUR/USD'
-if 'senal' not in st.session_state: st.session_state.senal = None
-if 'pesos' not in st.session_state: st.session_state.pesos = cargar_patrones()
-if 'minuto_vena' not in st.session_state: st.session_state.minuto_vena = None
-if 'resultado_evaluado' not in st.session_state: st.session_state.resultado_evaluado = False
+# Inicialización SIMPLE
+if 'estado' not in st.session_state: 
+    st.session_state.estado = 'analizando'
+if 'par_sel' not in st.session_state: 
+    st.session_state.par_sel = 'EUR/USD'
+if 'senal' not in st.session_state: 
+    st.session_state.senal = None
+if 'pesos' not in st.session_state: 
+    st.session_state.pesos = cargar_patrones()
+if 'minuto_operacion' not in st.session_state: 
+    st.session_state.minuto_operacion = None
+if 'precio_entrada' not in st.session_state: 
+    st.session_state.precio_entrada = 0.0
+if 'senal_tipo' not in st.session_state: 
+    st.session_state.senal_tipo = None
 
 CSS = """
 <style>
@@ -307,13 +315,14 @@ with col_reset:
         st.session_state.pesos = cargar_patrones()
         st.session_state.estado = 'analizando'
         st.session_state.senal = None
-        st.session_state.minuto_vena = None
-        st.session_state.resultado_evaluado = False
+        st.session_state.minuto_operacion = None
+        st.session_state.precio_entrada = 0.0
+        st.session_state.senal_tipo = None
         st.success("Contadores reseteados")
         time.sleep(1)
         st.rerun()
 
-st.markdown(f'<div class="main-header"><h1>ZT TRADERS</h1><p>Bienvenido: {st.session_state.usuario_actual} | Sincronizado con Velas de 1 Minuto</p></div>', unsafe_allow_html=True)
+st.markdown(f'<div class="main-header"><h1>ZT TRADERS</h1><p>Bienvenido: {st.session_state.usuario_actual} | Sistema Simplificado</p></div>', unsafe_allow_html=True)
 
 col1, col2 = st.columns([2, 1])
 with col1:
@@ -324,7 +333,7 @@ with col2:
     hora_actual = ahora.strftime('%H:%M:%S')
     segundo_actual = ahora.second
     minuto_actual = ahora.minute
-    st.markdown(f'<div class="stat-box"><strong style="color:#ffd700;">HORA</strong><br><span style="color:#00ff88; font-size:22px;">{hora_actual}</span><br><small style="color:#aaa;">Seg :{segundo_actual:02d} | Min :{minuto_actual:02d}</small></div>', unsafe_allow_html=True)
+    st.markdown(f'<div class="stat-box"><strong style="color:#ffd700;">HORA</strong><br><span style="color:#00ff88; font-size:22px;">{hora_actual}</span><br><small style="color:#aaa;">Seg :{segundo_actual:02d}</small></div>', unsafe_allow_html=True)
 
 codigo = PARES[par_nombre]
 
@@ -343,6 +352,130 @@ with c4:
         st.markdown(f'<div class="stat-box"><strong style="color:#ffd700;">ML Precisión</strong><br><span style="color:{color_precision}; font-size:22px;">{precision:.0f}%</span><br><small style="color:#aaa;">({ops_con_indicadores} muestras)</small></div>', unsafe_allow_html=True)
     else:
         st.markdown(f'<div class="stat-box"><strong style="color:#ffd700;">ML Status</strong><br><span style="color:#ff8800; font-size:18px;">Entrenando...<br>({ops_con_indicadores}/20)</span></div>', unsafe_allow_html=True)
+st.markdown("---")
 
 # ==========================================
-# SISTEMA SINCRONIZADO CORREGIDO - SIN BUG
+# SISTEMA ULTRA SIMPLIFICADO - SIN ESTADOS COMPLEJOS
+# ==========================================
+
+# FASE 1: ANÁLISIS (segundos 0-49)
+if segundo_actual < 50:
+    st.session_state.estado = 'analizando'
+    
+    # Si hay una operación en curso del minuto anterior, evaluarla
+    if st.session_state.minuto_operacion is not None and st.session_state.minuto_operacion != minuto_actual:
+        # Evaluar resultado
+        if st.session_state.senal_tipo and st.session_state.precio_entrada > 0:
+            precio_actual = obtener_precio_actual(codigo)
+            es_call = st.session_state.senal_tipo == 'CALL'
+            
+            resultado = 'PERDIDA'
+            if precio_actual:
+                if es_call and precio_actual > st.session_state.precio_entrada:
+                    resultado = 'GANADA'
+                elif not es_call and precio_actual < st.session_state.precio_entrada:
+                    resultado = 'GANADA'
+            
+            # Crear indicadores dummy para el aprendizaje
+            indicadores_dummy = {'rsi': 50, 'stoch': 50, 'macd': 0, 'adx': 20, 'bb_position': 0.5, 'sma_cross': 0, 'direccion': st.session_state.senal_tipo}
+            aprender_en_segundo_plano(st.session_state.senal_tipo, resultado, indicadores_dummy)
+            st.session_state.pesos = cargar_patrones()
+        
+        # Resetear variables de operación
+        st.session_state.minuto_operacion = None
+        st.session_state.precio_entrada = 0.0
+        st.session_state.senal_tipo = None
+        st.session_state.senal = None
+    
+    st.markdown('<div class="signal-box signal-wait">🔵 ANALIZANDO MERCADO...</div>', unsafe_allow_html=True)
+    st.markdown('<div class="radar radar-yellow"><div class="radar-number radar-number-yellow">ANALIZANDO<br>IA ACTIVA</div></div>', unsafe_allow_html=True)
+    
+    segundos_restantes = 49 - segundo_actual
+    st.markdown(f'<div class="info-panel"><strong>Par:</strong> {par_nombre}<br><strong>Fase:</strong> Análisis de indicadores<br><strong>Segundo actual:</strong> :{segundo_actual:02d}<br><strong>Señal en:</strong> {segundos_restantes} segundos</div>', unsafe_allow_html=True)
+    
+    # Analizar solo una vez al inicio
+    if segundo_actual == 0 and st.session_state.senal is None:
+        st.session_state.senal = analizar_par(codigo)
+    
+    time.sleep(0.5)
+    st.rerun()
+
+# FASE 2: SEÑAL (segundos 50-57)
+elif segundo_actual < 58:
+    st.session_state.estado = 'senal'
+    
+    if st.session_state.senal is None:
+        st.session_state.senal = analizar_par(codigo)
+    
+    señal = st.session_state.senal
+    es_call = señal['señal'] == 'CALL'
+    segundos_restantes = 57 - segundo_actual
+    
+    tipo = " ENTRAR AHORA! (CALL)" if es_call else "🔴 ENTRAR AHORA! (PUT)"
+    clase_box = "signal-call" if es_call else "signal-put"
+    clase_radar = "radar-green" if es_call else "radar-red"
+    clase_numero = "radar-number-green" if es_call else "radar-number-red"
+    
+    st.markdown(f'<div class="signal-box {clase_box}">{tipo}</div>', unsafe_allow_html=True)
+    
+    st.markdown(f'<div class="info-panel"><strong>⏰ Hora:</strong> {ahora.strftime("%H:%M:%S")}<br><strong>Punto Entrada:</strong> {round(señal["precio"], 5)}<br><strong>Confianza:</strong> {señal["confianza"]:.1f}%<br><strong>Razon:</strong> {señal["razon"]}</div>', unsafe_allow_html=True)
+    
+    st.markdown(f'<div class="radar {clase_radar}"><div class="radar-number {clase_numero}">{segundos_restantes}</div></div>', unsafe_allow_html=True)
+    st.markdown('<p style="text-align:center; color:#ffd700; font-size:18px;">SEGUNDOS PARA ENTRAR<br><small>Entra antes de que llegue a 0</small></p>', unsafe_allow_html=True)
+    
+    time.sleep(0.3)
+    st.rerun()
+
+# FASE 3: PREPARACIÓN (segundos 58-59)
+elif segundo_actual < 60:
+    st.session_state.estado = 'preparando'
+    
+    segundos_finales = 59 - segundo_actual
+    st.markdown('<div class="signal-box signal-wait">⚡ PREPARANDO...</div>', unsafe_allow_html=True)
+    st.markdown(f'<div class="radar radar-yellow"><div class="radar-number radar-number-yellow">{segundos_finales + 1}</div></div>', unsafe_allow_html=True)
+    st.markdown(f'<p style="text-align:center; color:#ffaa00; font-size:20px;">Entra en :00<br>Quedan {segundos_finales + 1} segundos</p>', unsafe_allow_html=True)
+    
+    time.sleep(0.3)
+    st.rerun()
+
+# FASE 4: OPERACIÓN EN CURSO (cuando segundo_actual vuelve a 0-49 del nuevo minuto)
+# Esta fase se activa automáticamente por el if de arriba cuando cambia el minuto
+if st.session_state.minuto_operacion is None and st.session_state.senal is not None and segundo_actual < 50:
+    # Guardar información de la operación
+    st.session_state.minuto_operacion = minuto_actual
+    st.session_state.precio_entrada = st.session_state.senal['precio']
+    st.session_state.senal_tipo = st.session_state.senal['señal']
+
+# Mostrar operación en curso si existe
+if st.session_state.minuto_operacion == minuto_actual and st.session_state.senal_tipo:
+    es_call = st.session_state.senal_tipo == 'CALL'
+    segundos_restantes_op = 59 - segundo_actual
+    
+    tipo = " CALL EN CURSO" if es_call else " PUT EN CURSO"
+    clase_box = "signal-call" if es_call else "signal-put"
+    clase_radar = "radar-green" if es_call else "radar-red"
+    clase_numero = "radar-number-green" if es_call else "radar-number-red"
+    
+    st.markdown('<div class="info-panel" style="text-align:center;"><strong>⏳ OPERACIÓN EN CURSO</strong></div>', unsafe_allow_html=True)
+    st.markdown(f'<div class="signal-box {clase_box}">{tipo}</div>', unsafe_allow_html=True)
+    
+    st.markdown(f'<div class="info-panel"><strong> Entrada:</strong> {round(st.session_state.precio_entrada, 5)}<br><strong>Tipo:</strong> {st.session_state.senal_tipo}<br><strong>⏱️ Expira en:</strong> {segundos_restantes_op} segundos</div>', unsafe_allow_html=True)
+    
+    st.markdown(f'<div class="radar {clase_radar}"><div class="radar-number {clase_numero}">{segundos_restantes_op}</div></div>', unsafe_allow_html=True)
+    st.markdown('<p style="text-align:center; color:#ffaa00; font-size:18px;">SEGUNDOS RESTANTES</p>', unsafe_allow_html=True)
+    st.warning("⚠️ No cierres esta página")
+    
+    time.sleep(0.5)
+    st.rerun()
+
+st.markdown("---")
+st.markdown("### 📊 Historial")
+hist = cargar_historial()
+if hist:
+    for op in reversed(hist[-10:]):
+        emoji = "✅" if op['resultado'] == 'GANADA' else "❌"
+        st.write(f"{emoji} {op['fecha']} - {op['señal']} - {op['resultado']}")
+else:
+    st.info("La IA está empezando a entrenar.")
+
+st.markdown(f'<div class="footer">ZT TRADERS | Usuario: {st.session_state.usuario_actual} | Sistema Simplificado</div>', unsafe_allow_html=True)
