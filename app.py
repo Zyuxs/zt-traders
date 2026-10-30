@@ -6,7 +6,6 @@ import time
 import json
 import os
 from datetime import datetime
-import random
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.model_selection import cross_val_score
 import numpy as np
@@ -81,7 +80,7 @@ def cargar_patrones():
                 return json.load(f)
         except:
             os.remove(ARCHIVO_PATRONES)
-    return {'total_ops': 0, 'total_ganadas': 0, 'winrate': 0.0, 'total_saltos': 0}
+    return {'total_ops': 0, 'total_ganadas': 0, 'winrate': 0.0}
 
 def guardar_patrones(pesos):
     try:
@@ -124,93 +123,49 @@ def aprender_en_segundo_plano(señal, resultado, indicadores):
     guardar_patrones(pesos)
 
 def entrenar_modelo_ml():
-    """Entrena un modelo Random Forest con cross-validation para precisión real"""
     hist = cargar_historial()
-    
-    # Preparar datos para entrenamiento
     X = []
     y = []
-    
     for op in hist:
         if 'indicadores' in op:
             ind = op['indicadores']
             features = [
-                ind.get('rsi', 50),
-                ind.get('stoch', 50),
-                ind.get('macd', 0),
-                ind.get('adx', 20),
-                ind.get('bb_position', 0.5),
-                ind.get('sma_cross', 0),
-                1 if op['señal'] == 'CALL' else 0
+                ind.get('rsi', 50), ind.get('stoch', 50), ind.get('macd', 0),
+                ind.get('adx', 20), ind.get('bb_position', 0.5),
+                ind.get('sma_cross', 0), 1 if op['señal'] == 'CALL' else 0
             ]
             X.append(features)
             y.append(1 if op['resultado'] == 'GANADA' else 0)
-    
-    # Necesitamos al menos 20 muestras con indicadores completos
     if len(X) < 20:
         return None
-    
     try:
-        # Usar Cross-Validation de 5 folds para precisión REALISTA
-        # Esto evita el overfitting y da una precisión honesta
         modelo = RandomForestClassifier(n_estimators=100, max_depth=5, random_state=42, min_samples_split=5)
-        
-        # Cross-validation: divide los datos en 5 partes, entrena en 4 y prueba en 1, repite 5 veces
         scores = cross_val_score(modelo, X, y, cv=5, scoring='accuracy')
         accuracy_real = scores.mean()
-        
-        # Entrenar el modelo final con TODOS los datos (para usarlo en predicciones)
         modelo.fit(X, y)
-        
-        return {
-            'modelo': modelo,
-            'accuracy': accuracy_real,  # Precisión REALISTA (no inflada)
-            'muestras': len(X)
-        }
-    except Exception as e:
+        return {'modelo': modelo, 'accuracy': accuracy_real, 'muestras': len(X)}
+    except:
         return None
 
 def predecir_con_ml(modelo, indicadores):
-    """Usa el modelo ML para predecir probabilidad de éxito"""
     features = [
-        indicadores.get('rsi', 50),
-        indicadores.get('stoch', 50),
-        indicadores.get('macd', 0),
-        indicadores.get('adx', 20),
-        indicadores.get('bb_position', 0.5),
-        indicadores.get('sma_cross', 0),
+        indicadores.get('rsi', 50), indicadores.get('stoch', 50),
+        indicadores.get('macd', 0), indicadores.get('adx', 20),
+        indicadores.get('bb_position', 0.5), indicadores.get('sma_cross', 0),
         1 if indicadores.get('direccion', 'CALL') == 'CALL' else 0
     ]
-    
     try:
         probabilidad = modelo.predict_proba([features])[0]
-        prob_exito = probabilidad[1]
-        return prob_exito * 100
+        return probabilidad[1] * 100
     except:
         return 50.0
 
 def señal_por_defecto(codigo_par, rsi=50.0):
     dirección = 'CALL' if rsi < 50 else 'PUT'
-    indicadores = {
-        'rsi': rsi,
-        'stoch': 50,
-        'macd': 0,
-        'adx': 20,
-        'bb_position': 0.5,
-        'sma_cross': 0,
-        'direccion': dirección
-    }
-    return {
-        'señal': dirección,
-        'precio': 0.0,
-        'rsi': rsi,
-        'confianza': 10,
-        'razon': f"Señal por defecto (RSI {rsi:.0f})",
-        'indicadores': indicadores
-    }
+    indicadores = {'rsi': rsi, 'stoch': 50, 'macd': 0, 'adx': 20, 'bb_position': 0.5, 'sma_cross': 0, 'direccion': dirección}
+    return {'señal': dirección, 'precio': 0.0, 'rsi': rsi, 'confianza': 10, 'razon': f"Señal por defecto (RSI {rsi:.0f})", 'indicadores': indicadores}
 
 def analizar_par(codigo_par):
-    """Analiza el mercado y usa ML para predecir - NUNCA devuelve None"""
     try:
         datos_1m = yf.download(codigo_par, period="2d", interval="1m", progress=False)
         datos_5m = yf.download(codigo_par, period="5d", interval="5m", progress=False)
@@ -219,7 +174,6 @@ def analizar_par(codigo_par):
             datos_5m.columns = datos_5m.columns.get_level_values(0)
         datos_1m = datos_1m[['Open', 'High', 'Low', 'Close']].copy()
         datos_5m = datos_5m[['Open', 'High', 'Low', 'Close']].copy()
-        
         if len(datos_1m) < 30 or len(datos_5m) < 30:
             return señal_por_defecto(codigo_par)
 
@@ -232,7 +186,6 @@ def analizar_par(codigo_par):
         datos_1m['BB_High'] = bb.bollinger_hband()
         datos_1m['BB_Low'] = bb.bollinger_lband()
         datos_1m['SMA_10'] = datos_1m['Close'].rolling(window=10).mean()
-        datos_1m['SMA_50'] = datos_1m['Close'].rolling(window=50).mean()
         datos_5m['SMA_20'] = datos_5m['Close'].rolling(window=20).mean()
         datos_5m['RSI'] = ta.momentum.RSIIndicator(datos_5m['Close'], window=14).rsi()
 
@@ -248,111 +201,44 @@ def analizar_par(codigo_par):
         bb_high = float(u1['BB_High'])
         bb_low = float(u1['BB_Low'])
         sma_1m = float(u1['SMA_10'])
-        sma_50 = float(u1['SMA_50'])
         sma_5m = float(u5['SMA_20'])
-        precio_5m = float(u5['Close'])
-        rsi_5m = 50.0 if pd.isna(u5['RSI']) else float(u5['RSI'])
 
         dirección = 'CALL' if rsi < 50 else 'PUT'
-        if precio <= bb_low:
-            dirección = 'CALL'
-        elif precio >= bb_high:
-            dirección = 'PUT'
-        if precio > sma_1m and a1['Close'] <= a1['SMA_10']:
-            dirección = 'CALL'
-        elif precio < sma_1m and a1['Close'] >= a1['SMA_10']:
-            dirección = 'PUT'
+        if precio <= bb_low: dirección = 'CALL'
+        elif precio >= bb_high: dirección = 'PUT'
+        if precio > sma_1m and a1['Close'] <= a1['SMA_10']: dirección = 'CALL'
+        elif precio < sma_1m and a1['Close'] >= a1['SMA_10']: dirección = 'PUT'
 
         bb_position = (precio - bb_low) / (bb_high - bb_low) if bb_high != bb_low else 0.5
         bb_position = max(0, min(1, bb_position))
-        
         sma_cross = 0
-        if precio > sma_1m and a1['Close'] <= a1['SMA_10']:
-            sma_cross = 1
-        elif precio < sma_1m and a1['Close'] >= a1['SMA_10']:
-            sma_cross = -1
+        if precio > sma_1m and a1['Close'] <= a1['SMA_10']: sma_cross = 1
+        elif precio < sma_1m and a1['Close'] >= a1['SMA_10']: sma_cross = -1
 
-        indicadores = {
-            'rsi': rsi,
-            'stoch': stoch,
-            'macd': macd - macd_sig,
-            'adx': adx,
-            'bb_position': bb_position,
-            'sma_cross': sma_cross,
-            'direccion': dirección
-        }
+        indicadores = {'rsi': rsi, 'stoch': stoch, 'macd': macd - macd_sig, 'adx': adx, 'bb_position': bb_position, 'sma_cross': sma_cross, 'direccion': dirección}
 
-        # Intentar usar ML
         modelo_info = entrenar_modelo_ml()
-        
         if modelo_info and modelo_info['modelo']:
             probabilidad_ml = predecir_con_ml(modelo_info['modelo'], indicadores)
-            
             if probabilidad_ml >= 50:
-                return {
-                    'señal': dirección,
-                    'precio': precio,
-                    'rsi': rsi,
-                    'confianza': probabilidad_ml,
-                    'razon': f"ML: {probabilidad_ml:.1f}% (Precisión real: {modelo_info['accuracy']*100:.0f}%, Muestras: {modelo_info['muestras']})",
-                    'indicadores': indicadores
-                }
-        
-        # Fallback: sistema de puntos
+                return {'señal': dirección, 'precio': precio, 'rsi': rsi, 'confianza': probabilidad_ml, 'razon': f"ML: {probabilidad_ml:.1f}% (Precisión: {modelo_info['accuracy']*100:.0f}%, Muestras: {modelo_info['muestras']})", 'indicadores': indicadores}
+
         confianza = 0
         razones = []
-
-        if dirección == 'CALL' and rsi < 35:
-            confianza += 25
-            razones.append("RSI sobreventa")
-        elif dirección == 'PUT' and rsi > 65:
-            confianza += 25
-            razones.append("RSI sobrecompra")
-
-        if dirección == 'CALL' and precio <= bb_low:
-            confianza += 25
-            razones.append("Toca banda inferior")
-        elif dirección == 'PUT' and precio >= bb_high:
-            confianza += 25
-            razones.append("Toca banda superior")
-
-        if dirección == 'CALL' and macd > macd_sig and a1['MACD'] <= a1['MACD_signal']:
-            confianza += 20
-            razones.append("MACD cruza alcista")
-        elif dirección == 'PUT' and macd < macd_sig and a1['MACD'] >= a1['MACD_signal']:
-            confianza += 20
-            razones.append("MACD cruza bajista")
-
-        if adx > 25:
-            confianza += 15
-            razones.append(f"ADX fuerte ({adx:.0f})")
-
-        if dirección == 'CALL' and stoch < 20:
-            confianza += 15
-            razones.append("Estocástico sobreventa")
-        elif dirección == 'PUT' and stoch > 80:
-            confianza += 15
-            razones.append("Estocástico sobrecompra")
+        if dirección == 'CALL' and rsi < 35: confianza += 25; razones.append("RSI sobreventa")
+        elif dirección == 'PUT' and rsi > 65: confianza += 25; razones.append("RSI sobrecompra")
+        if dirección == 'CALL' and precio <= bb_low: confianza += 25; razones.append("Toca banda inferior")
+        elif dirección == 'PUT' and precio >= bb_high: confianza += 25; razones.append("Toca banda superior")
+        if dirección == 'CALL' and macd > macd_sig and a1['MACD'] <= a1['MACD_signal']: confianza += 20; razones.append("MACD cruza alcista")
+        elif dirección == 'PUT' and macd < macd_sig and a1['MACD'] >= a1['MACD_signal']: confianza += 20; razones.append("MACD cruza bajista")
+        if adx > 25: confianza += 15; razones.append(f"ADX fuerte ({adx:.0f})")
+        if dirección == 'CALL' and stoch < 20: confianza += 15; razones.append("Estocástico sobreventa")
+        elif dirección == 'PUT' and stoch > 80: confianza += 15; razones.append("Estocástico sobrecompra")
 
         if razones and confianza >= 15:
-            return {
-                'señal': dirección,
-                'precio': precio,
-                'rsi': rsi,
-                'confianza': confianza,
-                'razon': " | ".join(razones) + " (Sistema clásico)",
-                'indicadores': indicadores
-            }
+            return {'señal': dirección, 'precio': precio, 'rsi': rsi, 'confianza': confianza, 'razon': " | ".join(razones) + " (Clásico)", 'indicadores': indicadores}
 
-        return {
-            'señal': dirección,
-            'precio': precio,
-            'rsi': rsi,
-            'confianza': 10,
-            'razon': f"Señal básica (RSI {rsi:.0f})",
-            'indicadores': indicadores
-        }
-
+        return {'señal': dirección, 'precio': precio, 'rsi': rsi, 'confianza': 10, 'razon': f"Señal básica (RSI {rsi:.0f})", 'indicadores': indicadores}
     except:
         return señal_por_defecto(codigo_par)
 
@@ -361,8 +247,7 @@ def obtener_precio_actual(codigo_par):
         datos = yf.download(codigo_par, period="1d", interval="1m", progress=False)
         if isinstance(datos.columns, pd.MultiIndex):
             datos.columns = datos.columns.get_level_values(0)
-        if len(datos) < 1:
-            return None
+        if len(datos) < 1: return None
         return float(datos['Close'].iloc[-1])
     except:
         return None
@@ -375,12 +260,13 @@ PARES = {
     'BTC/USD': 'BTC-USD', 'ETH/USD': 'ETH-USD'
 }
 
+# Inicialización de session_state
 if 'estado' not in st.session_state: st.session_state.estado = 'analizando'
 if 'par_sel' not in st.session_state: st.session_state.par_sel = 'EUR/USD'
 if 'senal' not in st.session_state: st.session_state.senal = None
 if 'pesos' not in st.session_state: st.session_state.pesos = cargar_patrones()
-if 'tiempo_fase' not in st.session_state: st.session_state.tiempo_fase = 0
-if 'duracion_fase' not in st.session_state: st.session_state.duracion_fase = 0
+if 'minuto_vena' not in st.session_state: st.session_state.minuto_vena = None
+if 'resultado_evaluado' not in st.session_state: st.session_state.resultado_evaluado = False
 
 CSS = """
 <style>
@@ -393,7 +279,6 @@ body { background: #000; color: #fff; font-family: Arial, sans-serif; }
 .signal-put { background: linear-gradient(135deg, #cc0000, #ff0000); border: 4px solid #ff0000; color: white; box-shadow: 0 0 40px rgba(255, 0, 0, 0.6); }
 .signal-wait { background: #1a1a2e; border: 3px solid #ffd700; color: #ffd700; }
 .signal-neutral { background: #1a1a2e; border: 3px solid #00ff88; color: #00ff88; }
-.signal-skip { background: #1a1a2e; border: 3px solid #ff8800; color: #ff8800; }
 .radar { width: 240px; height: 240px; border-radius: 50%; display: flex; align-items: center; justify-content: center; margin: 25px auto; }
 .radar-green { border: 4px solid #00ff00; background: radial-gradient(circle, #0a2a1a, #000); box-shadow: 0 0 40px rgba(0, 255, 0, 0.6); }
 .radar-red { border: 4px solid #ff0000; background: radial-gradient(circle, #2a0a0a, #000); box-shadow: 0 0 40px rgba(255, 0, 0, 0.6); }
@@ -406,6 +291,7 @@ body { background: #000; color: #fff; font-family: Arial, sans-serif; }
 .info-panel strong { color: #00ff88; }
 .stat-box { background: #1a1a2e; border: 2px solid #ffd700; border-radius: 10px; padding: 12px; text-align: center; }
 .footer { text-align: center; color: #666; font-size: 11px; margin-top: 25px; padding: 15px; border-top: 1px solid #333; }
+.sync-indicator { background: #001a00; border: 2px solid #00ff00; border-radius: 8px; padding: 8px; text-align: center; margin: 10px 0; }
 </style>
 """
 st.markdown(CSS, unsafe_allow_html=True)
@@ -418,36 +304,34 @@ with col_logout:
         st.rerun()
 with col_reset:
     if st.button("🔄 Reset", key="reset_btn"):
-        if os.path.exists(ARCHIVO_HISTORIAL):
-            os.remove(ARCHIVO_HISTORIAL)
-        if os.path.exists(ARCHIVO_PATRONES):
-            os.remove(ARCHIVO_PATRONES)
+        if os.path.exists(ARCHIVO_HISTORIAL): os.remove(ARCHIVO_HISTORIAL)
+        if os.path.exists(ARCHIVO_PATRONES): os.remove(ARCHIVO_PATRONES)
         st.session_state.pesos = cargar_patrones()
         st.session_state.estado = 'analizando'
         st.session_state.senal = None
-        st.session_state.tiempo_fase = 0
-        st.session_state.duracion_fase = 0
+        st.session_state.minuto_vena = None
+        st.session_state.resultado_evaluado = False
         st.success("Contadores reseteados")
         time.sleep(1)
         st.rerun()
 
-st.markdown(f'<div class="main-header"><h1>ZT TRADERS</h1><p>Bienvenido: {st.session_state.usuario_actual} | Machine Learning Activo</p></div>', unsafe_allow_html=True)
+st.markdown(f'<div class="main-header"><h1>ZT TRADERS</h1><p>Bienvenido: {st.session_state.usuario_actual} | Sincronizado con Velas de 1 Minuto</p></div>', unsafe_allow_html=True)
 
 col1, col2 = st.columns([2, 1])
 with col1:
     par_nombre = st.selectbox("Par:", list(PARES.keys()), index=list(PARES.keys()).index(st.session_state.par_sel))
     st.session_state.par_sel = par_nombre
 with col2:
-    hora_actual = datetime.now().strftime('%H:%M:%S')
-    st.markdown(f'<div class="stat-box"><strong style="color:#ffd700;">HORA</strong><br><span style="color:#00ff88; font-size:22px;">{hora_actual}</span></div>', unsafe_allow_html=True)
+    ahora = datetime.now()
+    hora_actual = ahora.strftime('%H:%M:%S')
+    segundo_actual = ahora.second
+    minuto_actual = ahora.minute
+    st.markdown(f'<div class="stat-box"><strong style="color:#ffd700;">HORA</strong><br><span style="color:#00ff88; font-size:22px;">{hora_actual}</span><br><small style="color:#aaa;">Seg :{segundo_actual:02d} | Min :{minuto_actual:02d}</small></div>', unsafe_allow_html=True)
 
 codigo = PARES[par_nombre]
 
-# Mostrar estado del modelo ML
 hist = cargar_historial()
 modelo_info = entrenar_modelo_ml()
-
-# Contar operaciones con indicadores completos
 ops_con_indicadores = sum(1 for op in hist if 'indicadores' in op)
 
 c1, c2, c3, c4 = st.columns(4)
@@ -456,62 +340,150 @@ with c2: st.markdown(f'<div class="stat-box"><strong style="color:#ffd700;">Oper
 with c3: st.markdown(f'<div class="stat-box"><strong style="color:#ffd700;">Ganadas</strong><br><span style="color:#00ff88; font-size:22px;">{st.session_state.pesos["total_ganadas"]}</span></div>', unsafe_allow_html=True)
 with c4: 
     if modelo_info and ops_con_indicadores >= 20:
-        # Mostrar precisión REALISTA (con cross-validation)
         precision = modelo_info["accuracy"] * 100
         color_precision = "#00ff88" if precision >= 60 else "#ffaa00" if precision >= 50 else "#ff4444"
         st.markdown(f'<div class="stat-box"><strong style="color:#ffd700;">ML Precisión</strong><br><span style="color:{color_precision}; font-size:22px;">{precision:.0f}%</span><br><small style="color:#aaa;">({ops_con_indicadores} muestras)</small></div>', unsafe_allow_html=True)
     else:
         st.markdown(f'<div class="stat-box"><strong style="color:#ffd700;">ML Status</strong><br><span style="color:#ff8800; font-size:18px;">Entrenando...<br>({ops_con_indicadores}/20)</span></div>', unsafe_allow_html=True)
-st.markdown("---")
 
-tiempo_actual = time.time()
-tiempo_fase = st.session_state.tiempo_fase
-duracion_fase = st.session_state.duracion_fase
-tiempo_restante = max(0, duracion_fase - (tiempo_actual - tiempo_fase))
+# ==========================================
+# SISTEMA SINCRONIZADO CORREGIDO
+# ==========================================
+# Lógica: 
+# - minuto_vena = el minuto en que empezó la vela actual
+# - Si minuto_actual != minuto_vena, cambió la vela
+# - Fases según segundo dentro del minuto:
+#   0-49: análisis
+#   50-57: señal
+#   58-59: preparando
+# - Cuando cambia el minuto: evaluar resultado anterior + empezar nueva vela
 
-if st.session_state.estado == 'analizando':
-    if duracion_fase == 0 or st.session_state.tiempo_fase == 0:
-        st.session_state.tiempo_fase = time.time()
-        st.session_state.duracion_fase = 52
-        st.rerun()
+# Detectar cambio de vela
+if st.session_state.minuto_vena is None:
+    st.session_state.minuto_vena = minuto_actual
+    st.session_state.resultado_evaluado = False
+
+cambio_de_vela = (minuto_actual != st.session_state.minuto_vena)
+
+# Si cambió la vela, evaluar resultado de la operación anterior
+if cambio_de_vela and st.session_state.senal is not None and not st.session_state.resultado_evaluado:
+    señal_anterior = st.session_state.senal
+    es_call = señal_anterior['señal'] == 'CALL'
+    precio_entrada = señal_anterior['precio']
+    precio_actual = obtener_precio_actual(codigo)
     
-    st.markdown('<div class="signal-box signal-wait">ESCANEANDO MERCADO...</div>', unsafe_allow_html=True)
+    resultado_interno = 'PERDIDA'
+    if precio_actual is not None and precio_entrada > 0:
+        if es_call and precio_actual > precio_entrada:
+            resultado_interno = 'GANADA'
+        elif not es_call and precio_actual < precio_entrada:
+            resultado_interno = 'GANADA'
+    
+    indicadores = señal_anterior.get('indicadores', {})
+    aprender_en_segundo_plano(señal_anterior['señal'], resultado_interno, indicadores)
+    
+    st.session_state.pesos = cargar_patrones()
+    st.session_state.resultado_evaluado = True
+    st.session_state.senal = None  # Limpiar señal anterior
+
+# Actualizar minuto de vela si cambió
+if cambio_de_vela:
+    st.session_state.minuto_vena = minuto_actual
+    st.session_state.resultado_evaluado = False
+
+# Determinar fase según segundo actual
+if segundo_actual < 50:
+    # FASE 1: ANÁLISIS (segundos 0-49)
+    if st.session_state.estado != 'analizando':
+        st.session_state.estado = 'analizando'
+    
+    st.markdown('<div class="signal-box signal-wait">🔵 ANALIZANDO MERCADO...</div>', unsafe_allow_html=True)
     st.markdown('<div class="radar radar-yellow"><div class="radar-number radar-number-yellow">ANALIZANDO<br>IA ACTIVA</div></div>', unsafe_allow_html=True)
     
-    proximo_minuto = (datetime.now().minute + 1) % 60
-    st.markdown(f'<div class="info-panel"><strong>Par:</strong> {par_nombre}<br><strong>Estado:</strong> Machine Learning analizando<br><strong>Proximo analisis:</strong> XX:{proximo_minuto:02d}:52<br><strong>Tiempo restante:</strong> {int(tiempo_restante)}s</div>', unsafe_allow_html=True)
+    segundos_restantes = 49 - segundo_actual
+    st.markdown(f'<div class="info-panel"><strong>Par:</strong> {par_nombre}<br><strong>Fase:</strong> Análisis de indicadores<br><strong>Segundo actual:</strong> :{segundo_actual:02d}<br><strong>Señal en:</strong> {segundos_restantes} segundos<br><strong>Vela inicia en:</strong> :00 del minuto {minuto_actual + 1 if minuto_actual < 59 else 0}</div>', unsafe_allow_html=True)
     
-    if tiempo_restante <= 0:
+    # Analizar al inicio de la fase
+    if segundo_actual <= 2 and st.session_state.senal is None:
         resultado = analizar_par(codigo)
         st.session_state.senal = resultado
-        st.session_state.estado = 'senal'
-        st.session_state.tiempo_fase = time.time()
-        st.session_state.duracion_fase = 8
-        st.rerun()
     
     time.sleep(0.5)
     st.rerun()
 
-elif st.session_state.estado == 'senal':
+elif segundo_actual < 58:
+    # FASE 2: SEÑAL (segundos 50-57)
+    if st.session_state.estado != 'senal':
+        st.session_state.estado = 'senal'
+        if st.session_state.senal is None:
+            st.session_state.senal = analizar_par(codigo)
+    
     señal = st.session_state.senal
     es_call = señal['señal'] == 'CALL'
-    countdown = max(1, int(tiempo_restante))  # CORRECCIÓN: mínimo 1 para no mostrar 0
+    segundos_restantes = 57 - segundo_actual
     
-    tipo = "ENTRAR AHORA! (CALL)" if es_call else "ENTRAR AHORA! (PUT)"
+    tipo = "🟢 ENTRAR AHORA! (CALL)" if es_call else "🔴 ENTRAR AHORA! (PUT)"
     clase_box = "signal-call" if es_call else "signal-put"
     clase_radar = "radar-green" if es_call else "radar-red"
     clase_numero = "radar-number-green" if es_call else "radar-number-red"
     
     st.markdown(f'<div class="signal-box {clase_box}">{tipo}</div>', unsafe_allow_html=True)
     
-    hora_entrada = datetime.now().strftime('%H:%M:%S')
-    st.markdown(f'<div class="info-panel"><strong>Entrada Exacta:</strong> {hora_entrada}<br><strong>Punto de Entrada:</strong> {round(señal["precio"], 5)}<br><strong>Confianza ML:</strong> {señal["confianza"]:.1f}%<br><strong>Razon:</strong> {señal["razon"]}</div>', unsafe_allow_html=True)
+    hora_entrada = ahora.strftime('%H:%M:%S')
+    st.markdown(f'<div class="info-panel"><strong>⏰ Hora de entrada:</strong> {hora_entrada}<br><strong>Punto de Entrada:</strong> {round(señal["precio"], 5)}<br><strong>Confianza:</strong> {señal["confianza"]:.1f}%<br><strong>Razon:</strong> {señal["razon"]}</div>', unsafe_allow_html=True)
     
-    st.markdown(f'<div class="radar {clase_radar}"><div class="radar-number {clase_numero}">{countdown}</div></div>', unsafe_allow_html=True)
-    st.markdown('<p style="text-align:center; color:#ffd700; font-size:18px;">SEGUNDOS PARA ENTRAR</p>', unsafe_allow_html=True)
+    st.markdown(f'<div class="radar {clase_radar}"><div class="radar-number {clase_numero}">{segundos_restantes}</div></div>', unsafe_allow_html=True)
+    st.markdown(f'<p style="text-align:center; color:#ffd700; font-size:18px;">SEGUNDOS PARA ENTRAR<br><small>La operación iniciará en la vela nueva (:00)</small></p>', unsafe_allow_html=True)
     
-    if tiempo_restante <= 0:
-        st.session_state.estado = 'operando'
-        st.session_state.tiempo_fase = time.time()
-        st.session_state.duracion_fase = 60
-        st
+    time.sleep(0.3)
+    st.rerun()
+
+elif segundo_actual < 60:
+    # FASE 3: PREPARACIÓN FINAL (segundos 58-59)
+    if st.session_state.estado != 'preparando':
+        st.session_state.estado = 'preparando'
+    
+    segundos_finales = 59 - segundo_actual
+    st.markdown('<div class="signal-box signal-wait">⚡ PREPARANDO ENTRADA...</div>', unsafe_allow_html=True)
+    st.markdown(f'<div class="radar radar-yellow"><div class="radar-number radar-number-yellow">{segundos_finales + 1}</div></div>', unsafe_allow_html=True)
+    st.markdown(f'<p style="text-align:center; color:#ffaa00; font-size:20px;">La vela nueva empieza en {segundos_finales + 1} segundos<br>¡Prepárate para entrar!</p>', unsafe_allow_html=True)
+    
+    time.sleep(0.3)
+    st.rerun()
+
+# FASE 4: OPERACIÓN EN CURSO (cuando segundo_actual vuelve a 0-49 del nuevo minuto)
+# Esta fase se activa automáticamente cuando cambia el minuto y hay una señal pendiente
+if st.session_state.senal is not None and st.session_state.resultado_evaluado and segundo_actual < 50:
+    # Estamos en el nuevo minuto, la operación está en curso
+    señal = st.session_state.senal
+    es_call = señal['señal'] == 'CALL'
+    segundos_restantes_op = 59 - segundo_actual
+    
+    tipo = "🟢 CALL EN CURSO" if es_call else "🔴 PUT EN CURSO"
+    clase_box = "signal-call" if es_call else "signal-put"
+    clase_radar = "radar-green" if es_call else "radar-red"
+    clase_numero = "radar-number-green" if es_call else "radar-number-red"
+    
+    st.markdown('<div class="info-panel" style="text-align:center;"><strong>⏳ OPERACIÓN EN CURSO (1 VELA COMPLETA)</strong></div>', unsafe_allow_html=True)
+    st.markdown(f'<div class="signal-box {clase_box}">{tipo}</div>', unsafe_allow_html=True)
+    
+    st.markdown(f'<div class="info-panel"><strong>🎯 Entrada:</strong> {round(señal["precio"], 5)}<br><strong>💪 Confianza:</strong> {señal["confianza"]:.1f}%<br><strong>⏱️ Expira en:</strong> {segundos_restantes_op} segundos</div>', unsafe_allow_html=True)
+    
+    st.markdown(f'<div class="radar {clase_radar}"><div class="radar-number {clase_numero}">{segundos_restantes_op}</div></div>', unsafe_allow_html=True)
+    st.markdown('<p style="text-align:center; color:#ffaa00; font-size:18px;">SEGUNDOS RESTANTES DE LA VELA</p>', unsafe_allow_html=True)
+    st.warning("⚠️ No cierres esta página")
+    
+    time.sleep(0.5)
+    st.rerun()
+
+st.markdown("---")
+st.markdown("### 📊 Historial de Entrenamiento ML")
+hist = cargar_historial()
+if hist:
+    for op in reversed(hist[-10:]):
+        emoji = "✅" if op['resultado'] == 'GANADA' else "❌"
+        st.write(f"{emoji} {op['fecha']} - {op['señal']} - {op['resultado']}")
+else:
+    st.info("La IA está empezando a entrenar desde cero.")
+
+st.markdown(f'<div class="footer">ZT TRADERS | Usuario: {st.session_state.usuario_actual} | Sincronizado con Velas de 1 Minuto</div>', unsafe_allow_html=True)
