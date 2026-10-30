@@ -9,7 +9,7 @@ from datetime import datetime
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.model_selection import cross_val_score
 
-st.set_page_config(page_title="ZT TRADERS", layout="centered", page_icon="")
+st.set_page_config(page_title="ZT TRADERS", layout="centered", page_icon="🎯")
 
 ARCHIVO_HISTORIAL = "historial.json"
 ARCHIVO_PATRONES = "patrones.json"
@@ -260,12 +260,13 @@ PARES = {
 }
 
 # Inicialización
-if 'estado' not in st.session_state: st.session_state.estado = 'analizando'
+if 'estado' not in st.session_state: st.session_state.estado = 'esperando'
 if 'par_sel' not in st.session_state: st.session_state.par_sel = 'EUR/USD'
 if 'senal' not in st.session_state: st.session_state.senal = None
 if 'pesos' not in st.session_state: st.session_state.pesos = cargar_patrones()
 if 'inicio_ciclo' not in st.session_state: st.session_state.inicio_ciclo = None
 if 'resultado_guardado' not in st.session_state: st.session_state.resultado_guardado = False
+if 'calibrado' not in st.session_state: st.session_state.calibrado = False
 
 CSS = """
 <style>
@@ -305,10 +306,11 @@ with col_reset:
         if os.path.exists(ARCHIVO_HISTORIAL): os.remove(ARCHIVO_HISTORIAL)
         if os.path.exists(ARCHIVO_PATRONES): os.remove(ARCHIVO_PATRONES)
         st.session_state.pesos = cargar_patrones()
-        st.session_state.estado = 'analizando'
+        st.session_state.estado = 'esperando'
         st.session_state.senal = None
         st.session_state.inicio_ciclo = None
         st.session_state.resultado_guardado = False
+        st.session_state.calibrado = False
         st.success("Contadores reseteados")
         time.sleep(1)
         st.rerun()
@@ -345,18 +347,28 @@ with c4:
 st.markdown("---")
 
 # ==========================================
-# LÓGICA SIMPLE Y DIRECTA - SIN SINCRONIZACIÓN VISIBLE
+# LÓGICA CON CALIBRACIÓN EN :59 (SOLUCIÓN DE LEONARDO)
 # ==========================================
-# Al abrir la app: empieza inmediatamente en "ANALIZANDO"
-# Ciclo: 55s análisis → 5s señal → 60s operación → repite
-# Cronómetro SOLO en señal (5s) y operación (60s)
+# 1. Al abrir: espera al segundo :59 (invisible, sin mostrar nada)
+# 2. Una vez calibrado: ciclo de 120s (55s análisis + 5s señal + 60s operación)
+# 3. Cronómetro SOLO en señal y operación
+# 4. Nunca más pasa por calibración
 # ==========================================
 
 ahora = datetime.now()
+segundo_actual = ahora.second
 
-# Si no hay inicio de ciclo, crearlo ahora mismo
-if st.session_state.inicio_ciclo is None:
-    st.session_state.inicio_ciclo = ahora
+# CALIBRACIÓN INICIAL: esperar al :59 (una sola vez, invisible)
+if not st.session_state.calibrado:
+    if segundo_actual == 59:
+        st.session_state.calibrado = True
+        st.session_state.inicio_ciclo = ahora
+        st.session_state.estado = 'analizando'
+        st.rerun()
+    else:
+        # Esperar en silencio (sin mostrar cronómetro azul)
+        time.sleep(0.3)
+        st.rerun()
 
 # Calcular tiempo transcurrido desde el inicio del ciclo
 tiempo_transcurrido = (ahora - st.session_state.inicio_ciclo).total_seconds()
