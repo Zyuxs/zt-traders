@@ -11,11 +11,7 @@ from sklearn.model_selection import cross_val_score
 
 st.set_page_config(page_title="ZT TRADERS", layout="centered", page_icon="🎯")
 
-# ==========================================
-# 🔑 PEGA AQUÍ TU API KEY DE TWELVE DATA
-# ==========================================
-TWELVE_DATA_API_KEY = "PEGA_TU_API_KEY_AQUI"
-# ==========================================
+TWELVE_DATA_API_KEY = "03f557e7efa24c3889042680d2039aee"
 
 ARCHIVO_HISTORIAL = "historial.json"
 ARCHIVO_PATRONES = "patrones.json"
@@ -166,7 +162,6 @@ def predecir_con_ml(modelo, indicadores):
         return 50.0
 
 def obtener_datos_twelve(symbol, interval='1min', outputsize=100):
-    """Obtiene datos en TIEMPO REAL de Twelve Data (Forex)"""
     try:
         url = f"https://api.twelvedata.com/time_series"
         params = {
@@ -178,10 +173,8 @@ def obtener_datos_twelve(symbol, interval='1min', outputsize=100):
         }
         response = requests.get(url, params=params, timeout=10)
         data = response.json()
-        
         if 'values' not in data:
             return None
-        
         df = pd.DataFrame(data['values'])
         df = df.rename(columns={
             'datetime': 'timestamp',
@@ -191,11 +184,8 @@ def obtener_datos_twelve(symbol, interval='1min', outputsize=100):
             'close': 'close',
             'volume': 'volume'
         })
-        
         for col in ['open', 'high', 'low', 'close']:
             df[col] = pd.to_numeric(df[col])
-        
-        # Invertir para que el más reciente esté al final
         df = df.iloc[::-1].reset_index(drop=True)
         return df
     except Exception as e:
@@ -203,7 +193,6 @@ def obtener_datos_twelve(symbol, interval='1min', outputsize=100):
         return None
 
 def obtener_datos_binance(symbol, interval='1m', limit=100):
-    """Obtiene datos en TIEMPO REAL de Binance (Cripto)"""
     try:
         url = f"https://api.binance.com/api/v3/klines"
         params = {'symbol': symbol, 'interval': interval, 'limit': limit}
@@ -222,13 +211,10 @@ def obtener_datos_binance(symbol, interval='1m', limit=100):
         return None
 
 def analizar_par(codigo_par, tipo='crypto'):
-    """Analiza el mercado usando la fuente correcta según el tipo"""
-    # Obtener datos según el tipo
     if tipo == 'crypto':
         datos_1m = obtener_datos_binance(codigo_par, interval='1m', limit=100)
         datos_5m = obtener_datos_binance(codigo_par, interval='5m', limit=100)
     else:
-        # Forex usa Twelve Data
         datos_1m = obtener_datos_twelve(codigo_par, interval='1min', outputsize=100)
         datos_5m = obtener_datos_twelve(codigo_par, interval='5min', outputsize=100)
     
@@ -239,7 +225,6 @@ def analizar_par(codigo_par, tipo='crypto'):
                                'bb_position': 0.5, 'sma_cross': 0, 'direccion': 'CALL'}}
     
     try:
-        # Calcular indicadores (columnas en minúsculas para ambos)
         datos_1m['RSI'] = ta.momentum.RSIIndicator(datos_1m['close'], window=14).rsi()
         datos_1m['STOCH'] = ta.momentum.StochasticOscillator(datos_1m['high'], datos_1m['low'], datos_1m['close']).stoch()
         datos_1m['MACD'] = ta.trend.MACD(datos_1m['close']).macd()
@@ -266,7 +251,6 @@ def analizar_par(codigo_par, tipo='crypto'):
         sma_1m = float(u1['SMA_10'])
         sma_5m = float(u5['SMA_20'])
 
-        # Determinar dirección
         dirección = 'CALL' if rsi < 50 else 'PUT'
         if precio <= bb_low: dirección = 'CALL'
         elif precio >= bb_high: dirección = 'PUT'
@@ -282,7 +266,6 @@ def analizar_par(codigo_par, tipo='crypto'):
         indicadores = {'rsi': rsi, 'stoch': stoch, 'macd': macd - macd_sig, 'adx': adx, 
                       'bb_position': bb_position, 'sma_cross': sma_cross, 'direccion': dirección}
 
-        # Machine Learning
         modelo_info = entrenar_modelo_ml()
         if modelo_info and modelo_info['modelo']:
             probabilidad_ml = predecir_con_ml(modelo_info['modelo'], indicadores)
@@ -292,7 +275,6 @@ def analizar_par(codigo_par, tipo='crypto'):
                        'razon': f"ML: {probabilidad_ml:.1f}% (Precisión: {modelo_info['accuracy']*100:.0f}%, Muestras: {modelo_info['muestras']})", 
                        'indicadores': indicadores}
 
-        # Sistema clásico
         confianza = 0
         razones = []
         if dirección == 'CALL' and rsi < 35: confianza += 25; razones.append("RSI sobreventa")
@@ -318,7 +300,6 @@ def analizar_par(codigo_par, tipo='crypto'):
                                'bb_position': 0.5, 'sma_cross': 0, 'direccion': 'CALL'}}
 
 def obtener_precio_actual(codigo_par, tipo='crypto'):
-    """Obtiene precio actual en tiempo real"""
     if tipo == 'crypto':
         try:
             url = f"https://api.binance.com/api/v3/ticker/price?symbol={codigo_par}"
@@ -328,7 +309,6 @@ def obtener_precio_actual(codigo_par, tipo='crypto'):
         except:
             return None
     else:
-        # Forex usa Twelve Data
         try:
             url = f"https://api.twelvedata.com/price"
             params = {'symbol': codigo_par, 'apikey': TWELVE_DATA_API_KEY}
@@ -340,9 +320,7 @@ def obtener_precio_actual(codigo_par, tipo='crypto'):
         except:
             return None
 
-# TODOS LOS PARES: Forex (Twelve Data) + Criptomonedas (Binance)
 PARES = {
-    # Forex - Twelve Data (Tiempo Real)
     'EUR/USD': {'codigo': 'EUR/USD', 'tipo': 'forex'},
     'GBP/USD': {'codigo': 'GBP/USD', 'tipo': 'forex'},
     'USD/JPY': {'codigo': 'USD/JPY', 'tipo': 'forex'},
@@ -355,8 +333,6 @@ PARES = {
     'USD/CAD': {'codigo': 'USD/CAD', 'tipo': 'forex'},
     'USD/CHF': {'codigo': 'USD/CHF', 'tipo': 'forex'},
     'AUD/JPY': {'codigo': 'AUD/JPY', 'tipo': 'forex'},
-    
-    # Criptomonedas - Binance (Tiempo Real)
     'Bitcoin': {'codigo': 'BTCUSDT', 'tipo': 'crypto'},
     'Ethereum': {'codigo': 'ETHUSDT', 'tipo': 'crypto'},
     'Polkadot': {'codigo': 'DOTUSDT', 'tipo': 'crypto'},
@@ -370,7 +346,6 @@ PARES = {
     'Litecoin': {'codigo': 'LTCUSDT', 'tipo': 'crypto'}
 }
 
-# Inicialización
 if 'estado' not in st.session_state: st.session_state.estado = 'analizando'
 if 'par_sel' not in st.session_state: st.session_state.par_sel = 'EUR/USD'
 if 'senal' not in st.session_state: st.session_state.senal = None
@@ -402,7 +377,6 @@ body { background: #000; color: #fff; font-family: Arial, sans-serif; }
 """
 st.markdown(CSS, unsafe_allow_html=True)
 
-# SOLO BOTÓN DE CERRAR SESIÓN (SIN RESET)
 if st.button("🔒 Cerrar Sesión", key="logout_btn"):
     st.session_state.logueado = False
     st.session_state.usuario_actual = ""
@@ -441,7 +415,6 @@ with c4:
 
 st.markdown("---")
 
-# CICLO DE 2 MINUTOS: Minuto PAR = Análisis+Señal, Minuto IMPAR = Operación
 ahora = datetime.now()
 minuto_actual = ahora.minute
 segundo_actual = ahora.second
@@ -454,7 +427,6 @@ elif st.session_state.minuto_anterior != minuto_actual:
     st.session_state.minuto_anterior = minuto_actual
 
 if minuto_es_par:
-    # MINUTO PAR: Análisis (0-54s) + Señal (55-59s)
     if segundo_actual < 55:
         if st.session_state.estado != 'analizando':
             st.session_state.estado = 'analizando'
@@ -484,7 +456,6 @@ if minuto_es_par:
         time_module.sleep(0.3)
         st.rerun()
 else:
-    # MINUTO IMPAR: Operación (0-59s)
     if st.session_state.estado != 'operando':
         st.session_state.estado = 'operando'
     señal = st.session_state.senal
