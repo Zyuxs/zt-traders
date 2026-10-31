@@ -296,4 +296,145 @@ CSS = """
 <style>
 body { background: #000; color: #fff; font-family: Arial, sans-serif; }
 .main-header { background: linear-gradient(90deg, #1a1a2e, #16213e); padding: 20px; border-radius: 10px; border: 2px solid #ffd700; text-align: center; margin-bottom: 20px; }
-.main-header h1 { color: #ffd700; margin: 0;
+.main-header h1 { color: #ffd700; margin: 0; font-size: 32px; letter-spacing: 3px; }
+.main-header p { color: #aaa; margin: 8px 0 0 0; font-size: 13px; }
+.signal-box { padding: 35px; border-radius: 15px; text-align: center; font-size: 36px; font-weight: bold; margin: 20px 0; letter-spacing: 2px; }
+.signal-call { background: linear-gradient(135deg, #00cc00, #00ff00); border: 4px solid #00ff00; color: white; box-shadow: 0 0 40px rgba(0, 255, 0, 0.6); }
+.signal-put { background: linear-gradient(135deg, #cc0000, #ff0000); border: 4px solid #ff0000; color: white; box-shadow: 0 0 40px rgba(255, 0, 0, 0.6); }
+.signal-wait { background: #1a1a2e; border: 3px solid #ffd700; color: #ffd700; }
+.radar { width: 240px; height: 240px; border-radius: 50%; display: flex; align-items: center; justify-content: center; margin: 25px auto; }
+.radar-green { border: 4px solid #00ff00; background: radial-gradient(circle, #0a2a1a, #000); box-shadow: 0 0 40px rgba(0, 255, 0, 0.6); }
+.radar-red { border: 4px solid #ff0000; background: radial-gradient(circle, #2a0a0a, #000); box-shadow: 0 0 40px rgba(255, 0, 0, 0.6); }
+.radar-number { font-size: 90px; font-weight: bold; text-shadow: 0 0 25px currentColor; }
+.radar-number-green { color: #00ff00; }
+.radar-number-red { color: #ff0000; }
+.info-panel { background: #1a1a2e; border: 2px solid #00ff88; border-radius: 10px; padding: 15px; margin: 12px 0; }
+.info-panel strong { color: #00ff88; }
+.stat-box { background: #1a1a2e; border: 2px solid #ffd700; border-radius: 10px; padding: 12px; text-align: center; }
+.footer { text-align: center; color: #666; font-size: 11px; margin-top: 25px; padding: 15px; border-top: 1px solid #333; }
+</style>
+"""
+st.markdown(CSS, unsafe_allow_html=True)
+
+# ✅ SOLO BOTÓN DE CERRAR SESIÓN (SIN RESET)
+if st.button("🔒 Cerrar Sesión", key="logout_btn"):
+    st.session_state.logueado = False
+    st.session_state.usuario_actual = ""
+    st.rerun()
+
+st.markdown(f'<div class="main-header"><h1>ZT TRADERS</h1><p>Bienvenido: {st.session_state.usuario_actual} | Datos en TIEMPO REAL</p></div>', unsafe_allow_html=True)
+
+col1, col2 = st.columns([2, 1])
+with col1:
+    par_nombre = st.selectbox("Par:", list(PARES.keys()), index=list(PARES.keys()).index(st.session_state.par_sel))
+    st.session_state.par_sel = par_nombre
+with col2:
+    ahora = datetime.now()
+    hora_actual = ahora.strftime('%H:%M:%S')
+    st.markdown(f'<div class="stat-box"><strong style="color:#ffd700;">HORA</strong><br><span style="color:#00ff88; font-size:22px;">{hora_actual}</span></div>', unsafe_allow_html=True)
+
+codigo = par_nombre
+hist = cargar_historial()
+modelo_info = entrenar_modelo_ml()
+ops_con_indicadores = sum(1 for op in hist if 'indicadores' in op)
+
+c1, c2, c3, c4 = st.columns(4)
+with c1: st.markdown(f'<div class="stat-box"><strong style="color:#ffd700;">Winrate</strong><br><span style="color:#00ff88; font-size:22px;">{round(st.session_state.pesos["winrate"], 1)}%</span></div>', unsafe_allow_html=True)
+with c2: st.markdown(f'<div class="stat-box"><strong style="color:#ffd700;">Operaciones</strong><br><span style="color:#00ff88; font-size:22px;">{st.session_state.pesos["total_ops"]}</span></div>', unsafe_allow_html=True)
+with c3: st.markdown(f'<div class="stat-box"><strong style="color:#ffd700;">Ganadas</strong><br><span style="color:#00ff88; font-size:22px;">{st.session_state.pesos["total_ganadas"]}</span></div>', unsafe_allow_html=True)
+with c4: 
+    if modelo_info and ops_con_indicadores >= 20:
+        precision = modelo_info["accuracy"] * 100
+        color_precision = "#00ff88" if precision >= 60 else "#ffaa00" if precision >= 50 else "#ff4444"
+        st.markdown(f'<div class="stat-box"><strong style="color:#ffd700;">ML Precisión</strong><br><span style="color:{color_precision}; font-size:22px;">{precision:.0f}%</span><br><small style="color:#aaa;">({ops_con_indicadores} muestras)</small></div>', unsafe_allow_html=True)
+    else:
+        st.markdown(f'<div class="stat-box"><strong style="color:#ffd700;">ML Status</strong><br><span style="color:#ff8800; font-size:18px;">Entrenando...<br>({ops_con_indicadores}/20)</span></div>', unsafe_allow_html=True)
+
+st.markdown("---")
+
+ahora = datetime.now()
+minuto_actual = ahora.minute
+segundo_actual = ahora.second
+minuto_es_par = (minuto_actual % 2 == 0)
+
+if st.session_state.minuto_anterior is None:
+    st.session_state.minuto_anterior = minuto_actual
+elif st.session_state.minuto_anterior != minuto_actual:
+    st.session_state.resultado_guardado = False
+    st.session_state.minuto_anterior = minuto_actual
+
+if minuto_es_par:
+    if segundo_actual < 55:
+        if st.session_state.estado != 'analizando':
+            st.session_state.estado = 'analizando'
+            st.session_state.senal = None
+            st.session_state.resultado_guardado = False
+        if st.session_state.senal is None:
+            st.session_state.senal = analizar_par(codigo)
+        st.markdown('<div class="signal-box signal-wait">ANALIZANDO...</div>', unsafe_allow_html=True)
+        st.markdown('<div class="info-panel" style="text-align:center;"><strong>La IA está analizando el mercado (TIEMPO REAL)...</strong></div>', unsafe_allow_html=True)
+        time_module.sleep(1)
+        st.rerun()
+    else:
+        if st.session_state.estado != 'senal':
+            st.session_state.estado = 'senal'
+            if st.session_state.senal is None:
+                st.session_state.senal = analizar_par(codigo)
+        señal = st.session_state.senal
+        es_call = señal['señal'] == 'CALL'
+        segundos_restantes = 59 - segundo_actual
+        tipo = "CALL" if es_call else "PUT"
+        clase_box = "signal-call" if es_call else "signal-put"
+        clase_radar = "radar-green" if es_call else "radar-red"
+        clase_numero = "radar-number-green" if es_call else "radar-number-red"
+        st.markdown(f'<div class="signal-box {clase_box}">{tipo}</div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="info-panel"><strong>Punto:</strong> {round(señal["precio"], 5)} | <strong>Confianza:</strong> {señal["confianza"]:.1f}%</div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="radar {clase_radar}"><div class="radar-number {clase_numero}">{segundos_restantes}</div></div>', unsafe_allow_html=True)
+        time_module.sleep(0.3)
+        st.rerun()
+else:
+    if st.session_state.estado != 'operando':
+        st.session_state.estado = 'operando'
+    señal = st.session_state.senal
+    if señal is None:
+        señal = analizar_par(codigo)
+        st.session_state.senal = señal
+    es_call = señal['señal'] == 'CALL'
+    segundos_restantes_op = 59 - segundo_actual
+    tipo = "CALL" if es_call else "PUT"
+    clase_box = "signal-call" if es_call else "signal-put"
+    clase_radar = "radar-green" if es_call else "radar-red"
+    clase_numero = "radar-number-green" if es_call else "radar-number-red"
+    st.markdown(f'<div class="signal-box {clase_box}">{tipo}</div>', unsafe_allow_html=True)
+    st.markdown(f'<div class="info-panel"><strong>Entrada:</strong> {round(señal["precio"], 5)} | <strong>Confianza:</strong> {señal["confianza"]:.1f}%</div>', unsafe_allow_html=True)
+    st.markdown(f'<div class="radar {clase_radar}"><div class="radar-number {clase_numero}">{segundos_restantes_op}</div></div>', unsafe_allow_html=True)
+    st.warning("No cierres esta pagina")
+    
+    if segundo_actual >= 58 and not st.session_state.resultado_guardado:
+        precio_entrada = señal['precio']
+        precio_actual = obtener_precio_actual(codigo)
+        resultado_interno = 'PERDIDA'
+        if precio_actual is not None and precio_entrada > 0:
+            if es_call and precio_actual > precio_entrada: resultado_interno = 'GANADA'
+            elif not es_call and precio_actual < precio_entrada: resultado_interno = 'GANADA'
+        elif precio_entrada == 0.0:
+            resultado_interno = None
+        if resultado_interno is not None:
+            indicadores = señal.get('indicadores', {})
+            aprender_en_segundo_plano(señal['señal'], resultado_interno, indicadores)
+            st.session_state.pesos = cargar_patrones()
+        st.session_state.resultado_guardado = True
+    time_module.sleep(0.5)
+    st.rerun()
+
+st.markdown("---")
+st.markdown("### Historial")
+hist = cargar_historial()
+if hist:
+    for op in reversed(hist[-10:]):
+        emoji = "✅" if op['resultado'] == 'GANADA' else "❌"
+        st.write(f"{emoji} {op['fecha']} - {op['señal']} - {op['resultado']}")
+else:
+    st.info("La IA está empezando a entrenar desde cero.")
+
+st.markdown(f'<div class="footer">ZT TRADERS | Usuario: {st.session_state.usuario_actual} | Datos BINANCE en TIEMPO REAL</div>', unsafe_allow_html=True)
