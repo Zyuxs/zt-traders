@@ -1,6 +1,6 @@
 streamlit
 pandas
-yfinance
+requests
 ta
 numpy
 scikit-learn
