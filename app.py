@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 import requests
+import yfinance as yf
 import ta
 import time as time_module
 import json
@@ -10,8 +11,6 @@ from sklearn.ensemble import RandomForestClassifier
 from sklearn.model_selection import cross_val_score
 
 st.set_page_config(page_title="ZT TRADERS", layout="centered", page_icon="🎯")
-
-TWELVE_DATA_API_KEY = "03f557e7efa24c3889042680d2039aee"
 
 ARCHIVO_HISTORIAL = "historial.json"
 ARCHIVO_PATRONES = "patrones.json"
@@ -161,37 +160,6 @@ def predecir_con_ml(modelo, indicadores):
     except:
         return 50.0
 
-def obtener_datos_twelve(symbol, interval='1min', outputsize=100):
-    try:
-        url = f"https://api.twelvedata.com/time_series"
-        params = {
-            'symbol': symbol,
-            'interval': interval,
-            'outputsize': outputsize,
-            'apikey': TWELVE_DATA_API_KEY,
-            'format': 'JSON'
-        }
-        response = requests.get(url, params=params, timeout=10)
-        data = response.json()
-        if 'values' not in data:
-            return None
-        df = pd.DataFrame(data['values'])
-        df = df.rename(columns={
-            'datetime': 'timestamp',
-            'open': 'open',
-            'high': 'high',
-            'low': 'low',
-            'close': 'close',
-            'volume': 'volume'
-        })
-        for col in ['open', 'high', 'low', 'close']:
-            df[col] = pd.to_numeric(df[col])
-        df = df.iloc[::-1].reset_index(drop=True)
-        return df
-    except Exception as e:
-        print(f"Error Twelve Data: {e}")
-        return None
-
 def obtener_datos_binance(symbol, interval='1m', limit=100):
     try:
         url = f"https://api.binance.com/api/v3/klines"
@@ -210,13 +178,23 @@ def obtener_datos_binance(symbol, interval='1m', limit=100):
         print(f"Error Binance: {e}")
         return None
 
+def obtener_datos_yahoo(symbol, period="2d", interval="1m"):
+    try:
+        datos = yf.download(symbol, period=period, interval=interval, progress=False)
+        if isinstance(datos.columns, pd.MultiIndex):
+            datos.columns = datos.columns.get_level_values(0)
+        datos = datos[['Open', 'High', 'Low', 'Close']].copy()
+        return datos
+    except:
+        return None
+
 def analizar_par(codigo_par, tipo='crypto'):
     if tipo == 'crypto':
         datos_1m = obtener_datos_binance(codigo_par, interval='1m', limit=100)
         datos_5m = obtener_datos_binance(codigo_par, interval='5m', limit=100)
     else:
-        datos_1m = obtener_datos_twelve(codigo_par, interval='1min', outputsize=100)
-        datos_5m = obtener_datos_twelve(codigo_par, interval='5min', outputsize=100)
+        datos_1m = obtener_datos_yahoo(codigo_par, period="2d", interval="1m")
+        datos_5m = obtener_datos_yahoo(codigo_par, period="5d", interval="5m")
     
     if datos_1m is None or datos_5m is None or len(datos_1m) < 30:
         return {'señal': 'CALL', 'precio': 0.0, 'rsi': 50, 'confianza': 10, 
@@ -225,43 +203,65 @@ def analizar_par(codigo_par, tipo='crypto'):
                                'bb_position': 0.5, 'sma_cross': 0, 'direccion': 'CALL'}}
     
     try:
-        datos_1m['RSI'] = ta.momentum.RSIIndicator(datos_1m['close'], window=14).rsi()
-        datos_1m['STOCH'] = ta.momentum.StochasticOscillator(datos_1m['high'], datos_1m['low'], datos_1m['close']).stoch()
-        datos_1m['MACD'] = ta.trend.MACD(datos_1m['close']).macd()
-        datos_1m['MACD_signal'] = ta.trend.MACD(datos_1m['close']).macd_signal()
-        datos_1m['ADX'] = ta.trend.ADXIndicator(datos_1m['high'], datos_1m['low'], datos_1m['close']).adx()
-        bb = ta.volatility.BollingerBands(datos_1m['close'], window=20, window_dev=2)
-        datos_1m['BB_High'] = bb.bollinger_hband()
-        datos_1m['BB_Low'] = bb.bollinger_lband()
-        datos_1m['SMA_10'] = datos_1m['close'].rolling(window=10).mean()
-        datos_5m['SMA_20'] = datos_5m['close'].rolling(window=20).mean()
-
-        u1 = datos_1m.iloc[-1]
-        a1 = datos_1m.iloc[-2]
-        u5 = datos_5m.iloc[-1]
+        if tipo == 'crypto':
+            datos_1m['RSI'] = ta.momentum.RSIIndicator(datos_1m['close'], window=14).rsi()
+            datos_1m['STOCH'] = ta.momentum.StochasticOscillator(datos_1m['high'], datos_1m['low'], datos_1m['close']).stoch()
+            datos_1m['MACD'] = ta.trend.MACD(datos_1m['close']).macd()
+            datos_1m['MACD_signal'] = ta.trend.MACD(datos_1m['close']).macd_signal()
+            datos_1m['ADX'] = ta.trend.ADXIndicator(datos_1m['high'], datos_1m['low'], datos_1m['close']).adx()
+            bb = ta.volatility.BollingerBands(datos_1m['close'], window=20, window_dev=2)
+            datos_1m['BB_High'] = bb.bollinger_hband()
+            datos_1m['BB_Low'] = bb.bollinger_lband()
+            datos_1m['SMA_10'] = datos_1m['close'].rolling(window=10).mean()
+            datos_5m['SMA_20'] = datos_5m['close'].rolling(window=20).mean()
+            u1 = datos_1m.iloc[-1]
+            a1 = datos_1m.iloc[-2]
+            u5 = datos_5m.iloc[-1]
+            precio = float(u1['close'])
+            bb_high = float(u1['BB_High'])
+            bb_low = float(u1['BB_Low'])
+            sma_1m = float(u1['SMA_10'])
+            sma_5m = float(u5['SMA_20'])
+        else:
+            datos_1m['RSI'] = ta.momentum.RSIIndicator(datos_1m['Close'], window=14).rsi()
+            datos_1m['STOCH'] = ta.momentum.StochasticOscillator(datos_1m['High'], datos_1m['Low'], datos_1m['Close']).stoch()
+            datos_1m['MACD'] = ta.trend.MACD(datos_1m['Close']).macd()
+            datos_1m['MACD_signal'] = ta.trend.MACD(datos_1m['Close']).macd_signal()
+            datos_1m['ADX'] = ta.trend.ADXIndicator(datos_1m['High'], datos_1m['Low'], datos_1m['Close']).adx()
+            bb = ta.volatility.BollingerBands(datos_1m['Close'], window=20, window_dev=2)
+            datos_1m['BB_High'] = bb.bollinger_hband()
+            datos_1m['BB_Low'] = bb.bollinger_lband()
+            datos_1m['SMA_10'] = datos_1m['Close'].rolling(window=10).mean()
+            datos_5m['SMA_20'] = datos_5m['Close'].rolling(window=20).mean()
+            u1 = datos_1m.iloc[-1]
+            a1 = datos_1m.iloc[-2]
+            u5 = datos_5m.iloc[-1]
+            precio = float(u1['Close'])
+            bb_high = float(u1['BB_High'])
+            bb_low = float(u1['BB_Low'])
+            sma_1m = float(u1['SMA_10'])
+            sma_5m = float(u5['SMA_20'])
         
         rsi = 50.0 if pd.isna(u1['RSI']) else float(u1['RSI'])
         stoch = 50.0 if pd.isna(u1['STOCH']) else float(u1['STOCH'])
         macd = 0.0 if pd.isna(u1['MACD']) else float(u1['MACD'])
         macd_sig = 0.0 if pd.isna(u1['MACD_signal']) else float(u1['MACD_signal'])
         adx = 20.0 if pd.isna(u1['ADX']) else float(u1['ADX'])
-        precio = float(u1['close'])
-        bb_high = float(u1['BB_High'])
-        bb_low = float(u1['BB_Low'])
-        sma_1m = float(u1['SMA_10'])
-        sma_5m = float(u5['SMA_20'])
 
         dirección = 'CALL' if rsi < 50 else 'PUT'
         if precio <= bb_low: dirección = 'CALL'
         elif precio >= bb_high: dirección = 'PUT'
-        if precio > sma_1m and a1['close'] <= a1['SMA_10']: dirección = 'CALL'
-        elif precio < sma_1m and a1['close'] >= a1['SMA_10']: dirección = 'PUT'
+        if precio > sma_1m and a1['Close'] if tipo == 'forex' else a1['close'] <= (a1['SMA_10'] if tipo == 'forex' else a1['SMA_10']): dirección = 'CALL'
+        elif precio < sma_1m and a1['Close'] if tipo == 'forex' else a1['close'] >= (a1['SMA_10'] if tipo == 'forex' else a1['SMA_10']): dirección = 'PUT'
 
         bb_position = (precio - bb_low) / (bb_high - bb_low) if bb_high != bb_low else 0.5
         bb_position = max(0, min(1, bb_position))
         sma_cross = 0
-        if precio > sma_1m and a1['close'] <= a1['SMA_10']: sma_cross = 1
-        elif precio < sma_1m and a1['close'] >= a1['SMA_10']: sma_cross = -1
+        
+        a1_close = a1['Close'] if tipo == 'forex' else a1['close']
+        a1_sma = a1['SMA_10']
+        if precio > sma_1m and a1_close <= a1_sma: sma_cross = 1
+        elif precio < sma_1m and a1_close >= a1_sma: sma_cross = -1
 
         indicadores = {'rsi': rsi, 'stoch': stoch, 'macd': macd - macd_sig, 'adx': adx, 
                       'bb_position': bb_position, 'sma_cross': sma_cross, 'direccion': dirección}
@@ -310,29 +310,27 @@ def obtener_precio_actual(codigo_par, tipo='crypto'):
             return None
     else:
         try:
-            url = f"https://api.twelvedata.com/price"
-            params = {'symbol': codigo_par, 'apikey': TWELVE_DATA_API_KEY}
-            response = requests.get(url, params=params, timeout=5)
-            data = response.json()
-            if 'price' in data:
-                return float(data['price'])
-            return None
+            datos = yf.download(codigo_par, period="1d", interval="1m", progress=False)
+            if isinstance(datos.columns, pd.MultiIndex):
+                datos.columns = datos.columns.get_level_values(0)
+            if len(datos) < 1: return None
+            return float(datos['Close'].iloc[-1])
         except:
             return None
 
 PARES = {
-    'EUR/USD': {'codigo': 'EUR/USD', 'tipo': 'forex'},
-    'GBP/USD': {'codigo': 'GBP/USD', 'tipo': 'forex'},
-    'USD/JPY': {'codigo': 'USD/JPY', 'tipo': 'forex'},
-    'AUD/USD': {'codigo': 'AUD/USD', 'tipo': 'forex'},
-    'EUR/JPY': {'codigo': 'EUR/JPY', 'tipo': 'forex'},
-    'AUD/CAD': {'codigo': 'AUD/CAD', 'tipo': 'forex'},
-    'EUR/GBP': {'codigo': 'EUR/GBP', 'tipo': 'forex'},
-    'GBP/JPY': {'codigo': 'GBP/JPY', 'tipo': 'forex'},
-    'NZD/USD': {'codigo': 'NZD/USD', 'tipo': 'forex'},
-    'USD/CAD': {'codigo': 'USD/CAD', 'tipo': 'forex'},
-    'USD/CHF': {'codigo': 'USD/CHF', 'tipo': 'forex'},
-    'AUD/JPY': {'codigo': 'AUD/JPY', 'tipo': 'forex'},
+    'EUR/USD': {'codigo': 'EURUSD=X', 'tipo': 'forex'},
+    'GBP/USD': {'codigo': 'GBPUSD=X', 'tipo': 'forex'},
+    'USD/JPY': {'codigo': 'USDJPY=X', 'tipo': 'forex'},
+    'AUD/USD': {'codigo': 'AUDUSD=X', 'tipo': 'forex'},
+    'EUR/JPY': {'codigo': 'EURJPY=X', 'tipo': 'forex'},
+    'AUD/CAD': {'codigo': 'AUDCAD=X', 'tipo': 'forex'},
+    'EUR/GBP': {'codigo': 'EURGBP=X', 'tipo': 'forex'},
+    'GBP/JPY': {'codigo': 'GBPJPY=X', 'tipo': 'forex'},
+    'NZD/USD': {'codigo': 'NZDUSD=X', 'tipo': 'forex'},
+    'USD/CAD': {'codigo': 'USDCAD=X', 'tipo': 'forex'},
+    'USD/CHF': {'codigo': 'USDCHF=X', 'tipo': 'forex'},
+    'AUD/JPY': {'codigo': 'AUDJPY=X', 'tipo': 'forex'},
     'Bitcoin': {'codigo': 'BTCUSDT', 'tipo': 'crypto'},
     'Ethereum': {'codigo': 'ETHUSDT', 'tipo': 'crypto'},
     'Polkadot': {'codigo': 'DOTUSDT', 'tipo': 'crypto'},
@@ -382,7 +380,7 @@ if st.button("🔒 Cerrar Sesión", key="logout_btn"):
     st.session_state.usuario_actual = ""
     st.rerun()
 
-st.markdown(f'<div class="main-header"><h1>ZT TRADERS</h1><p>Bienvenido: {st.session_state.usuario_actual} | Tiempo Real (Twelve Data + Binance)</p></div>', unsafe_allow_html=True)
+st.markdown(f'<div class="main-header"><h1>ZT TRADERS</h1><p>Bienvenido: {st.session_state.usuario_actual} | Binance + Yahoo Finance</p></div>', unsafe_allow_html=True)
 
 col1, col2 = st.columns([2, 1])
 with col1:
@@ -435,7 +433,7 @@ if minuto_es_par:
         if st.session_state.senal is None:
             st.session_state.senal = analizar_par(codigo, tipo)
         st.markdown('<div class="signal-box signal-wait">ANALIZANDO...</div>', unsafe_allow_html=True)
-        st.markdown('<div class="info-panel" style="text-align:center;"><strong>La IA está analizando el mercado (TIEMPO REAL)...</strong></div>', unsafe_allow_html=True)
+        st.markdown('<div class="info-panel" style="text-align:center;"><strong>La IA está analizando el mercado...</strong></div>', unsafe_allow_html=True)
         time_module.sleep(1)
         st.rerun()
     else:
@@ -500,4 +498,4 @@ if hist:
 else:
     st.info("La IA está empezando a entrenar desde cero.")
 
-st.markdown(f'<div class="footer">ZT TRADERS | Usuario: {st.session_state.usuario_actual} | Twelve Data + Binance Tiempo Real</div>', unsafe_allow_html=True)
+st.markdown(f'<div class="footer">ZT TRADERS | Usuario: {st.session_state.usuario_actual} | Binance + Yahoo Finance</div>', unsafe_allow_html=True)
