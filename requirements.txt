@@ -1,6 +1,7 @@
-streamlit
-pandas
-requests
-ta
-numpy
-scikit-learn
+   streamlit
+   pandas
+   requests
+   yfinance
+   ta
+   numpy
+   scikit-learn
