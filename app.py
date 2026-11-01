@@ -222,6 +222,7 @@ def analizar_par(codigo_par, tipo='crypto'):
             bb_low = float(u1['BB_Low'])
             sma_1m = float(u1['SMA_10'])
             sma_5m = float(u5['SMA_20'])
+            a1_close = float(a1['close'])
         else:
             datos_1m['RSI'] = ta.momentum.RSIIndicator(datos_1m['Close'], window=14).rsi()
             datos_1m['STOCH'] = ta.momentum.StochasticOscillator(datos_1m['High'], datos_1m['Low'], datos_1m['Close']).stoch()
@@ -241,6 +242,7 @@ def analizar_par(codigo_par, tipo='crypto'):
             bb_low = float(u1['BB_Low'])
             sma_1m = float(u1['SMA_10'])
             sma_5m = float(u5['SMA_20'])
+            a1_close = float(a1['Close'])
         
         rsi = 50.0 if pd.isna(u1['RSI']) else float(u1['RSI'])
         stoch = 50.0 if pd.isna(u1['STOCH']) else float(u1['STOCH'])
@@ -248,20 +250,27 @@ def analizar_par(codigo_par, tipo='crypto'):
         macd_sig = 0.0 if pd.isna(u1['MACD_signal']) else float(u1['MACD_signal'])
         adx = 20.0 if pd.isna(u1['ADX']) else float(u1['ADX'])
 
+        # Determinar dirección CORRECTAMENTE
         dirección = 'CALL' if rsi < 50 else 'PUT'
-        if precio <= bb_low: dirección = 'CALL'
-        elif precio >= bb_high: dirección = 'PUT'
-        if precio > sma_1m and a1['Close'] if tipo == 'forex' else a1['close'] <= (a1['SMA_10'] if tipo == 'forex' else a1['SMA_10']): dirección = 'CALL'
-        elif precio < sma_1m and a1['Close'] if tipo == 'forex' else a1['close'] >= (a1['SMA_10'] if tipo == 'forex' else a1['SMA_10']): dirección = 'PUT'
+        
+        if precio <= bb_low:
+            dirección = 'CALL'
+        elif precio >= bb_high:
+            dirección = 'PUT'
+        
+        if precio > sma_1m and a1_close <= sma_1m:
+            dirección = 'CALL'
+        elif precio < sma_1m and a1_close >= sma_1m:
+            dirección = 'PUT'
 
         bb_position = (precio - bb_low) / (bb_high - bb_low) if bb_high != bb_low else 0.5
         bb_position = max(0, min(1, bb_position))
         sma_cross = 0
         
-        a1_close = a1['Close'] if tipo == 'forex' else a1['close']
-        a1_sma = a1['SMA_10']
-        if precio > sma_1m and a1_close <= a1_sma: sma_cross = 1
-        elif precio < sma_1m and a1_close >= a1_sma: sma_cross = -1
+        if precio > sma_1m and a1_close <= sma_1m:
+            sma_cross = 1
+        elif precio < sma_1m and a1_close >= sma_1m:
+            sma_cross = -1
 
         indicadores = {'rsi': rsi, 'stoch': stoch, 'macd': macd - macd_sig, 'adx': adx, 
                       'bb_position': bb_position, 'sma_cross': sma_cross, 'direccion': dirección}
@@ -277,15 +286,37 @@ def analizar_par(codigo_par, tipo='crypto'):
 
         confianza = 0
         razones = []
-        if dirección == 'CALL' and rsi < 35: confianza += 25; razones.append("RSI sobreventa")
-        elif dirección == 'PUT' and rsi > 65: confianza += 25; razones.append("RSI sobrecompra")
-        if dirección == 'CALL' and precio <= bb_low: confianza += 25; razones.append("Toca banda inferior")
-        elif dirección == 'PUT' and precio >= bb_high: confianza += 25; razones.append("Toca banda superior")
-        if dirección == 'CALL' and macd > macd_sig: confianza += 20; razones.append("MACD alcista")
-        elif dirección == 'PUT' and macd < macd_sig: confianza += 20; razones.append("MACD bajista")
-        if adx > 25: confianza += 15; razones.append(f"ADX fuerte ({adx:.0f})")
-        if dirección == 'CALL' and stoch < 20: confianza += 15; razones.append("Estocástico sobreventa")
-        elif dirección == 'PUT' and stoch > 80: confianza += 15; razones.append("Estocástico sobrecompra")
+        if dirección == 'CALL' and rsi < 35:
+            confianza += 25
+            razones.append("RSI sobreventa")
+        elif dirección == 'PUT' and rsi > 65:
+            confianza += 25
+            razones.append("RSI sobrecompra")
+        
+        if dirección == 'CALL' and precio <= bb_low:
+            confianza += 25
+            razones.append("Toca banda inferior")
+        elif dirección == 'PUT' and precio >= bb_high:
+            confianza += 25
+            razones.append("Toca banda superior")
+        
+        if dirección == 'CALL' and macd > macd_sig:
+            confianza += 20
+            razones.append("MACD alcista")
+        elif dirección == 'PUT' and macd < macd_sig:
+            confianza += 20
+            razones.append("MACD bajista")
+        
+        if adx > 25:
+            confianza += 15
+            razones.append(f"ADX fuerte ({adx:.0f})")
+        
+        if dirección == 'CALL' and stoch < 20:
+            confianza += 15
+            razones.append("Estocástico sobreventa")
+        elif dirección == 'PUT' and stoch > 80:
+            confianza += 15
+            razones.append("Estocástico sobrecompra")
 
         if razones and confianza >= 15:
             return {'señal': dirección, 'precio': precio, 'rsi': rsi, 'confianza': confianza, 
