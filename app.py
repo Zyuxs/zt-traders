@@ -297,7 +297,22 @@ def reproducir_voz(mensaje):
     """
     st.markdown(js_code, unsafe_allow_html=True)
 
+# TODOS LOS PARES: 12 Forex + 11 Cripto = 23 pares
 PARES = {
+    # FOREX (Yahoo Finance)
+    'EUR/USD': {'codigo': 'EURUSD=X', 'tipo': 'forex'},
+    'GBP/USD': {'codigo': 'GBPUSD=X', 'tipo': 'forex'},
+    'USD/JPY': {'codigo': 'USDJPY=X', 'tipo': 'forex'},
+    'AUD/USD': {'codigo': 'AUDUSD=X', 'tipo': 'forex'},
+    'EUR/JPY': {'codigo': 'EURJPY=X', 'tipo': 'forex'},
+    'AUD/CAD': {'codigo': 'AUDCAD=X', 'tipo': 'forex'},
+    'EUR/GBP': {'codigo': 'EURGBP=X', 'tipo': 'forex'},
+    'GBP/JPY': {'codigo': 'GBPJPY=X', 'tipo': 'forex'},
+    'NZD/USD': {'codigo': 'NZDUSD=X', 'tipo': 'forex'},
+    'USD/CAD': {'codigo': 'USDCAD=X', 'tipo': 'forex'},
+    'USD/CHF': {'codigo': 'USDCHF=X', 'tipo': 'forex'},
+    'AUD/JPY': {'codigo': 'AUDJPY=X', 'tipo': 'forex'},
+    # CRIPTO (Binance - Tiempo Real)
     'Bitcoin': {'codigo': 'BTCUSDT', 'tipo': 'crypto'},
     'Ethereum': {'codigo': 'ETHUSDT', 'tipo': 'crypto'},
     'Polkadot': {'codigo': 'DOTUSDT', 'tipo': 'crypto'},
@@ -365,10 +380,8 @@ st.markdown(CSS, unsafe_allow_html=True)
 
 st.markdown('<div class="main-container">', unsafe_allow_html=True)
 
-# Header
 st.markdown(f'<div class="header"><h1>⚡ ZT TRADERS</h1><p>Bienvenido: {st.session_state.usuario_actual} | IA ACTIVA</p></div>', unsafe_allow_html=True)
 
-# Controles
 col1, col2 = st.columns([3, 1])
 with col1:
     par_nombre = st.selectbox("", list(PARES.keys()), index=list(PARES.keys()).index(st.session_state.par_sel), label_visibility="collapsed")
@@ -384,7 +397,6 @@ codigo_info = PARES[par_nombre]
 codigo = codigo_info['codigo']
 tipo = codigo_info['tipo']
 
-# Estadísticas
 hist = cargar_historial()
 ops = st.session_state.pesos['total_ops']
 ganadas = st.session_state.pesos['total_ganadas']
@@ -399,7 +411,6 @@ st.markdown(f"""
 </div>
 """, unsafe_allow_html=True)
 
-# Reloj
 ahora = datetime.now()
 hora_actual = ahora.strftime('%H:%M:%S')
 st.markdown(f'<div class="hora-box"><span>🕐 {hora_actual}</span></div>', unsafe_allow_html=True)
@@ -415,7 +426,6 @@ elif st.session_state.minuto_anterior != minuto_actual:
     st.session_state.voz_reproducida = False
     st.session_state.minuto_anterior = minuto_actual
 
-# CICLO
 if minuto_es_par:
     if segundo_actual < 55:
         st.markdown('<div class="signal-box signal-wait">📊 ANALIZANDO MERCADO...</div>', unsafe_allow_html=True)
@@ -423,4 +433,71 @@ if minuto_es_par:
         st.markdown('<div class="radar-container"><div class="radar radar-yellow"><div class="radar-sweep radar-sweep-yellow"></div><div class="radar-center"><div class="radar-number radar-number-yellow">IA</div><div class="radar-label">ACTIVA</div></div></div></div>', unsafe_allow_html=True)
         time_module.sleep(1)
         st.rerun()
-   
+    else:
+        if st.session_state.senal is None or st.session_state.estado != 'senal':
+            st.session_state.senal = analizar_par(codigo, tipo)
+            st.session_state.estado = 'senal'
+        
+        señal = st.session_state.senal
+        es_call = señal['señal'] == 'CALL'
+        segundos_restantes = 59 - segundo_actual
+        
+        if not st.session_state.voz_reproducida:
+            if es_call:
+                reproducir_voz(f"Atención. Señal de compra. Operación a la alza. Confianza {int(señal['confianza'])} por ciento.")
+            else:
+                reproducir_voz(f"Atención. Señal de venta. Operación a la baja. Confianza {int(señal['confianza'])} por ciento.")
+            st.session_state.voz_reproducida = True
+        
+        clase_box = "signal-call" if es_call else "signal-put"
+        clase_radar = "radar-green" if es_call else "radar-red"
+        clase_sweep = "" if es_call else "radar-sweep-red"
+        clase_numero = "radar-number-green" if es_call else "radar-number-red"
+        tipo_signal = "🟢 CALL" if es_call else "🔴 PUT"
+        
+        st.markdown(f'<div class="signal-box {clase_box}">{tipo_signal}</div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="info-panel"><strong>💰 Confianza:</strong> {señal["confianza"]:.0f}% | <strong>📊 Razón:</strong> {señal["razon"]}</div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="radar-container"><div class="radar {clase_radar}"><div class="radar-sweep {clase_sweep}"></div><div class="radar-center"><div class="radar-number {clase_numero}">{segundos_restantes}</div><div class="radar-label">SEGUNDOS</div></div></div></div>', unsafe_allow_html=True)
+        time_module.sleep(0.3)
+        st.rerun()
+else:
+    if st.session_state.estado != 'operando':
+        st.session_state.estado = 'operando'
+        st.session_state.precio_real_entrada = obtener_precio_actual(codigo, tipo)
+    
+    señal = st.session_state.senal
+    if señal is None:
+        señal = {'señal': 'CALL', 'confianza': 50, 'razon': "Esperando"}
+    
+    es_call = señal['señal'] == 'CALL'
+    segundos_restantes_op = 59 - segundo_actual
+    
+    clase_box = "signal-call" if es_call else "signal-put"
+    clase_radar = "radar-green" if es_call else "radar-red"
+    clase_sweep = "" if es_call else "radar-sweep-red"
+    clase_numero = "radar-number-green" if es_call else "radar-number-red"
+    tipo_signal = "🟢 CALL" if es_call else "🔴 PUT"
+    
+    st.markdown(f'<div class="signal-box {clase_box}">{tipo_signal}</div>', unsafe_allow_html=True)
+    if st.session_state.precio_real_entrada:
+        st.markdown(f'<div class="info-panel"><strong>🎯 Entrada:</strong> {round(st.session_state.precio_real_entrada, 5)}</div>', unsafe_allow_html=True)
+    st.markdown(f'<div class="radar-container"><div class="radar {clase_radar}"><div class="radar-sweep {clase_sweep}"></div><div class="radar-center"><div class="radar-number {clase_numero}">{segundos_restantes_op}</div><div class="radar-label">OPERACIÓN</div></div></div></div>', unsafe_allow_html=True)
+    st.warning("⚠️ No cierres esta pagina")
+    
+    if segundo_actual >= 58 and not st.session_state.resultado_guardado:
+        if st.session_state.precio_real_entrada and st.session_state.precio_real_entrada > 0:
+            precio_actual = obtener_precio_actual(codigo, tipo)
+            resultado_interno = 'PERDIDA'
+            if precio_actual is not None:
+                if es_call and precio_actual > st.session_state.precio_real_entrada:
+                    resultado_interno = 'GANADA'
+                elif not es_call and precio_actual < st.session_state.precio_real_entrada:
+                    resultado_interno = 'GANADA'
+            aprender_en_segundo_plano(señal['señal'], resultado_interno, {}, st.session_state.precio_real_entrada)
+            st.session_state.pesos = cargar_patrones()
+        st.session_state.resultado_guardado = True
+    time_module.sleep(0.5)
+    st.rerun()
+
+st.markdown('<div class="footer">⚡ ZT TRADERS | Powered by AI | Tiempo Real</div>', unsafe_allow_html=True)
+st.markdown('</div>', unsafe_allow_html=True)
