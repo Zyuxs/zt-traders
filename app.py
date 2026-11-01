@@ -145,7 +145,7 @@ def obtener_datos_binance(symbol, interval='1m', limit=100):
     except:
         return None
 
-def obtener_datos_yahoo(symbol, period="5d", interval="1m"):
+def obtener_datos_yahoo(symbol, period="2d", interval="1m"):
     try:
         datos = yf.download(symbol, period=period, interval=interval, progress=False)
         if isinstance(datos.columns, pd.MultiIndex):
@@ -183,10 +183,7 @@ def analizar_par(codigo_par, tipo='crypto'):
     if df is None or len(df) < 30:
         return {'señal': 'CALL', 'confianza': 50, 'razon': "Datos insuficientes", 'indicadores': {}}
     
-    # Normalizar nombres de columnas según la fuente
     c_close = 'close' if tipo == 'crypto' else 'Close'
-    c_high = 'high' if tipo == 'crypto' else 'High'
-    c_low = 'low' if tipo == 'crypto' else 'Low'
     
     try:
         df['RSI'] = ta.momentum.RSIIndicator(df[c_close], window=14).rsi()
@@ -202,36 +199,34 @@ def analizar_par(codigo_par, tipo='crypto'):
         bb_low = float(u1['BB_Low'])
         ema_20 = float(u1['EMA_20'])
         
-        # Filtros estrictos de calidad para mejorar el Winrate
         razones = []
         confianza = 50
         
         if precio <= bb_low and rsi < 35:
             dirección = 'CALL'
             confianza = 85
-            razones.append("Toque Banda Inferior + RSI Sobrevendido")
+            razones.append("Toque Banda Inf + RSI Bajo")
         elif precio >= bb_high and rsi > 65:
             dirección = 'PUT'
             confianza = 85
-            razones.append("Toque Banda Superior + RSI Sobrecomprado")
+            razones.append("Toque Banda Sup + RSI Alto")
         elif precio > ema_20 and rsi < 48:
             dirección = 'CALL'
             confianza = 70
-            razones.append("Tendencia Alcista (EMA) + Pullback RSI")
+            razones.append("Tendencia Alcista + Pullback")
         elif precio < ema_20 and rsi > 52:
             dirección = 'PUT'
             confianza = 70
-            razones.append("Tendencia Bajista (EMA) + Pullback RSI")
+            razones.append("Tendencia Bajista + Pullback")
         else:
-            # Fallback seguro basado en tendencia general
             dirección = 'CALL' if precio > ema_20 else 'PUT'
             confianza = 60
             razones.append("Seguimiento de Tendencia EMA")
 
         indicadores = {'rsi': rsi, 'precio': precio, 'direccion': dirección}
         return {'señal': dirección, 'confianza': confianza, 'razon': " | ".join(razones), 'indicadores': indicadores}
-    except Exception as e:
-        return {'señal': 'CALL', 'confianza': 50, 'razon': "Error de cálculo técnico", 'indicadores': {}}
+    except:
+        return {'señal': 'CALL', 'confianza': 50, 'razon': "Error técnico", 'indicadores': {}}
 
 def reproducir_voz(mensaje):
     mensaje_seguro = mensaje.replace("'", "\\'").replace('"', '\\"')
@@ -251,15 +246,31 @@ def reproducir_voz(mensaje):
     """
     st.markdown(js_code, unsafe_allow_html=True)
 
+# LOS 23 PARES ORIGINALES RESTAURADOS
 PARES = {
     'EUR/USD': {'codigo': 'EURUSD=X', 'tipo': 'forex'},
     'GBP/USD': {'codigo': 'GBPUSD=X', 'tipo': 'forex'},
     'USD/JPY': {'codigo': 'USDJPY=X', 'tipo': 'forex'},
     'AUD/USD': {'codigo': 'AUDUSD=X', 'tipo': 'forex'},
+    'EUR/JPY': {'codigo': 'EURJPY=X', 'tipo': 'forex'},
+    'AUD/CAD': {'codigo': 'AUDCAD=X', 'tipo': 'forex'},
+    'EUR/GBP': {'codigo': 'EURGBP=X', 'tipo': 'forex'},
+    'GBP/JPY': {'codigo': 'GBPJPY=X', 'tipo': 'forex'},
+    'NZD/USD': {'codigo': 'NZDUSD=X', 'tipo': 'forex'},
     'USD/CAD': {'codigo': 'USDCAD=X', 'tipo': 'forex'},
+    'USD/CHF': {'codigo': 'USDCHF=X', 'tipo': 'forex'},
+    'AUD/JPY': {'codigo': 'AUDJPY=X', 'tipo': 'forex'},
     'Bitcoin': {'codigo': 'BTCUSDT', 'tipo': 'crypto'},
     'Ethereum': {'codigo': 'ETHUSDT', 'tipo': 'crypto'},
-    'Solana': {'codigo': 'SOLUSDT', 'tipo': 'crypto'}
+    'Polkadot': {'codigo': 'DOTUSDT', 'tipo': 'crypto'},
+    'Worldcoin': {'codigo': 'WLDUSDT', 'tipo': 'crypto'},
+    'Binance Coin': {'codigo': 'BNBUSDT', 'tipo': 'crypto'},
+    'Cardano': {'codigo': 'ADAUSDT', 'tipo': 'crypto'},
+    'Solana': {'codigo': 'SOLUSDT', 'tipo': 'crypto'},
+    'Ripple': {'codigo': 'XRPUSDT', 'tipo': 'crypto'},
+    'Dogecoin': {'codigo': 'DOGEUSDT', 'tipo': 'crypto'},
+    'Polygon': {'codigo': 'MATICUSDT', 'tipo': 'crypto'},
+    'Litecoin': {'codigo': 'LTCUSDT', 'tipo': 'crypto'}
 }
 
 if 'estado' not in st.session_state: st.session_state.estado = 'analizando'
@@ -298,7 +309,6 @@ body { background: #000; color: #fff; font-family: Arial, sans-serif; margin: 0;
 .signal-put { background: linear-gradient(135deg, #cc0000, #ff0000); border: 2px solid #ff0000; color: white; box-shadow: 0 0 15px rgba(255, 0, 0, 0.6); }
 .signal-wait { background: linear-gradient(135deg, #1a1a2e, #0a1a2e); border: 2px solid #ffd700; color: #ffd700; font-size: 14px; padding: 6px; }
 
-/* Radar Único Corregido (Elimina el doble círculo desfasado) */
 .radar-container { position: relative; width: 140px; height: 140px; margin: 6px auto; }
 .radar { width: 140px; height: 140px; border-radius: 50%; position: relative; overflow: hidden; border: 3px solid; }
 .radar-green { border-color: #00ff00; background: radial-gradient(circle, #0a2a1a, #000); box-shadow: 0 0 15px rgba(0, 255, 0, 0.5); }
@@ -318,7 +328,7 @@ body { background: #000; color: #fff; font-family: Arial, sans-serif; margin: 0;
 st.markdown(CSS, unsafe_allow_html=True)
 
 st.markdown('<div class="main-container">', unsafe_allow_html=True)
-st.markdown(f'<div class="header"><h1>⚡ ZT TRADERS</h1><p>User: {st.session_state.usuario_actual} | IA OPTIMIZADA</p></div>', unsafe_allow_html=True)
+st.markdown(f'<div class="header"><h1>⚡ ZT TRADERS</h1><p>User: {st.session_state.usuario_actual} | IA 23 PARES</p></div>', unsafe_allow_html=True)
 
 col1, col2 = st.columns([3, 1])
 with col1:
@@ -366,7 +376,7 @@ elif st.session_state.minuto_anterior != minuto_actual:
 
 if minuto_es_par:
     if segundo_actual < 55:
-        st.markdown('<div class="signal-box signal-wait">📊 ESCANEANDO TENDENCIA...</div>', unsafe_allow_html=True)
+        st.markdown('<div class="signal-box signal-wait">📊 ESCANEANDO MERCADO...</div>', unsafe_allow_html=True)
         st.markdown(f'<div class="info-panel">⏱️ Próxima señal en: <strong>{55 - segundo_actual}s</strong></div>', unsafe_allow_html=True)
         st.markdown('<div class="radar-container"><div class="radar radar-yellow"><div class="radar-center"><div class="radar-number radar-number-yellow">IA</div><div class="radar-label">ESPERA</div></div></div></div>', unsafe_allow_html=True)
         time_module.sleep(1)
@@ -418,7 +428,6 @@ else:
     if st.session_state.precio_real_entrada:
         st.markdown(f'<div class="info-panel">Entrada: <strong>{round(st.session_state.precio_real_entrada, 5)}</strong></div>', unsafe_allow_html=True)
     
-    # Único cronómetro activo y limpio para evitar duplicidad visual
     st.markdown(f'<div class="radar-container"><div class="radar {clase_radar}"><div class="radar-center"><div class="radar-number {clase_numero}">{segundos_restantes_op}</div><div class="radar-label">EXPIRACIÓN</div></div></div></div>', unsafe_allow_html=True)
     
     if segundo_actual >= 58 and not st.session_state.resultado_guardado:
