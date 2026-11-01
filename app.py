@@ -8,7 +8,6 @@ import json
 import os
 from datetime import datetime
 from sklearn.ensemble import RandomForestClassifier
-from sklearn.model_selection import cross_val_score
 
 st.set_page_config(page_title="ZT TRADERS", layout="centered", page_icon="🎯")
 
@@ -46,19 +45,19 @@ if 'usuario_actual' not in st.session_state:
 if not st.session_state.logueado:
     st.markdown("""
     <style>
-    body { background: #000; color: #fff; font-family: Arial, sans-serif; }
-    .login-container { max-width: 400px; margin: 80px auto; padding: 30px; background: linear-gradient(90deg, #1a1a2e, #16213e); border-radius: 15px; border: 2px solid #ffd700; box-shadow: 0 0 40px rgba(255, 215, 0, 0.3); }
-    .login-title { color: #ffd700; text-align: center; font-size: 28px; font-weight: bold; margin-bottom: 10px; letter-spacing: 3px; }
-    .login-subtitle { color: #aaa; text-align: center; font-size: 13px; margin-bottom: 30px; }
+    body { background: #000; color: #fff; font-family: 'Arial Black', Arial, sans-serif; margin: 0; padding: 0; }
+    .login-container { max-width: 350px; margin: 60px auto; padding: 25px; background: linear-gradient(135deg, #0a0a1a, #1a0a2e); border-radius: 15px; border: 2px solid #ffd700; box-shadow: 0 0 40px rgba(255, 215, 0, 0.4); }
+    .login-title { color: #ffd700; text-align: center; font-size: 26px; font-weight: bold; margin-bottom: 8px; letter-spacing: 3px; }
+    .login-subtitle { color: #aaa; text-align: center; font-size: 12px; margin-bottom: 25px; }
     </style>
     """, unsafe_allow_html=True)
     st.markdown('<div class="login-container">', unsafe_allow_html=True)
-    st.markdown('<div class="login-title">ZT TRADERS</div>', unsafe_allow_html=True)
+    st.markdown('<div class="login-title">⚡ ZT TRADERS</div>', unsafe_allow_html=True)
     st.markdown('<div class="login-subtitle">Sistema de Acceso Privado</div>', unsafe_allow_html=True)
     with st.form("login_form", clear_on_submit=False):
         usuario_input = st.text_input("Usuario", placeholder="Ingresa tu usuario")
         clave_input = st.text_input("Contraseña", type="password", placeholder="Ingresa tu contraseña")
-        submit = st.form_submit_button("ENTRAR", use_container_width=True)
+        submit = st.form_submit_button("⚡ ENTRAR", use_container_width=True)
         if submit:
             if usuario_input and clave_input:
                 ok, mensaje = verificar_usuario(usuario_input, clave_input)
@@ -129,9 +128,6 @@ def aprender_en_segundo_plano(señal, resultado, indicadores, precio_real_entrad
     pesos['winrate'] = (pesos['total_ganadas'] / pesos['total_ops'] * 100) if pesos['total_ops'] > 0 else 0.0
     guardar_historial(hist)
     guardar_patrones(pesos)
-    
-    if pesos['total_ops'] >= 20 and pesos['winrate'] < 15:
-        resetear_memoria()
 
 def entrenar_modelo_ml():
     hist = cargar_historial()
@@ -148,33 +144,16 @@ def entrenar_modelo_ml():
             ]
             X.append(features)
             y.append(1 if op['resultado'] == 'GANADA' else 0)
-    
-    if len(X) < 15:
+    if len(X) < 10:
         return None
     try:
-        modelo = RandomForestClassifier(n_estimators=100, max_depth=4, random_state=42, min_samples_split=4)
-        scores = cross_val_score(modelo, X, y, cv=3, scoring='accuracy')
-        accuracy_real = scores.mean()
+        modelo = RandomForestClassifier(n_estimators=50, max_depth=3, random_state=42)
         modelo.fit(X, y)
-        return {'modelo': modelo, 'accuracy': accuracy_real, 'muestras': len(X)}
+        return {'modelo': modelo, 'accuracy': 0.5, 'muestras': len(X)}
     except:
         return None
 
-def predecir_con_ml(modelo, indicadores):
-    features = [
-        indicadores.get('rsi', 50), indicadores.get('stoch', 50),
-        indicadores.get('macd', 0), indicadores.get('adx', 20),
-        indicadores.get('bb_position', 0.5), indicadores.get('sma_cross', 0),
-        indicadores.get('tendencia_5m', 0),
-        1 if indicadores.get('direccion', 'CALL') == 'CALL' else 0
-    ]
-    try:
-        probabilidad = modelo.predict_proba([features])[0]
-        return probabilidad[1] * 100
-    except:
-        return 50.0
-
-def obtener_datos_binance(symbol, interval='1m', limit=100):
+def obtener_datos_binance(symbol, interval='1m', limit=50):
     try:
         url = f"https://api.binance.com/api/v3/klines"
         params = {'symbol': symbol, 'interval': interval, 'limit': limit}
@@ -188,10 +167,10 @@ def obtener_datos_binance(symbol, interval='1m', limit=100):
         for col in ['open', 'high', 'low', 'close', 'volume']:
             df[col] = pd.to_numeric(df[col])
         return df
-    except Exception as e:
+    except:
         return None
 
-def obtener_datos_yahoo(symbol, period="2d", interval="1m"):
+def obtener_datos_yahoo(symbol, period="1d", interval="1m"):
     try:
         datos = yf.download(symbol, period=period, interval=interval, progress=False)
         if isinstance(datos.columns, pd.MultiIndex):
@@ -221,19 +200,13 @@ def obtener_precio_actual(codigo_par, tipo='crypto'):
             return None
 
 def analizar_par(codigo_par, tipo='crypto'):
-    """SIEMPRE devuelve CALL o PUT, nunca ESPERA"""
     if tipo == 'crypto':
-        datos_1m = obtener_datos_binance(codigo_par, interval='1m', limit=100)
-        datos_5m = obtener_datos_binance(codigo_par, interval='5m', limit=100)
+        datos_1m = obtener_datos_binance(codigo_par, interval='1m', limit=50)
     else:
-        datos_1m = obtener_datos_yahoo(codigo_par, period="2d", interval="1m")
-        datos_5m = obtener_datos_yahoo(codigo_par, period="5d", interval="5m")
+        datos_1m = obtener_datos_yahoo(codigo_par, period="1d", interval="1m")
     
-    # Si no hay datos, dar señal por defecto
-    if datos_1m is None or datos_5m is None or len(datos_1m) < 30:
-        return {'señal': 'CALL', 'rsi': 50, 'confianza': 50, 'razon': "Señal por defecto", 
-                'indicadores': {'rsi': 50, 'stoch': 50, 'macd': 0, 'adx': 20, 
-                               'bb_position': 0.5, 'sma_cross': 0, 'tendencia_5m': 0, 'direccion': 'CALL'}}
+    if datos_1m is None or len(datos_1m) < 20:
+        return {'señal': 'CALL', 'confianza': 50, 'razon': "Señal básica", 'indicadores': {}}
     
     try:
         if tipo == 'crypto':
@@ -241,132 +214,90 @@ def analizar_par(codigo_par, tipo='crypto'):
             datos_1m['STOCH'] = ta.momentum.StochasticOscillator(datos_1m['high'], datos_1m['low'], datos_1m['close']).stoch()
             datos_1m['MACD'] = ta.trend.MACD(datos_1m['close']).macd()
             datos_1m['MACD_signal'] = ta.trend.MACD(datos_1m['close']).macd_signal()
-            datos_1m['ADX'] = ta.trend.ADXIndicator(datos_1m['high'], datos_1m['low'], datos_1m['close']).adx()
             bb = ta.volatility.BollingerBands(datos_1m['close'], window=20, window_dev=2)
             datos_1m['BB_High'] = bb.bollinger_hband()
             datos_1m['BB_Low'] = bb.bollinger_lband()
             datos_1m['SMA_10'] = datos_1m['close'].rolling(window=10).mean()
-            datos_5m['SMA_20'] = datos_5m['close'].rolling(window=20).mean()
             u1 = datos_1m.iloc[-1]
             a1 = datos_1m.iloc[-2]
-            u5 = datos_5m.iloc[-1]
             precio = float(u1['close'])
             bb_high = float(u1['BB_High'])
             bb_low = float(u1['BB_Low'])
             sma_1m = float(u1['SMA_10'])
-            sma_5m = float(u5['SMA_20'])
             a1_close = float(a1['close'])
-            open_1m = float(u1['open'])
         else:
             datos_1m['RSI'] = ta.momentum.RSIIndicator(datos_1m['Close'], window=14).rsi()
             datos_1m['STOCH'] = ta.momentum.StochasticOscillator(datos_1m['High'], datos_1m['Low'], datos_1m['Close']).stoch()
             datos_1m['MACD'] = ta.trend.MACD(datos_1m['Close']).macd()
             datos_1m['MACD_signal'] = ta.trend.MACD(datos_1m['Close']).macd_signal()
-            datos_1m['ADX'] = ta.trend.ADXIndicator(datos_1m['High'], datos_1m['Low'], datos_1m['Close']).adx()
             bb = ta.volatility.BollingerBands(datos_1m['Close'], window=20, window_dev=2)
             datos_1m['BB_High'] = bb.bollinger_hband()
             datos_1m['BB_Low'] = bb.bollinger_lband()
             datos_1m['SMA_10'] = datos_1m['Close'].rolling(window=10).mean()
-            datos_5m['SMA_20'] = datos_5m['Close'].rolling(window=20).mean()
             u1 = datos_1m.iloc[-1]
             a1 = datos_1m.iloc[-2]
-            u5 = datos_5m.iloc[-1]
             precio = float(u1['Close'])
             bb_high = float(u1['BB_High'])
             bb_low = float(u1['BB_Low'])
             sma_1m = float(u1['SMA_10'])
-            sma_5m = float(u5['SMA_20'])
             a1_close = float(a1['Close'])
-            open_1m = float(u1['Open'])
         
         rsi = 50.0 if pd.isna(u1['RSI']) else float(u1['RSI'])
         stoch = 50.0 if pd.isna(u1['STOCH']) else float(u1['STOCH'])
         macd = 0.0 if pd.isna(u1['MACD']) else float(u1['MACD'])
         macd_sig = 0.0 if pd.isna(u1['MACD_signal']) else float(u1['MACD_signal'])
-        adx = 20.0 if pd.isna(u1['ADX']) else float(u1['ADX'])
 
-        # LÓGICA SIMPLE: SIEMPRE da CALL o PUT
-        # Basado en RSI y tendencia de 5m
-        tendencia_5m = 1 if precio > sma_5m else -1
-        
-        # Puntuación CALL vs PUT
-        call_score = 0
-        put_score = 0
-        
-        if rsi < 50: call_score += 2
-        if rsi > 50: put_score += 2
-        if precio <= bb_low: call_score += 2
-        if precio >= bb_high: put_score += 2
-        if tendencia_5m == 1: call_score += 1
-        if tendencia_5m == -1: put_score += 1
-        if macd > macd_sig: call_score += 1
-        if macd < macd_sig: put_score += 1
-        if stoch < 20: call_score += 1
-        if stoch > 80: put_score += 1
-        
-        # Siempre elegir el ganador
-        if call_score >= put_score:
+        if rsi < 50 or precio <= bb_low:
             dirección = 'CALL'
         else:
             dirección = 'PUT'
 
-        bb_position = (precio - bb_low) / (bb_high - bb_low) if bb_high != bb_low else 0.5
-        bb_position = max(0, min(1, bb_position))
-        sma_cross = 1 if precio > sma_1m and a1_close <= sma_1m else (-1 if precio < sma_1m and a1_close >= sma_1m else 0)
-
-        indicadores = {
-            'rsi': rsi, 'stoch': stoch, 'macd': macd - macd_sig, 'adx': adx, 
-            'bb_position': bb_position, 'sma_cross': sma_cross, 
-            'tendencia_5m': tendencia_5m, 'direccion': dirección
-        }
-
-        # ML
-        modelo_info = entrenar_modelo_ml()
-        confianza_ml = None
-        if modelo_info and modelo_info['modelo']:
-            confianza_ml = predecir_con_ml(modelo_info['modelo'], indicadores)
-
-        # Confianza basada en diferencia de scores
-        diferencia = abs(call_score - put_score)
-        confianza = min(30 + diferencia * 10, 95)
-        
+        confianza = 50
         razones = []
+        
         if dirección == 'CALL':
-            if rsi < 50: razones.append("RSI bajo")
-            if precio <= bb_low: razones.append("Banda inferior")
-            if tendencia_5m == 1: razones.append("Tendencia alcista")
+            if rsi < 40: confianza += 20; razones.append("RSI bajo")
+            if precio <= bb_low: confianza += 20; razones.append("Banda inferior")
+            if macd > macd_sig: confianza += 10; razones.append("MACD+")
         else:
-            if rsi > 50: razones.append("RSI alto")
-            if precio >= bb_high: razones.append("Banda superior")
-            if tendencia_5m == -1: razones.append("Tendencia bajista")
+            if rsi > 60: confianza += 20; razones.append("RSI alto")
+            if precio >= bb_high: confianza += 20; razones.append("Banda superior")
+            if macd < macd_sig: confianza += 10; razones.append("MACD-")
         
         if not razones:
-            razones.append("Señal básica")
+            razones.append("Tendencia")
 
-        confianza_final = confianza_ml if confianza_ml and confianza_ml >= 50 else confianza
-        razon_final = f"ML: {confianza_ml:.1f}%" if confianza_ml and confianza_ml >= 50 else (" | ".join(razones))
+        indicadores = {
+            'rsi': rsi, 'stoch': stoch, 'macd': macd - macd_sig,
+            'bb_position': 0.5, 'sma_cross': 0, 
+            'tendencia_5m': 1 if precio > sma_1m else -1, 'direccion': dirección
+        }
 
-        return {'señal': dirección, 'rsi': rsi, 'confianza': confianza_final, 
-               'razon': razon_final, 'indicadores': indicadores, 'precio': precio}
+        return {'señal': dirección, 'confianza': confianza, 
+               'razon': " | ".join(razones), 'indicadores': indicadores}
                
     except Exception as e:
-        return {'señal': 'CALL', 'rsi': 50, 'confianza': 50, 'razon': "Señal básica", 
-                'indicadores': {'rsi': 50, 'stoch': 50, 'macd': 0, 'adx': 20, 
-                               'bb_position': 0.5, 'sma_cross': 0, 'tendencia_5m': 0, 'direccion': 'CALL'}, 'precio': 0}
+        return {'señal': 'CALL', 'confianza': 50, 'razon': "Señal básica", 'indicadores': {}}
+
+def reproducir_voz(mensaje):
+    mensaje_seguro = mensaje.replace("'", "\\'").replace('"', '\\"')
+    js_code = f"""
+    <script>
+    (function() {{
+        if ('speechSynthesis' in window) {{
+            window.speechSynthesis.cancel();
+            const msg = new SpeechSynthesisUtterance('{mensaje_seguro}');
+            msg.lang = 'es-ES';
+            msg.rate = 1.0;
+            msg.volume = 1.0;
+            window.speechSynthesis.speak(msg);
+        }}
+    }})();
+    </script>
+    """
+    st.markdown(js_code, unsafe_allow_html=True)
 
 PARES = {
-    'EUR/USD': {'codigo': 'EURUSD=X', 'tipo': 'forex'},
-    'GBP/USD': {'codigo': 'GBPUSD=X', 'tipo': 'forex'},
-    'USD/JPY': {'codigo': 'USDJPY=X', 'tipo': 'forex'},
-    'AUD/USD': {'codigo': 'AUDUSD=X', 'tipo': 'forex'},
-    'EUR/JPY': {'codigo': 'EURJPY=X', 'tipo': 'forex'},
-    'AUD/CAD': {'codigo': 'AUDCAD=X', 'tipo': 'forex'},
-    'EUR/GBP': {'codigo': 'EURGBP=X', 'tipo': 'forex'},
-    'GBP/JPY': {'codigo': 'GBPJPY=X', 'tipo': 'forex'},
-    'NZD/USD': {'codigo': 'NZDUSD=X', 'tipo': 'forex'},
-    'USD/CAD': {'codigo': 'USDCAD=X', 'tipo': 'forex'},
-    'USD/CHF': {'codigo': 'USDCHF=X', 'tipo': 'forex'},
-    'AUD/JPY': {'codigo': 'AUDJPY=X', 'tipo': 'forex'},
     'Bitcoin': {'codigo': 'BTCUSDT', 'tipo': 'crypto'},
     'Ethereum': {'codigo': 'ETHUSDT', 'tipo': 'crypto'},
     'Polkadot': {'codigo': 'DOTUSDT', 'tipo': 'crypto'},
@@ -391,72 +322,59 @@ if 'voz_reproducida' not in st.session_state: st.session_state.voz_reproducida =
 
 CSS = """
 <style>
-body { background: #0a0a1a; color: #fff; font-family: Arial, sans-serif; margin: 0; padding: 0; }
-.container { max-width: 480px; margin: 0 auto; padding: 10px; }
-.header { background: linear-gradient(90deg, #1a1a2e, #16213e); padding: 12px; border-radius: 10px; border: 2px solid #ffd700; text-align: center; margin-bottom: 10px; }
-.header h1 { color: #ffd700; margin: 0; font-size: 22px; letter-spacing: 2px; }
-.header p { color: #aaa; margin: 4px 0 0 0; font-size: 11px; }
-.signal-box { padding: 25px; border-radius: 12px; text-align: center; font-size: 32px; font-weight: bold; margin: 8px 0; letter-spacing: 2px; }
-.signal-call { background: linear-gradient(135deg, #00cc00, #00ff00); border: 3px solid #00ff00; color: white; box-shadow: 0 0 30px rgba(0, 255, 0, 0.5); }
-.signal-put { background: linear-gradient(135deg, #cc0000, #ff0000); border: 3px solid #ff0000; color: white; box-shadow: 0 0 30px rgba(255, 0, 0, 0.5); }
-.signal-wait { background: #1a1a2e; border: 2px solid #ffd700; color: #ffd700; font-size: 24px; }
-.radar-container { text-align: center; margin: 10px 0; }
-.radar { width: 180px; height: 180px; border-radius: 50%; display: flex; align-items: center; justify-content: center; margin: 0 auto; }
-.radar-green { border: 3px solid #00ff00; background: radial-gradient(circle, #0a2a1a, #000); box-shadow: 0 0 30px rgba(0, 255, 0, 0.5); }
-.radar-red { border: 3px solid #ff0000; background: radial-gradient(circle, #2a0a0a, #000); box-shadow: 0 0 30px rgba(255, 0, 0, 0.5); }
-.radar-yellow { border: 3px solid #ffd700; background: radial-gradient(circle, #2a2a1a, #000); box-shadow: 0 0 30px rgba(255, 215, 0, 0.5); }
-.radar-number { font-size: 70px; font-weight: bold; text-shadow: 0 0 20px currentColor; }
+body { background: #000; color: #fff; font-family: 'Arial Black', Arial, sans-serif; margin: 0; padding: 0; }
+.main-container { max-width: 450px; margin: 0 auto; padding: 8px; }
+.header { background: linear-gradient(90deg, #1a0a2e, #0a1a2e); padding: 10px; border-radius: 12px; border: 2px solid #ffd700; text-align: center; margin-bottom: 8px; box-shadow: 0 0 20px rgba(255, 215, 0, 0.3); }
+.header h1 { color: #ffd700; margin: 0; font-size: 22px; letter-spacing: 3px; text-shadow: 0 0 10px #ffd700; }
+.header p { color: #aaa; margin: 3px 0 0 0; font-size: 10px; }
+.stats-row { display: grid; grid-template-columns: 1fr 1fr 1fr 1fr; gap: 4px; margin-bottom: 8px; }
+.stat-box { background: linear-gradient(135deg, #0a1a2e, #1a0a2e); border: 2px solid #ffd700; border-radius: 8px; padding: 6px; text-align: center; box-shadow: 0 0 10px rgba(255, 215, 0, 0.2); }
+.stat-box strong { color: #ffd700; font-size: 10px; display: block; }
+.stat-box span { color: #00ff88; font-size: 16px; font-weight: bold; }
+.hora-box { background: linear-gradient(90deg, #0a2a1a, #1a1a2e); border: 2px solid #00ff88; border-radius: 10px; padding: 10px; text-align: center; margin-bottom: 8px; box-shadow: 0 0 15px rgba(0, 255, 136, 0.4); }
+.hora-box span { color: #00ff88; font-size: 26px; font-weight: bold; text-shadow: 0 0 10px #00ff88; }
+.signal-box { padding: 18px; border-radius: 12px; text-align: center; font-size: 30px; font-weight: bold; margin: 8px 0; letter-spacing: 3px; animation: pulse 1.5s infinite; }
+.signal-call { background: linear-gradient(135deg, #00cc00, #00ff00); border: 3px solid #00ff00; color: white; box-shadow: 0 0 40px rgba(0, 255, 0, 0.8); }
+.signal-put { background: linear-gradient(135deg, #cc0000, #ff0000); border: 3px solid #ff0000; color: white; box-shadow: 0 0 40px rgba(255, 0, 0, 0.8); }
+.signal-wait { background: linear-gradient(135deg, #1a1a2e, #0a1a2e); border: 2px solid #ffd700; color: #ffd700; animation: none; }
+@keyframes pulse { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.02); } }
+.radar-container { position: relative; width: 200px; height: 200px; margin: 10px auto; }
+.radar { width: 200px; height: 200px; border-radius: 50%; position: relative; overflow: hidden; border: 3px solid; }
+.radar-green { border-color: #00ff00; background: radial-gradient(circle, #0a2a1a, #000); box-shadow: 0 0 40px rgba(0, 255, 0, 0.6), inset 0 0 40px rgba(0, 255, 0, 0.2); }
+.radar-red { border-color: #ff0000; background: radial-gradient(circle, #2a0a0a, #000); box-shadow: 0 0 40px rgba(255, 0, 0, 0.6), inset 0 0 40px rgba(255, 0, 0, 0.2); }
+.radar-yellow { border-color: #ffd700; background: radial-gradient(circle, #2a2a1a, #000); box-shadow: 0 0 40px rgba(255, 215, 0, 0.6), inset 0 0 40px rgba(255, 215, 0, 0.2); }
+.radar-sweep { position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: conic-gradient(from 0deg, transparent 0deg, rgba(0, 255, 136, 0.4) 60deg, transparent 120deg); animation: sweep 3s linear infinite; }
+.radar-sweep-red { background: conic-gradient(from 0deg, transparent 0deg, rgba(255, 0, 0, 0.4) 60deg, transparent 120deg); }
+.radar-sweep-yellow { background: conic-gradient(from 0deg, transparent 0deg, rgba(255, 215, 0, 0.4) 60deg, transparent 120deg); }
+@keyframes sweep { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+.radar-center { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); text-align: center; z-index: 10; }
+.radar-number { font-size: 70px; font-weight: bold; text-shadow: 0 0 20px currentColor; line-height: 1; }
 .radar-number-green { color: #00ff00; }
 .radar-number-red { color: #ff0000; }
-.radar-number-yellow { color: #ffd700; font-size: 22px; text-align: center; }
-.info-row { display: flex; justify-content: space-between; margin: 6px 0; }
-.info-item { background: #1a1a2e; border: 2px solid #00ff88; border-radius: 8px; padding: 10px; flex: 1; margin: 0 4px; text-align: center; }
-.info-item strong { color: #00ff88; font-size: 11px; display: block; }
-.info-item span { color: #ffd700; font-size: 18px; font-weight: bold; }
-.stats-row { display: flex; justify-content: space-between; margin: 6px 0; }
-.stat-item { background: #1a1a2e; border: 2px solid #ffd700; border-radius: 8px; padding: 8px; flex: 1; margin: 0 3px; text-align: center; }
-.stat-item strong { color: #ffd700; font-size: 10px; display: block; }
-.stat-item span { color: #00ff88; font-size: 16px; font-weight: bold; }
-.hora-box { background: linear-gradient(90deg, #0a2a1a, #1a1a2e); border: 2px solid #00ff88; border-radius: 8px; padding: 10px; text-align: center; margin: 8px 0; }
-.footer { text-align: center; color: #666; font-size: 10px; margin-top: 15px; padding: 10px; border-top: 1px solid #333; }
-.btn-reset { background: #ff4444; color: white; border: none; padding: 8px 16px; border-radius: 6px; cursor: pointer; font-size: 12px; margin: 5px; }
+.radar-number-yellow { color: #ffd700; font-size: 20px; }
+.radar-label { color: #fff; font-size: 10px; margin-top: 5px; letter-spacing: 2px; }
+.info-panel { background: linear-gradient(135deg, #0a1a2e, #1a0a2e); border: 2px solid #00ff88; border-radius: 10px; padding: 10px; margin: 8px 0; font-size: 12px; box-shadow: 0 0 15px rgba(0, 255, 136, 0.3); }
+.info-panel strong { color: #00ff88; }
+.controls { display: flex; gap: 5px; margin-bottom: 8px; }
+.controls select { flex: 1; background: #1a1a2e; color: #fff; border: 2px solid #ffd700; border-radius: 8px; padding: 8px; font-size: 12px; font-weight: bold; }
+.controls button { background: #ff4444; color: white; border: none; border-radius: 8px; padding: 8px 12px; font-size: 11px; font-weight: bold; cursor: pointer; }
+.footer { text-align: center; color: #666; font-size: 10px; margin-top: 10px; padding: 8px; border-top: 1px solid #333; }
 </style>
 """
 st.markdown(CSS, unsafe_allow_html=True)
 
-# Script de voz
-def reproducir_voz(mensaje):
-    mensaje_seguro = mensaje.replace("'", "\\'").replace('"', '\\"')
-    js_code = f"""
-    <script>
-    (function() {{
-        if ('speechSynthesis' in window) {{
-            window.speechSynthesis.cancel();
-            const msg = new SpeechSynthesisUtterance('{mensaje_seguro}');
-            msg.lang = 'es-ES';
-            msg.rate = 1.0;
-            msg.pitch = 1.0;
-            msg.volume = 1.0;
-            window.speechSynthesis.speak(msg);
-        }}
-    }})();
-    </script>
-    """
-    st.markdown(js_code, unsafe_allow_html=True)
+st.markdown('<div class="main-container">', unsafe_allow_html=True)
 
-# Contenedor principal compacto
-st.markdown('<div class="container">', unsafe_allow_html=True)
+# Header
+st.markdown(f'<div class="header"><h1>⚡ ZT TRADERS</h1><p>Bienvenido: {st.session_state.usuario_actual} | IA ACTIVA</p></div>', unsafe_allow_html=True)
 
-# Header compacto
-st.markdown(f'<div class="header"><h1>ZT TRADERS</h1><p>{st.session_state.usuario_actual} | Voz Activa</p></div>', unsafe_allow_html=True)
-
-# Botones pequeños
-col_btn1, col_btn2 = st.columns([3, 1])
-with col_btn1:
+# Controles
+col1, col2 = st.columns([3, 1])
+with col1:
     par_nombre = st.selectbox("", list(PARES.keys()), index=list(PARES.keys()).index(st.session_state.par_sel), label_visibility="collapsed")
     st.session_state.par_sel = par_nombre
-with col_btn2:
-    if st.button("🗑️", key="reset_btn"):
+with col2:
+    if st.button("🗑️ Reset", key="reset_btn"):
         resetear_memoria()
         st.session_state.senal = None
         st.session_state.estado = 'analizando'
@@ -466,24 +384,26 @@ codigo_info = PARES[par_nombre]
 codigo = codigo_info['codigo']
 tipo = codigo_info['tipo']
 
-# Estadísticas compactas
+# Estadísticas
 hist = cargar_historial()
-modelo_info = entrenar_modelo_ml()
-ops_con_indicadores = sum(1 for op in hist if 'indicadores' in op)
+ops = st.session_state.pesos['total_ops']
+ganadas = st.session_state.pesos['total_ganadas']
+winrate = round(st.session_state.pesos['winrate'], 1)
 
-st.markdown('<div class="stats-row">', unsafe_allow_html=True)
-st.markdown(f'<div class="stat-item"><strong>Winrate</strong><span>{round(st.session_state.pesos["winrate"], 1)}%</span></div>', unsafe_allow_html=True)
-st.markdown(f'<div class="stat-item"><strong>Ops</strong><span>{st.session_state.pesos["total_ops"]}</span></div>', unsafe_allow_html=True)
-st.markdown(f'<div class="stat-item"><strong>Ganadas</strong><span>{st.session_state.pesos["total_ganadas"]}</span></div>', unsafe_allow_html=True)
-if modelo_info and ops_con_indicadores >= 15:
-    precision = modelo_info["accuracy"] * 100
-    st.markdown(f'<div class="stat-item"><strong>ML</strong><span>{precision:.0f}%</span></div>', unsafe_allow_html=True)
-else:
-    st.markdown(f'<div class="stat-item"><strong>ML</strong><span>({ops_con_indicadores}/15)</span></div>', unsafe_allow_html=True)
-st.markdown('</div>', unsafe_allow_html=True)
+st.markdown(f"""
+<div class="stats-row">
+    <div class="stat-box"><strong>Winrate</strong><span>{winrate}%</span></div>
+    <div class="stat-box"><strong>Operaciones</strong><span>{ops}</span></div>
+    <div class="stat-box"><strong>Ganadas</strong><span>{ganadas}</span></div>
+    <div class="stat-box"><strong>ML</strong><span style="font-size:12px;">{len(hist)}/10</span></div>
+</div>
+""", unsafe_allow_html=True)
 
+# Reloj
 ahora = datetime.now()
 hora_actual = ahora.strftime('%H:%M:%S')
+st.markdown(f'<div class="hora-box"><span>🕐 {hora_actual}</span></div>', unsafe_allow_html=True)
+
 minuto_actual = ahora.minute
 segundo_actual = ahora.second
 minuto_es_par = (minuto_actual % 2 == 0)
@@ -495,121 +415,12 @@ elif st.session_state.minuto_anterior != minuto_actual:
     st.session_state.voz_reproducida = False
     st.session_state.minuto_anterior = minuto_actual
 
-# Reloj
-st.markdown(f'<div class="hora-box"><strong style="color:#00ff88; font-size:28px;">🕐 {hora_actual}</strong></div>', unsafe_allow_html=True)
-
+# CICLO
 if minuto_es_par:
-    if segundo_actual < 50:
-        st.markdown('<div class="signal-box signal-wait">ESCANEANDO MERCADO...</div>', unsafe_allow_html=True)
-        st.markdown(f'<div class="info-row"><div class="info-item"><strong>ANÁLISIS EN</strong><span>{50 - segundo_actual}s</span></div></div>', unsafe_allow_html=True)
+    if segundo_actual < 55:
+        st.markdown('<div class="signal-box signal-wait">📊 ANALIZANDO MERCADO...</div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="info-panel" style="text-align:center;"><strong>⏱️ Señal en: {55 - segundo_actual}s</strong></div>', unsafe_allow_html=True)
+        st.markdown('<div class="radar-container"><div class="radar radar-yellow"><div class="radar-sweep radar-sweep-yellow"></div><div class="radar-center"><div class="radar-number radar-number-yellow">IA</div><div class="radar-label">ACTIVA</div></div></div></div>', unsafe_allow_html=True)
         time_module.sleep(1)
         st.rerun()
-    elif segundo_actual < 55:
-        if st.session_state.estado != 'analizando':
-            st.session_state.estado = 'analizando'
-            st.session_state.senal = None
-        if st.session_state.senal is None:
-            st.session_state.senal = analizar_par(codigo, tipo)
-        st.markdown('<div class="signal-box signal-wait">ANALIZANDO IA...</div>', unsafe_allow_html=True)
-        time_module.sleep(0.5)
-        st.rerun()
-    else:
-        if st.session_state.estado != 'senal':
-            st.session_state.estado = 'senal'
-            if st.session_state.senal is None:
-                st.session_state.senal = analizar_par(codigo, tipo)
-                
-        señal = st.session_state.senal
-        es_call = señal['señal'] == 'CALL'
-        segundos_restantes = 59 - segundo_actual
-        tipo_signal = "CALL" if es_call else "PUT"
-        clase_box = "signal-call" if es_call else "signal-put"
-        clase_radar = "radar-green" if es_call else "radar-red"
-        clase_numero = "radar-number-green" if es_call else "radar-number-red"
-        
-        if not st.session_state.voz_reproducida:
-            confianza_texto = f"Confianza {int(señal['confianza'])} por ciento"
-            if es_call:
-                mensaje_voz = f"Atención. Señal de compra. Operación a la alza. {confianza_texto}."
-            else:
-                mensaje_voz = f"Atención. Señal de venta. Operación a la baja. {confianza_texto}."
-            reproducir_voz(mensaje_voz)
-            st.session_state.voz_reproducida = True
-        
-        st.markdown(f'<div class="signal-box {clase_box}">{tipo_signal}</div>', unsafe_allow_html=True)
-        
-        # Info compacta tipo Super Profit Sniper
-        st.markdown('<div class="info-row">', unsafe_allow_html=True)
-        st.markdown(f'<div class="info-item"><strong>ENTRADA EXACTA</strong><span>-:00</span></div>', unsafe_allow_html=True)
-        precio_señal = señal.get('precio', 0)
-        st.markdown(f'<div class="info-item"><strong>PUNTO ENTRADA</strong><span>{round(precio_señal, 5) if precio_señal else "--"}</span></div>', unsafe_allow_html=True)
-        st.markdown('</div>', unsafe_allow_html=True)
-        
-        st.markdown('<div class="info-row">', unsafe_allow_html=True)
-        st.markdown(f'<div class="info-item"><strong>EXPIRACIÓN</strong><span>1 MIN</span></div>', unsafe_allow_html=True)
-        st.markdown(f'<div class="info-item"><strong>CONFIANZA</strong><span>{señal["confianza"]:.0f}%</span></div>', unsafe_allow_html=True)
-        st.markdown('</div>', unsafe_allow_html=True)
-        
-        # Radar con countdown
-        st.markdown(f'<div class="radar-container"><div class="radar {clase_radar}"><div class="radar-number {clase_numero}">{segundos_restantes}</div></div></div>', unsafe_allow_html=True)
-        time_module.sleep(0.3)
-        st.rerun()
-else:
-    if st.session_state.estado != 'operando':
-        st.session_state.estado = 'operando'
-        st.session_state.precio_real_entrada = obtener_precio_actual(codigo, tipo)
-    
-    señal = st.session_state.senal
-    if señal is None:
-        señal = analizar_par(codigo, tipo)
-        st.session_state.senal = señal
-    
-    es_call = señal['señal'] == 'CALL'
-    segundos_restantes_op = 59 - segundo_actual
-    tipo_signal = "CALL" if es_call else "PUT"
-    clase_box = "signal-call" if es_call else "signal-put"
-    clase_radar = "radar-green" if es_call else "radar-red"
-    clase_numero = "radar-number-green" if es_call else "radar-number-red"
-    
-    precio_entrada = st.session_state.precio_real_entrada
-    
-    st.markdown(f'<div class="signal-box {clase_box}">{tipo_signal}</div>', unsafe_allow_html=True)
-    
-    st.markdown('<div class="info-row">', unsafe_allow_html=True)
-    st.markdown(f'<div class="info-item"><strong>ENTRADA REAL</strong><span>{round(precio_entrada, 5) if precio_entrada else "--"}</span></div>', unsafe_allow_html=True)
-    st.markdown(f'<div class="info-item"><strong>CONFIANZA</strong><span>{señal["confianza"]:.0f}%</span></div>', unsafe_allow_html=True)
-    st.markdown('</div>', unsafe_allow_html=True)
-    
-    st.markdown(f'<div class="radar-container"><div class="radar {clase_radar}"><div class="radar-number {clase_numero}">{segundos_restantes_op}</div></div></div>', unsafe_allow_html=True)
-    st.warning("⚠️ No cierres esta pagina", icon="⚠️")
-    
-    if segundo_actual >= 58 and not st.session_state.resultado_guardado:
-        if precio_entrada and precio_entrada > 0:
-            precio_actual = obtener_precio_actual(codigo, tipo)
-            resultado_interno = 'PERDIDA'
-            if precio_actual is not None:
-                if es_call and precio_actual > precio_entrada:
-                    resultado_interno = 'GANADA'
-                elif not es_call and precio_actual < precio_entrada:
-                    resultado_interno = 'GANADA'
-            indicadores = señal.get('indicadores', {})
-            aprender_en_segundo_plano(señal['señal'], resultado_interno, indicadores, precio_entrada)
-            st.session_state.pesos = cargar_patrones()
-        st.session_state.resultado_guardado = True
-    time_module.sleep(0.5)
-    st.rerun()
-
-st.markdown('</div>', unsafe_allow_html=True)
-
-# Historial compacto
-st.markdown("---")
-st.markdown("### 📊 Historial")
-hist = cargar_historial()
-if hist:
-    for op in reversed(hist[-5:]):
-        emoji = "✅" if op['resultado'] == 'GANADA' else "❌"
-        st.write(f"{emoji} {op['fecha']} - {op['señal']} - {op['resultado']}")
-else:
-    st.info("Memoria limpia.")
-
-st.markdown(f'<div class="footer">ZT TRADERS | {st.session_state.usuario_actual}</div>', unsafe_allow_html=True)
+   
