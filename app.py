@@ -7,7 +7,6 @@ import time as time_module
 import json
 import os
 from datetime import datetime
-from sklearn.ensemble import RandomForestClassifier
 
 st.set_page_config(page_title="ZT TRADERS", layout="centered", page_icon="🎯")
 
@@ -45,7 +44,7 @@ if 'usuario_actual' not in st.session_state:
 if not st.session_state.logueado:
     st.markdown("""
     <style>
-    body { background: #000; color: #fff; font-family: Arial, sans-serif; margin: 0; padding: 0; overflow: hidden; }
+    body { background: #000; color: #fff; font-family: Arial, sans-serif; margin: 0; padding: 0; }
     .login-container { max-width: 320px; margin: 40px auto; padding: 20px; background: linear-gradient(135deg, #0a0a1a, #1a0a2e); border-radius: 12px; border: 2px solid #ffd700; box-shadow: 0 0 30px rgba(255, 215, 0, 0.4); }
     .login-title { color: #ffd700; text-align: center; font-size: 22px; font-weight: bold; margin-bottom: 5px; letter-spacing: 2px; }
     .login-subtitle { color: #aaa; text-align: center; font-size: 11px; margin-bottom: 20px; }
@@ -129,7 +128,7 @@ def aprender_en_segundo_plano(señal, resultado, indicadores, precio_real_entrad
     guardar_historial(hist)
     guardar_patrones(pesos)
 
-def obtener_datos_binance(symbol, interval='1m', limit=50):
+def obtener_datos_binance(symbol, interval='1m', limit=100):
     try:
         url = f"https://api.binance.com/api/v3/klines"
         params = {'symbol': symbol, 'interval': interval, 'limit': limit}
@@ -146,12 +145,12 @@ def obtener_datos_binance(symbol, interval='1m', limit=50):
     except:
         return None
 
-def obtener_datos_yahoo(symbol, period="1d", interval="1m"):
+def obtener_datos_yahoo(symbol, period="5d", interval="1m"):
     try:
         datos = yf.download(symbol, period=period, interval=interval, progress=False)
         if isinstance(datos.columns, pd.MultiIndex):
             datos.columns = datos.columns.get_level_values(0)
-        datos = datos[['Open', 'High', 'Low', 'Close']].copy()
+        datos = datos[['Open', 'High', 'Low', 'Close']].dropna().copy()
         return datos
     except:
         return None
@@ -177,72 +176,62 @@ def obtener_precio_actual(codigo_par, tipo='crypto'):
 
 def analizar_par(codigo_par, tipo='crypto'):
     if tipo == 'crypto':
-        datos_1m = obtener_datos_binance(codigo_par, interval='1m', limit=50)
+        df = obtener_datos_binance(codigo_par, interval='1m', limit=100)
     else:
-        datos_1m = obtener_datos_yahoo(codigo_par, period="1d", interval="1m")
+        df = obtener_datos_yahoo(codigo_par, period="2d", interval="1m")
     
-    if datos_1m is None or len(datos_1m) < 20:
-        return {'señal': 'CALL', 'confianza': 50, 'razon': "Señal básica", 'indicadores': {}}
+    if df is None or len(df) < 30:
+        return {'señal': 'CALL', 'confianza': 50, 'razon': "Datos insuficientes", 'indicadores': {}}
+    
+    # Normalizar nombres de columnas según la fuente
+    c_close = 'close' if tipo == 'crypto' else 'Close'
+    c_high = 'high' if tipo == 'crypto' else 'High'
+    c_low = 'low' if tipo == 'crypto' else 'Low'
     
     try:
-        if tipo == 'crypto':
-            datos_1m['RSI'] = ta.momentum.RSIIndicator(datos_1m['close'], window=14).rsi()
-            datos_1m['STOCH'] = ta.momentum.StochasticOscillator(datos_1m['high'], datos_1m['low'], datos_1m['close']).stoch()
-            datos_1m['MACD'] = ta.trend.MACD(datos_1m['close']).macd()
-            datos_1m['MACD_signal'] = ta.trend.MACD(datos_1m['close']).macd_signal()
-            bb = ta.volatility.BollingerBands(datos_1m['close'], window=20, window_dev=2)
-            datos_1m['BB_High'] = bb.bollinger_hband()
-            datos_1m['BB_Low'] = bb.bollinger_lband()
-            datos_1m['SMA_10'] = datos_1m['close'].rolling(window=10).mean()
-            u1 = datos_1m.iloc[-1]
-            precio = float(u1['close'])
-            bb_high = float(u1['BB_High'])
-            bb_low = float(u1['BB_Low'])
-            sma_1m = float(u1['SMA_10'])
-        else:
-            datos_1m['RSI'] = ta.momentum.RSIIndicator(datos_1m['Close'], window=14).rsi()
-            datos_1m['STOCH'] = ta.momentum.StochasticOscillator(datos_1m['High'], datos_1m['Low'], datos_1m['Close']).stoch()
-            datos_1m['MACD'] = ta.trend.MACD(datos_1m['Close']).macd()
-            datos_1m['MACD_signal'] = ta.trend.MACD(datos_1m['Close']).macd_signal()
-            bb = ta.volatility.BollingerBands(datos_1m['Close'], window=20, window_dev=2)
-            datos_1m['BB_High'] = bb.bollinger_hband()
-            datos_1m['BB_Low'] = bb.bollinger_lband()
-            datos_1m['SMA_10'] = datos_1m['Close'].rolling(window=10).mean()
-            u1 = datos_1m.iloc[-1]
-            precio = float(u1['Close'])
-            bb_high = float(u1['BB_High'])
-            bb_low = float(u1['BB_Low'])
-            sma_1m = float(u1['SMA_10'])
+        df['RSI'] = ta.momentum.RSIIndicator(df[c_close], window=14).rsi()
+        bb = ta.volatility.BollingerBands(df[c_close], window=20, window_dev=2)
+        df['BB_High'] = bb.bollinger_hband()
+        df['BB_Low'] = bb.bollinger_lband()
+        df['EMA_20'] = ta.trend.EMAIndicator(df[c_close], window=20).ema_indicator()
         
-        rsi = 50.0 if pd.isna(u1['RSI']) else float(u1['RSI'])
-        stoch = 50.0 if pd.isna(u1['STOCH']) else float(u1['STOCH'])
-        macd = 0.0 if pd.isna(u1['MACD']) else float(u1['MACD'])
-        macd_sig = 0.0 if pd.isna(u1['MACD_signal']) else float(u1['MACD_signal'])
-
-        dirección = 'CALL' if (rsi < 50 or precio <= bb_low) else 'PUT'
-        confianza = 50
+        u1 = df.iloc[-1]
+        precio = float(u1[c_close])
+        rsi = float(u1['RSI'])
+        bb_high = float(u1['BB_High'])
+        bb_low = float(u1['BB_Low'])
+        ema_20 = float(u1['EMA_20'])
+        
+        # Filtros estrictos de calidad para mejorar el Winrate
         razones = []
+        confianza = 50
         
-        if dirección == 'CALL':
-            if rsi < 40: confianza += 20; razones.append("RSI bajo")
-            if precio <= bb_low: confianza += 20; razones.append("Banda inf")
-            if macd > macd_sig: confianza += 10; razones.append("MACD+")
+        if precio <= bb_low and rsi < 35:
+            dirección = 'CALL'
+            confianza = 85
+            razones.append("Toque Banda Inferior + RSI Sobrevendido")
+        elif precio >= bb_high and rsi > 65:
+            dirección = 'PUT'
+            confianza = 85
+            razones.append("Toque Banda Superior + RSI Sobrecomprado")
+        elif precio > ema_20 and rsi < 48:
+            dirección = 'CALL'
+            confianza = 70
+            razones.append("Tendencia Alcista (EMA) + Pullback RSI")
+        elif precio < ema_20 and rsi > 52:
+            dirección = 'PUT'
+            confianza = 70
+            razones.append("Tendencia Bajista (EMA) + Pullback RSI")
         else:
-            if rsi > 60: confianza += 20; razones.append("RSI alto")
-            if precio >= bb_high: confianza += 20; razones.append("Banda sup")
-            if macd < macd_sig: confianza += 10; razones.append("MACD-")
-        
-        if not razones: razones.append("Tendencia")
+            # Fallback seguro basado en tendencia general
+            dirección = 'CALL' if precio > ema_20 else 'PUT'
+            confianza = 60
+            razones.append("Seguimiento de Tendencia EMA")
 
-        indicadores = {
-            'rsi': rsi, 'stoch': stoch, 'macd': macd - macd_sig,
-            'bb_position': 0.5, 'sma_cross': 0, 
-            'tendencia_5m': 1 if precio > sma_1m else -1, 'direccion': dirección
-        }
-
+        indicadores = {'rsi': rsi, 'precio': precio, 'direccion': dirección}
         return {'señal': dirección, 'confianza': confianza, 'razon': " | ".join(razones), 'indicadores': indicadores}
-    except:
-        return {'señal': 'CALL', 'confianza': 50, 'razon': "Señal básica", 'indicadores': {}}
+    except Exception as e:
+        return {'señal': 'CALL', 'confianza': 50, 'razon': "Error de cálculo técnico", 'indicadores': {}}
 
 def reproducir_voz(mensaje):
     mensaje_seguro = mensaje.replace("'", "\\'").replace('"', '\\"')
@@ -267,25 +256,10 @@ PARES = {
     'GBP/USD': {'codigo': 'GBPUSD=X', 'tipo': 'forex'},
     'USD/JPY': {'codigo': 'USDJPY=X', 'tipo': 'forex'},
     'AUD/USD': {'codigo': 'AUDUSD=X', 'tipo': 'forex'},
-    'EUR/JPY': {'codigo': 'EURJPY=X', 'tipo': 'forex'},
-    'AUD/CAD': {'codigo': 'AUDCAD=X', 'tipo': 'forex'},
-    'EUR/GBP': {'codigo': 'EURGBP=X', 'tipo': 'forex'},
-    'GBP/JPY': {'codigo': 'GBPJPY=X', 'tipo': 'forex'},
-    'NZD/USD': {'codigo': 'NZDUSD=X', 'tipo': 'forex'},
     'USD/CAD': {'codigo': 'USDCAD=X', 'tipo': 'forex'},
-    'USD/CHF': {'codigo': 'USDCHF=X', 'tipo': 'forex'},
-    'AUD/JPY': {'codigo': 'AUDJPY=X', 'tipo': 'forex'},
     'Bitcoin': {'codigo': 'BTCUSDT', 'tipo': 'crypto'},
     'Ethereum': {'codigo': 'ETHUSDT', 'tipo': 'crypto'},
-    'Polkadot': {'codigo': 'DOTUSDT', 'tipo': 'crypto'},
-    'Worldcoin': {'codigo': 'WLDUSDT', 'tipo': 'crypto'},
-    'Binance Coin': {'codigo': 'BNBUSDT', 'tipo': 'crypto'},
-    'Cardano': {'codigo': 'ADAUSDT', 'tipo': 'crypto'},
-    'Solana': {'codigo': 'SOLUSDT', 'tipo': 'crypto'},
-    'Ripple': {'codigo': 'XRPUSDT', 'tipo': 'crypto'},
-    'Dogecoin': {'codigo': 'DOGEUSDT', 'tipo': 'crypto'},
-    'Polygon': {'codigo': 'MATICUSDT', 'tipo': 'crypto'},
-    'Litecoin': {'codigo': 'LTCUSDT', 'tipo': 'crypto'}
+    'Solana': {'codigo': 'SOLUSDT', 'tipo': 'crypto'}
 }
 
 if 'estado' not in st.session_state: st.session_state.estado = 'analizando'
@@ -297,61 +271,46 @@ if 'minuto_anterior' not in st.session_state: st.session_state.minuto_anterior =
 if 'precio_real_entrada' not in st.session_state: st.session_state.precio_real_entrada = None
 if 'voz_reproducida' not in st.session_state: st.session_state.voz_reproducida = False
 
-# ==========================================
-# CSS ULTRA-COMPACTO PARA MÓVILES (SIN SCROLL)
-# ==========================================
 CSS = """
 <style>
-/* Ocultar elementos predeterminados de Streamlit que ocupan espacio innecesario */
 #MainMenu {visibility: hidden;}
 footer {visibility: hidden;}
 header {visibility: hidden;}
 .block-container { padding-top: 5px !important; padding-bottom: 0px !important; padding-left: 8px !important; padding-right: 8px !important; max-width: 100% !important; }
 
 body { background: #000; color: #fff; font-family: Arial, sans-serif; margin: 0; padding: 0; }
-
 .main-container { width: 100%; max-width: 450px; margin: 0 auto; display: flex; flex-direction: column; gap: 4px; }
 
-/* Cabecera compacta */
-.header { background: linear-gradient(90deg, #1a0a2e, #0a1a2e); padding: 6px; border-radius: 8px; border: 1.5px solid #ffd700; text-align: center; box-shadow: 0 0 10px rgba(255, 215, 0, 0.3); }
+.header { background: linear-gradient(90deg, #1a0a2e, #0a1a2e); padding: 6px; border-radius: 8px; border: 1.5px solid #ffd700; text-align: center; }
 .header h1 { color: #ffd700; margin: 0; font-size: 16px; letter-spacing: 2px; }
 .header p { color: #aaa; margin: 2px 0 0 0; font-size: 9px; }
 
-/* Fila de estadísticas reducida */
 .stats-row { display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px; }
 .stat-box { background: linear-gradient(135deg, #0a1a2e, #1a0a2e); border: 1px solid #ffd700; border-radius: 6px; padding: 4px; text-align: center; }
 .stat-box strong { color: #ffd700; font-size: 8px; display: block; margin-bottom: 1px; }
 .stat-box span { color: #00ff88; font-size: 12px; font-weight: bold; }
 
-/* Reloj compacto */
 .hora-box { background: linear-gradient(90deg, #0a2a1a, #1a1a2e); border: 2px solid #00ff88; border-radius: 6px; padding: 4px; text-align: center; }
 .hora-box span { color: #00ff88; font-size: 18px; font-weight: bold; text-shadow: 0 0 8px #00ff88; }
 
-/* Caja de Señal Principal */
-.signal-box { padding: 8px; border-radius: 8px; text-align: center; font-size: 22px; font-weight: bold; letter-spacing: 2px; animation: pulse 1.5s infinite; margin: 2px 0; }
+.signal-box { padding: 8px; border-radius: 8px; text-align: center; font-size: 22px; font-weight: bold; letter-spacing: 2px; margin: 2px 0; }
 .signal-call { background: linear-gradient(135deg, #00cc00, #00ff00); border: 2px solid #00ff00; color: white; box-shadow: 0 0 15px rgba(0, 255, 0, 0.6); }
 .signal-put { background: linear-gradient(135deg, #cc0000, #ff0000); border: 2px solid #ff0000; color: white; box-shadow: 0 0 15px rgba(255, 0, 0, 0.6); }
-.signal-wait { background: linear-gradient(135deg, #1a1a2e, #0a1a2e); border: 2px solid #ffd700; color: #ffd700; animation: none; font-size: 14px; padding: 6px; }
-@keyframes pulse { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.02); } }
+.signal-wait { background: linear-gradient(135deg, #1a1a2e, #0a1a2e); border: 2px solid #ffd700; color: #ffd700; font-size: 14px; padding: 6px; }
 
-/* Radar Reducido para que quepa en pantalla vertical */
-.radar-container { position: relative; width: 120px; height: 120px; margin: 4px auto; }
-.radar { width: 120px; height: 120px; border-radius: 50%; position: relative; overflow: hidden; border: 3px solid; }
+/* Radar Único Corregido (Elimina el doble círculo desfasado) */
+.radar-container { position: relative; width: 140px; height: 140px; margin: 6px auto; }
+.radar { width: 140px; height: 140px; border-radius: 50%; position: relative; overflow: hidden; border: 3px solid; }
 .radar-green { border-color: #00ff00; background: radial-gradient(circle, #0a2a1a, #000); box-shadow: 0 0 15px rgba(0, 255, 0, 0.5); }
 .radar-red { border-color: #ff0000; background: radial-gradient(circle, #2a0a0a, #000); box-shadow: 0 0 15px rgba(255, 0, 0, 0.5); }
 .radar-yellow { border-color: #ffd700; background: radial-gradient(circle, #2a2a1a, #000); box-shadow: 0 0 15px rgba(255, 215, 0, 0.5); }
-.radar-sweep { position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: conic-gradient(from 0deg, transparent 0deg, rgba(0, 255, 136, 0.5) 60deg, transparent 120deg); animation: sweep 3s linear infinite; }
-.radar-sweep-red { background: conic-gradient(from 0deg, transparent 0deg, rgba(255, 0, 0, 0.5) 60deg, transparent 120deg); }
-.radar-sweep-yellow { background: conic-gradient(from 0deg, transparent 0deg, rgba(255, 215, 0, 0.5) 60deg, transparent 120deg); }
-@keyframes sweep { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
 .radar-center { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); text-align: center; z-index: 10; }
-.radar-number { font-size: 38px; font-weight: bold; line-height: 1; text-shadow: 0 0 10px currentColor; }
+.radar-number { font-size: 42px; font-weight: bold; line-height: 1; text-shadow: 0 0 10px currentColor; }
 .radar-number-green { color: #00ff00; }
 .radar-number-red { color: #ff0000; }
-.radar-number-yellow { color: #ffd700; font-size: 13px; }
-.radar-label { color: #fff; font-size: 7px; margin-top: 1px; letter-spacing: 1px; }
+.radar-number-yellow { color: #ffd700; font-size: 15px; }
+.radar-label { color: #fff; font-size: 8px; margin-top: 2px; letter-spacing: 1px; }
 
-/* Panel de información mínimo */
 .info-panel { background: linear-gradient(135deg, #0a1a2e, #1a0a2e); border: 1px solid #00ff88; border-radius: 6px; padding: 5px 8px; font-size: 10px; text-align: center; }
 .info-panel strong { color: #00ff88; }
 </style>
@@ -359,10 +318,8 @@ body { background: #000; color: #fff; font-family: Arial, sans-serif; margin: 0;
 st.markdown(CSS, unsafe_allow_html=True)
 
 st.markdown('<div class="main-container">', unsafe_allow_html=True)
+st.markdown(f'<div class="header"><h1>⚡ ZT TRADERS</h1><p>User: {st.session_state.usuario_actual} | IA OPTIMIZADA</p></div>', unsafe_allow_html=True)
 
-st.markdown(f'<div class="header"><h1>⚡ ZT TRADERS</h1><p>User: {st.session_state.usuario_actual} | IA ACTIVA</p></div>', unsafe_allow_html=True)
-
-# Selectbox y botón de reset alineados
 col1, col2 = st.columns([3, 1])
 with col1:
     par_nombre = st.selectbox("", list(PARES.keys()), index=list(PARES.keys()).index(st.session_state.par_sel), label_visibility="collapsed")
@@ -388,7 +345,7 @@ st.markdown(f"""
     <div class="stat-box"><strong>Winrate</strong><span>{winrate}%</span></div>
     <div class="stat-box"><strong>Ops</strong><span>{ops}</span></div>
     <div class="stat-box"><strong>Win</strong><span>{ganadas}</span></div>
-    <div class="stat-box"><strong>ML</strong><span style="font-size:10px;">{len(hist)}/10</span></div>
+    <div class="stat-box"><strong>ML</strong><span style="font-size:10px;">{len(hist)}/20</span></div>
 </div>
 """, unsafe_allow_html=True)
 
@@ -409,9 +366,9 @@ elif st.session_state.minuto_anterior != minuto_actual:
 
 if minuto_es_par:
     if segundo_actual < 55:
-        st.markdown('<div class="signal-box signal-wait">📊 ESCANEANDO MERCADO...</div>', unsafe_allow_html=True)
+        st.markdown('<div class="signal-box signal-wait">📊 ESCANEANDO TENDENCIA...</div>', unsafe_allow_html=True)
         st.markdown(f'<div class="info-panel">⏱️ Próxima señal en: <strong>{55 - segundo_actual}s</strong></div>', unsafe_allow_html=True)
-        st.markdown('<div class="radar-container"><div class="radar radar-yellow"><div class="radar-sweep radar-sweep-yellow"></div><div class="radar-center"><div class="radar-number radar-number-yellow">IA</div><div class="radar-label">ACTIVA</div></div></div></div>', unsafe_allow_html=True)
+        st.markdown('<div class="radar-container"><div class="radar radar-yellow"><div class="radar-center"><div class="radar-number radar-number-yellow">IA</div><div class="radar-label">ESPERA</div></div></div></div>', unsafe_allow_html=True)
         time_module.sleep(1)
         st.rerun()
     else:
@@ -425,20 +382,19 @@ if minuto_es_par:
         
         if not st.session_state.voz_reproducida:
             if es_call:
-                reproducir_voz(f"Atención. Señal de compra. Operación a la alza. Confianza {int(señal['confianza'])} por ciento.")
+                reproducir_voz(f"Atención. Señal de compra. Confianza {int(señal['confianza'])} por ciento.")
             else:
-                reproducir_voz(f"Atención. Señal de venta. Operación a la baja. Confianza {int(señal['confianza'])} por ciento.")
+                reproducir_voz(f"Atención. Señal de venta. Confianza {int(señal['confianza'])} por ciento.")
             st.session_state.voz_reproducida = True
         
         clase_box = "signal-call" if es_call else "signal-put"
         clase_radar = "radar-green" if es_call else "radar-red"
-        clase_sweep = "" if es_call else "radar-sweep-red"
         clase_numero = "radar-number-green" if es_call else "radar-number-red"
         tipo_signal = "🟢 COMPRA (CALL)" if es_call else "🔴 VENTA (PUT)"
         
         st.markdown(f'<div class="signal-box {clase_box}">{tipo_signal}</div>', unsafe_allow_html=True)
-        st.markdown(f'<div class="info-panel">Confianza: <strong>{señal["confianza"]:.0f}%</strong> | Razón: <strong>{señal["razon"]}</strong></div>', unsafe_allow_html=True)
-        st.markdown(f'<div class="radar-container"><div class="radar {clase_radar}"><div class="radar-sweep {clase_sweep}"></div><div class="radar-center"><div class="radar-number {clase_numero}">{segundos_restantes}</div><div class="radar-label">SEGUNDOS</div></div></div></div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="info-panel">Confianza: <strong>{señal["confianza"]:.0f}%</strong> | <strong>{señal["razon"]}</strong></div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="radar-container"><div class="radar {clase_radar}"><div class="radar-center"><div class="radar-number {clase_numero}">{segundos_restantes}</div><div class="radar-label">SEGUNDOS</div></div></div></div>', unsafe_allow_html=True)
         time_module.sleep(0.3)
         st.rerun()
 else:
@@ -455,14 +411,15 @@ else:
     
     clase_box = "signal-call" if es_call else "signal-put"
     clase_radar = "radar-green" if es_call else "radar-red"
-    clase_sweep = "" if es_call else "radar-sweep-red"
     clase_numero = "radar-number-green" if es_call else "radar-number-red"
     tipo_signal = "🟢 EN CURSO (CALL)" if es_call else "🔴 EN CURSO (PUT)"
     
     st.markdown(f'<div class="signal-box {clase_box}">{tipo_signal}</div>', unsafe_allow_html=True)
     if st.session_state.precio_real_entrada:
-        st.markdown(f'<div class="info-panel">Precio de Entrada: <strong>{round(st.session_state.precio_real_entrada, 5)}</strong></div>', unsafe_allow_html=True)
-    st.markdown(f'<div class="radar-container"><div class="radar {clase_radar}"><div class="radar-sweep {clase_sweep}"></div><div class="radar-center"><div class="radar-number {clase_numero}">{segundos_restantes_op}</div><div class="radar-label">EXPIRACIÓN</div></div></div></div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="info-panel">Entrada: <strong>{round(st.session_state.precio_real_entrada, 5)}</strong></div>', unsafe_allow_html=True)
+    
+    # Único cronómetro activo y limpio para evitar duplicidad visual
+    st.markdown(f'<div class="radar-container"><div class="radar {clase_radar}"><div class="radar-center"><div class="radar-number {clase_numero}">{segundos_restantes_op}</div><div class="radar-label">EXPIRACIÓN</div></div></div></div>', unsafe_allow_html=True)
     
     if segundo_actual >= 58 and not st.session_state.resultado_guardado:
         if st.session_state.precio_real_entrada and st.session_state.precio_real_entrada > 0:
