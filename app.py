@@ -106,7 +106,6 @@ def guardar_historial(hist):
         pass
 
 def resetear_memoria():
-    """Borra el historial y patrones para empezar de cero"""
     if os.path.exists(ARCHIVO_HISTORIAL):
         os.remove(ARCHIVO_HISTORIAL)
     if os.path.exists(ARCHIVO_PATRONES):
@@ -131,7 +130,6 @@ def aprender_en_segundo_plano(señal, resultado, indicadores, precio_real_entrad
     guardar_historial(hist)
     guardar_patrones(pesos)
     
-    # AUTO-RESET: Si el winrate es menor a 15% después de 20 operaciones, resetear
     if pesos['total_ops'] >= 20 and pesos['winrate'] < 15:
         resetear_memoria()
 
@@ -336,12 +334,13 @@ def analizar_par(codigo_par, tipo='crypto'):
             
         if adx > 25: confianza += 10; razones.append(f"ADX fuerte ({adx:.0f})")
 
-        confianza_final = confianza_ml if confianza_ml and confianza_ml >= 55 else (confianza if confianza >= 40 else 0)
+        # UMBRAL BAJADO A 30% para dar más señales
+        confianza_final = confianza_ml if confianza_ml and confianza_ml >= 50 else (confianza if confianza >= 30 else 0)
         
-        if confianza_final < 40:
+        if confianza_final < 30:
             return {'señal': 'ESPERA', 'rsi': rsi, 'confianza': 0, 'razon': "Confianza baja", 'indicadores': {}}
 
-        razon_final = f"ML: {confianza_ml:.1f}%" if confianza_ml and confianza_ml >= 55 else (" | ".join(razones))
+        razon_final = f"ML: {confianza_ml:.1f}%" if confianza_ml and confianza_ml >= 50 else (" | ".join(razones))
 
         return {'señal': dirección, 'rsi': rsi, 'confianza': confianza_final, 
                'razon': razon_final, 'indicadores': indicadores}
@@ -369,18 +368,19 @@ if 'pesos' not in st.session_state: st.session_state.pesos = cargar_patrones()
 if 'resultado_guardado' not in st.session_state: st.session_state.resultado_guardado = False
 if 'minuto_anterior' not in st.session_state: st.session_state.minuto_anterior = None
 if 'precio_real_entrada' not in st.session_state: st.session_state.precio_real_entrada = None
+if 'voz_reproducida' not in st.session_state: st.session_state.voz_reproducida = False
 
 CSS = """
 <style>
 body { background: #000; color: #fff; font-family: Arial, sans-serif; }
-.main-header { background: linear-gradient(90deg, #1a1a2e, #16213e); padding: 20px; border-radius: 10px; border: 2px solid #ffd700; text-align: center; margin-bottom: 20px; }
+.main-header { background: linear-gradient(90deg, #1a1a2e, #16213e); padding: 20px; border-radius: 10px; border: 2px solid #ffd700; text-align: center; margin-bottom: 15px; }
 .main-header h1 { color: #ffd700; margin: 0; font-size: 32px; letter-spacing: 3px; }
 .main-header p { color: #aaa; margin: 8px 0 0 0; font-size: 13px; }
-.signal-box { padding: 35px; border-radius: 15px; text-align: center; font-size: 36px; font-weight: bold; margin: 20px 0; letter-spacing: 2px; }
+.signal-box { padding: 35px; border-radius: 15px; text-align: center; font-size: 36px; font-weight: bold; margin: 15px 0; letter-spacing: 2px; }
 .signal-call { background: linear-gradient(135deg, #00cc00, #00ff00); border: 4px solid #00ff00; color: white; box-shadow: 0 0 40px rgba(0, 255, 0, 0.6); }
 .signal-put { background: linear-gradient(135deg, #cc0000, #ff0000); border: 4px solid #ff0000; color: white; box-shadow: 0 0 40px rgba(255, 0, 0, 0.6); }
 .signal-wait { background: #1a1a2e; border: 3px solid #ffd700; color: #ffd700; }
-.radar { width: 240px; height: 240px; border-radius: 50%; display: flex; align-items: center; justify-content: center; margin: 25px auto; }
+.radar { width: 240px; height: 240px; border-radius: 50%; display: flex; align-items: center; justify-content: center; margin: 20px auto; }
 .radar-green { border: 4px solid #00ff00; background: radial-gradient(circle, #0a2a1a, #000); box-shadow: 0 0 40px rgba(0, 255, 0, 0.6); }
 .radar-red { border: 4px solid #ff0000; background: radial-gradient(circle, #2a0a0a, #000); box-shadow: 0 0 40px rgba(255, 0, 0, 0.6); }
 .radar-yellow { border: 4px solid #ffd700; background: radial-gradient(circle, #2a2a1a, #000); box-shadow: 0 0 40px rgba(255, 215, 0, 0.6); }
@@ -391,6 +391,7 @@ body { background: #000; color: #fff; font-family: Arial, sans-serif; }
 .info-panel { background: #1a1a2e; border: 2px solid #00ff88; border-radius: 10px; padding: 15px; margin: 12px 0; }
 .info-panel strong { color: #00ff88; }
 .stat-box { background: #1a1a2e; border: 2px solid #ffd700; border-radius: 10px; padding: 12px; text-align: center; }
+.hora-box { background: linear-gradient(90deg, #0a2a1a, #1a1a2e); border: 2px solid #00ff88; border-radius: 10px; padding: 15px; text-align: center; margin: 15px 0; }
 .footer { text-align: center; color: #666; font-size: 11px; margin-top: 25px; padding: 15px; border-top: 1px solid #333; }
 </style>
 """
@@ -401,21 +402,25 @@ if st.button("🔒 Cerrar Sesión", key="logout_btn"):
     st.session_state.usuario_actual = ""
     st.rerun()
 
-st.markdown(f'<div class="main-header"><h1>ZT TRADERS</h1><p>Bienvenido: {st.session_state.usuario_actual} | Auto-Reset Activo</p></div>', unsafe_allow_html=True)
+# Botón de RESET MANUAL (para borrar operaciones viejas)
+if st.button("🗑️ Borrar Memoria (Reset Manual)", key="reset_manual_btn"):
+    resetear_memoria()
+    st.success("✅ Memoria borrada. La IA empieza de cero.")
+    st.session_state.senal = None
+    st.session_state.estado = 'analizando'
+    st.rerun()
 
-col1, col2 = st.columns([2, 1])
-with col1:
-    par_nombre = st.selectbox("Par:", list(PARES.keys()), index=list(PARES.keys()).index(st.session_state.par_sel))
-    st.session_state.par_sel = par_nombre
-with col2:
-    ahora = datetime.now()
-    hora_actual = ahora.strftime('%H:%M:%S')
-    st.markdown(f'<div class="stat-box"><strong style="color:#ffd700;">HORA</strong><br><span style="color:#00ff88; font-size:22px;">{hora_actual}</span></div>', unsafe_allow_html=True)
+st.markdown(f'<div class="main-header"><h1>ZT TRADERS</h1><p>Bienvenido: {st.session_state.usuario_actual} | Alerta de Voz Activa</p></div>', unsafe_allow_html=True)
+
+# Selector de par
+par_nombre = st.selectbox("Par:", list(PARES.keys()), index=list(PARES.keys()).index(st.session_state.par_sel))
+st.session_state.par_sel = par_nombre
 
 codigo_info = PARES[par_nombre]
 codigo = codigo_info['codigo']
 tipo = codigo_info['tipo']
 
+# Estadísticas
 hist = cargar_historial()
 modelo_info = entrenar_modelo_ml()
 ops_con_indicadores = sum(1 for op in hist if 'indicadores' in op)
@@ -434,6 +439,26 @@ with c4:
 
 st.markdown("---")
 
+# Script de voz
+def reproducir_voz(mensaje):
+    mensaje_seguro = mensaje.replace("'", "\\'").replace('"', '\\"')
+    js_code = f"""
+    <script>
+    (function() {{
+        if ('speechSynthesis' in window) {{
+            window.speechSynthesis.cancel();
+            const msg = new SpeechSynthesisUtterance('{mensaje_seguro}');
+            msg.lang = 'es-ES';
+            msg.rate = 1.0;
+            msg.pitch = 1.0;
+            msg.volume = 1.0;
+            window.speechSynthesis.speak(msg);
+        }}
+    }})();
+    </script>
+    """
+    st.markdown(js_code, unsafe_allow_html=True)
+
 ahora = datetime.now()
 minuto_actual = ahora.minute
 segundo_actual = ahora.second
@@ -443,6 +468,7 @@ if st.session_state.minuto_anterior is None:
     st.session_state.minuto_anterior = minuto_actual
 elif st.session_state.minuto_anterior != minuto_actual:
     st.session_state.resultado_guardado = False
+    st.session_state.voz_reproducida = False
     st.session_state.minuto_anterior = minuto_actual
 
 if minuto_es_par:
@@ -473,9 +499,13 @@ if minuto_es_par:
                 st.session_state.senal = analizar_par(codigo, tipo)
                 
         señal = st.session_state.senal
+        
         if not señal or señal['señal'] == 'ESPERA':
             st.markdown('<div class="signal-box signal-wait">SIN SEÑAL CLARA</div>', unsafe_allow_html=True)
             st.markdown('<div class="info-panel" style="text-align:center;"><strong>Mejor no operar en este minuto.</strong></div>', unsafe_allow_html=True)
+            if not st.session_state.voz_reproducida:
+                reproducir_voz("Mercado lateral. Sin señal clara. No operar.")
+                st.session_state.voz_reproducida = True
             time_module.sleep(0.5)
             st.rerun()
             
@@ -485,6 +515,19 @@ if minuto_es_par:
         clase_box = "signal-call" if es_call else "signal-put"
         clase_radar = "radar-green" if es_call else "radar-red"
         clase_numero = "radar-number-green" if es_call else "radar-number-red"
+        
+        if not st.session_state.voz_reproducida:
+            confianza_texto = f"Confianza {int(señal['confianza'])} por ciento"
+            if es_call:
+                mensaje_voz = f"Atención. Señal de compra. Operación a la alza. {confianza_texto}."
+            else:
+                mensaje_voz = f"Atención. Señal de venta. Operación a la baja. {confianza_texto}."
+            reproducir_voz(mensaje_voz)
+            st.session_state.voz_reproducida = True
+        
+        # RELOJ ARRIBA (junto con la señal)
+        hora_actual = ahora.strftime('%H:%M:%S')
+        st.markdown(f'<div class="hora-box"><strong style="color:#00ff88; font-size:28px;">🕐 {hora_actual}</strong></div>', unsafe_allow_html=True)
         
         st.markdown(f'<div class="signal-box {clase_box}">{tipo_signal}</div>', unsafe_allow_html=True)
         st.markdown(f'<div class="info-panel"><strong>Confianza:</strong> {señal["confianza"]:.1f}%<br><strong>Razon:</strong> {señal["razon"]}</div>', unsafe_allow_html=True)
@@ -510,6 +553,10 @@ else:
     clase_numero = "radar-number-green" if es_call else "radar-number-red"
     
     precio_entrada = st.session_state.precio_real_entrada
+    
+    # RELOJ ARRIBA (durante la operación también)
+    hora_actual = ahora.strftime('%H:%M:%S')
+    st.markdown(f'<div class="hora-box"><strong style="color:#00ff88; font-size:28px;">🕐 {hora_actual}</strong></div>', unsafe_allow_html=True)
     
     st.markdown(f'<div class="signal-box {clase_box}">{tipo_signal}</div>', unsafe_allow_html=True)
     if precio_entrada:
@@ -539,9 +586,8 @@ hist = cargar_historial()
 if hist:
     for op in reversed(hist[-10:]):
         emoji = "✅" if op['resultado'] == 'GANADA' else "❌"
-        precio_ent = op.get('precio_entrada_real', 0)
         st.write(f"{emoji} {op['fecha']} - {op['señal']} - {op['resultado']}")
 else:
     st.info("Memoria limpia. La IA está aprendiendo desde cero.")
 
-st.markdown(f'<div class="footer">ZT TRADERS | Usuario: {st.session_state.usuario_actual} | Auto-Reset Activo</div>', unsafe_allow_html=True)
+st.markdown(f'<div class="footer">ZT TRADERS | Usuario: {st.session_state.usuario_actual} | Alerta de Voz Activa</div>', unsafe_allow_html=True)
