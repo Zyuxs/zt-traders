@@ -105,13 +105,22 @@ def guardar_historial(hist):
     except:
         pass
 
-def aprender_en_segundo_plano(señal, resultado, indicadores):
+def resetear_memoria():
+    """Borra el historial y patrones para empezar de cero"""
+    if os.path.exists(ARCHIVO_HISTORIAL):
+        os.remove(ARCHIVO_HISTORIAL)
+    if os.path.exists(ARCHIVO_PATRONES):
+        os.remove(ARCHIVO_PATRONES)
+    st.session_state.pesos = {'total_ops': 0, 'total_ganadas': 0, 'winrate': 0.0}
+
+def aprender_en_segundo_plano(señal, resultado, indicadores, precio_real_entrada):
     hist = cargar_historial()
     pesos = cargar_patrones()
     registro = {
         'fecha': datetime.now().strftime('%H:%M:%S'),
         'señal': señal,
         'resultado': resultado,
+        'precio_entrada_real': precio_real_entrada,
         'indicadores': indicadores
     }
     hist.append(registro)
@@ -121,6 +130,10 @@ def aprender_en_segundo_plano(señal, resultado, indicadores):
     pesos['winrate'] = (pesos['total_ganadas'] / pesos['total_ops'] * 100) if pesos['total_ops'] > 0 else 0.0
     guardar_historial(hist)
     guardar_patrones(pesos)
+    
+    # AUTO-RESET: Si el winrate es menor a 15% después de 20 operaciones, resetear
+    if pesos['total_ops'] >= 20 and pesos['winrate'] < 15:
+        resetear_memoria()
 
 def entrenar_modelo_ml():
     hist = cargar_historial()
@@ -132,15 +145,17 @@ def entrenar_modelo_ml():
             features = [
                 ind.get('rsi', 50), ind.get('stoch', 50), ind.get('macd', 0),
                 ind.get('adx', 20), ind.get('bb_position', 0.5),
-                ind.get('sma_cross', 0), 1 if op['señal'] == 'CALL' else 0
+                ind.get('sma_cross', 0), ind.get('tendencia_5m', 0),
+                1 if op['señal'] == 'CALL' else 0
             ]
             X.append(features)
             y.append(1 if op['resultado'] == 'GANADA' else 0)
-    if len(X) < 20:
+    
+    if len(X) < 15:
         return None
     try:
-        modelo = RandomForestClassifier(n_estimators=100, max_depth=5, random_state=42, min_samples_split=5)
-        scores = cross_val_score(modelo, X, y, cv=5, scoring='accuracy')
+        modelo = RandomForestClassifier(n_estimators=100, max_depth=4, random_state=42, min_samples_split=4)
+        scores = cross_val_score(modelo, X, y, cv=3, scoring='accuracy')
         accuracy_real = scores.mean()
         modelo.fit(X, y)
         return {'modelo': modelo, 'accuracy': accuracy_real, 'muestras': len(X)}
@@ -152,6 +167,7 @@ def predecir_con_ml(modelo, indicadores):
         indicadores.get('rsi', 50), indicadores.get('stoch', 50),
         indicadores.get('macd', 0), indicadores.get('adx', 20),
         indicadores.get('bb_position', 0.5), indicadores.get('sma_cross', 0),
+        indicadores.get('tendencia_5m', 0),
         1 if indicadores.get('direccion', 'CALL') == 'CALL' else 0
     ]
     try:
@@ -175,7 +191,6 @@ def obtener_datos_binance(symbol, interval='1m', limit=100):
             df[col] = pd.to_numeric(df[col])
         return df
     except Exception as e:
-        print(f"Error Binance: {e}")
         return None
 
 def obtener_datos_yahoo(symbol, period="2d", interval="1m"):
@@ -188,6 +203,25 @@ def obtener_datos_yahoo(symbol, period="2d", interval="1m"):
     except:
         return None
 
+def obtener_precio_actual(codigo_par, tipo='crypto'):
+    if tipo == 'crypto':
+        try:
+            url = f"https://api.binance.com/api/v3/ticker/price?symbol={codigo_par}"
+            response = requests.get(url, timeout=5)
+            data = response.json()
+            return float(data['price'])
+        except:
+            return None
+    else:
+        try:
+            datos = yf.download(codigo_par, period="1d", interval="1m", progress=False)
+            if isinstance(datos.columns, pd.MultiIndex):
+                datos.columns = datos.columns.get_level_values(0)
+            if len(datos) < 1: return None
+            return float(datos['Close'].iloc[-1])
+        except:
+            return None
+
 def analizar_par(codigo_par, tipo='crypto'):
     if tipo == 'crypto':
         datos_1m = obtener_datos_binance(codigo_par, interval='1m', limit=100)
@@ -197,10 +231,7 @@ def analizar_par(codigo_par, tipo='crypto'):
         datos_5m = obtener_datos_yahoo(codigo_par, period="5d", interval="5m")
     
     if datos_1m is None or datos_5m is None or len(datos_1m) < 30:
-        return {'señal': 'CALL', 'precio': 0.0, 'rsi': 50, 'confianza': 10, 
-                'razon': "Esperando datos...", 
-                'indicadores': {'rsi': 50, 'stoch': 50, 'macd': 0, 'adx': 20, 
-                               'bb_position': 0.5, 'sma_cross': 0, 'direccion': 'CALL'}}
+        return {'señal': 'ESPERA', 'rsi': 50, 'confianza': 0, 'razon': "Datos insuficientes", 'indicadores': {}}
     
     try:
         if tipo == 'crypto':
@@ -223,6 +254,7 @@ def analizar_par(codigo_par, tipo='crypto'):
             sma_1m = float(u1['SMA_10'])
             sma_5m = float(u5['SMA_20'])
             a1_close = float(a1['close'])
+            open_1m = float(u1['open'])
         else:
             datos_1m['RSI'] = ta.momentum.RSIIndicator(datos_1m['Close'], window=14).rsi()
             datos_1m['STOCH'] = ta.momentum.StochasticOscillator(datos_1m['High'], datos_1m['Low'], datos_1m['Close']).stoch()
@@ -243,6 +275,7 @@ def analizar_par(codigo_par, tipo='crypto'):
             sma_1m = float(u1['SMA_10'])
             sma_5m = float(u5['SMA_20'])
             a1_close = float(a1['Close'])
+            open_1m = float(u1['Open'])
         
         rsi = 50.0 if pd.isna(u1['RSI']) else float(u1['RSI'])
         stoch = 50.0 if pd.isna(u1['STOCH']) else float(u1['STOCH'])
@@ -250,137 +283,92 @@ def analizar_par(codigo_par, tipo='crypto'):
         macd_sig = 0.0 if pd.isna(u1['MACD_signal']) else float(u1['MACD_signal'])
         adx = 20.0 if pd.isna(u1['ADX']) else float(u1['ADX'])
 
-        # Determinar dirección CORRECTAMENTE
-        dirección = 'CALL' if rsi < 50 else 'PUT'
+        tendencia_5m = 1 if precio > sma_5m else -1
         
-        if precio <= bb_low:
-            dirección = 'CALL'
-        elif precio >= bb_high:
-            dirección = 'PUT'
+        cuerpo_vela = precio - open_1m
+        es_vela_verde = cuerpo_vela > 0
+        es_vela_roja = cuerpo_vela < 0
         
-        if precio > sma_1m and a1_close <= sma_1m:
+        mecha_inferior = min(open_1m, precio) - float(u1['low'])
+        es_martillo_alcista = (mecha_inferior > abs(cuerpo_vela) * 2) and es_vela_verde
+        
+        mecha_superior = float(u1['high']) - max(open_1m, precio)
+        es_estrella_fugaz = (mecha_superior > abs(cuerpo_vela) * 2) and es_vela_roja
+
+        dirección = 'ESPERA'
+        
+        if (tendencia_5m == 1 or es_martillo_alcista) and (rsi < 55 or precio <= bb_low):
             dirección = 'CALL'
-        elif precio < sma_1m and a1_close >= sma_1m:
+        elif (tendencia_5m == -1 or es_estrella_fugaz) and (rsi > 45 or precio >= bb_high):
             dirección = 'PUT'
+
+        if dirección == 'ESPERA':
+            return {'señal': 'ESPERA', 'rsi': rsi, 'confianza': 0, 'razon': "Mercado lateral", 'indicadores': {}}
 
         bb_position = (precio - bb_low) / (bb_high - bb_low) if bb_high != bb_low else 0.5
         bb_position = max(0, min(1, bb_position))
-        sma_cross = 0
-        
-        if precio > sma_1m and a1_close <= sma_1m:
-            sma_cross = 1
-        elif precio < sma_1m and a1_close >= sma_1m:
-            sma_cross = -1
+        sma_cross = 1 if precio > sma_1m and a1_close <= sma_1m else (-1 if precio < sma_1m and a1_close >= sma_1m else 0)
 
-        indicadores = {'rsi': rsi, 'stoch': stoch, 'macd': macd - macd_sig, 'adx': adx, 
-                      'bb_position': bb_position, 'sma_cross': sma_cross, 'direccion': dirección}
+        indicadores = {
+            'rsi': rsi, 'stoch': stoch, 'macd': macd - macd_sig, 'adx': adx, 
+            'bb_position': bb_position, 'sma_cross': sma_cross, 
+            'tendencia_5m': tendencia_5m, 'direccion': dirección
+        }
 
         modelo_info = entrenar_modelo_ml()
+        confianza_ml = None
         if modelo_info and modelo_info['modelo']:
-            probabilidad_ml = predecir_con_ml(modelo_info['modelo'], indicadores)
-            if probabilidad_ml >= 50:
-                return {'señal': dirección, 'precio': precio, 'rsi': rsi, 
-                       'confianza': probabilidad_ml, 
-                       'razon': f"ML: {probabilidad_ml:.1f}% (Precisión: {modelo_info['accuracy']*100:.0f}%, Muestras: {modelo_info['muestras']})", 
-                       'indicadores': indicadores}
+            confianza_ml = predecir_con_ml(modelo_info['modelo'], indicadores)
 
         confianza = 0
         razones = []
-        if dirección == 'CALL' and rsi < 35:
-            confianza += 25
-            razones.append("RSI sobreventa")
-        elif dirección == 'PUT' and rsi > 65:
-            confianza += 25
-            razones.append("RSI sobrecompra")
         
-        if dirección == 'CALL' and precio <= bb_low:
-            confianza += 25
-            razones.append("Toca banda inferior")
-        elif dirección == 'PUT' and precio >= bb_high:
-            confianza += 25
-            razones.append("Toca banda superior")
-        
-        if dirección == 'CALL' and macd > macd_sig:
-            confianza += 20
-            razones.append("MACD alcista")
-        elif dirección == 'PUT' and macd < macd_sig:
-            confianza += 20
-            razones.append("MACD bajista")
-        
-        if adx > 25:
-            confianza += 15
-            razones.append(f"ADX fuerte ({adx:.0f})")
-        
-        if dirección == 'CALL' and stoch < 20:
-            confianza += 15
-            razones.append("Estocástico sobreventa")
-        elif dirección == 'PUT' and stoch > 80:
-            confianza += 15
-            razones.append("Estocástico sobrecompra")
+        if dirección == 'CALL':
+            if rsi < 40: confianza += 30; razones.append("RSI sobreventa")
+            if precio <= bb_low: confianza += 30; razones.append("Toca banda inferior")
+            if macd > macd_sig: confianza += 20; razones.append("MACD alcista")
+            if es_martillo_alcista: confianza += 20; razones.append("Vela Martillo")
+        else:
+            if rsi > 60: confianza += 30; razones.append("RSI sobrecompra")
+            if precio >= bb_high: confianza += 30; razones.append("Toca banda superior")
+            if macd < macd_sig: confianza += 20; razones.append("MACD bajista")
+            if es_estrella_fugaz: confianza += 20; razones.append("Estrella Fugaz")
+            
+        if adx > 25: confianza += 10; razones.append(f"ADX fuerte ({adx:.0f})")
 
-        if razones and confianza >= 15:
-            return {'señal': dirección, 'precio': precio, 'rsi': rsi, 'confianza': confianza, 
-                   'razon': " | ".join(razones) + " (Clásico)", 'indicadores': indicadores}
+        confianza_final = confianza_ml if confianza_ml and confianza_ml >= 55 else (confianza if confianza >= 40 else 0)
+        
+        if confianza_final < 40:
+            return {'señal': 'ESPERA', 'rsi': rsi, 'confianza': 0, 'razon': "Confianza baja", 'indicadores': {}}
 
-        return {'señal': dirección, 'precio': precio, 'rsi': rsi, 'confianza': 10, 
-               'razon': f"Señal básica (RSI {rsi:.0f})", 'indicadores': indicadores}
+        razon_final = f"ML: {confianza_ml:.1f}%" if confianza_ml and confianza_ml >= 55 else (" | ".join(razones))
+
+        return {'señal': dirección, 'rsi': rsi, 'confianza': confianza_final, 
+               'razon': razon_final, 'indicadores': indicadores}
+               
     except Exception as e:
-        return {'señal': 'CALL', 'precio': 0.0, 'rsi': 50, 'confianza': 10, 
-                'razon': f"Error: {str(e)[:50]}", 
-                'indicadores': {'rsi': 50, 'stoch': 50, 'macd': 0, 'adx': 20, 
-                               'bb_position': 0.5, 'sma_cross': 0, 'direccion': 'CALL'}}
-
-def obtener_precio_actual(codigo_par, tipo='crypto'):
-    if tipo == 'crypto':
-        try:
-            url = f"https://api.binance.com/api/v3/ticker/price?symbol={codigo_par}"
-            response = requests.get(url, timeout=5)
-            data = response.json()
-            return float(data['price'])
-        except:
-            return None
-    else:
-        try:
-            datos = yf.download(codigo_par, period="1d", interval="1m", progress=False)
-            if isinstance(datos.columns, pd.MultiIndex):
-                datos.columns = datos.columns.get_level_values(0)
-            if len(datos) < 1: return None
-            return float(datos['Close'].iloc[-1])
-        except:
-            return None
+        return {'señal': 'ESPERA', 'rsi': 50, 'confianza': 0, 'razon': f"Error", 'indicadores': {}}
 
 PARES = {
     'EUR/USD': {'codigo': 'EURUSD=X', 'tipo': 'forex'},
     'GBP/USD': {'codigo': 'GBPUSD=X', 'tipo': 'forex'},
     'USD/JPY': {'codigo': 'USDJPY=X', 'tipo': 'forex'},
     'AUD/USD': {'codigo': 'AUDUSD=X', 'tipo': 'forex'},
-    'EUR/JPY': {'codigo': 'EURJPY=X', 'tipo': 'forex'},
-    'AUD/CAD': {'codigo': 'AUDCAD=X', 'tipo': 'forex'},
-    'EUR/GBP': {'codigo': 'EURGBP=X', 'tipo': 'forex'},
-    'GBP/JPY': {'codigo': 'GBPJPY=X', 'tipo': 'forex'},
-    'NZD/USD': {'codigo': 'NZDUSD=X', 'tipo': 'forex'},
-    'USD/CAD': {'codigo': 'USDCAD=X', 'tipo': 'forex'},
-    'USD/CHF': {'codigo': 'USDCHF=X', 'tipo': 'forex'},
-    'AUD/JPY': {'codigo': 'AUDJPY=X', 'tipo': 'forex'},
     'Bitcoin': {'codigo': 'BTCUSDT', 'tipo': 'crypto'},
     'Ethereum': {'codigo': 'ETHUSDT', 'tipo': 'crypto'},
     'Polkadot': {'codigo': 'DOTUSDT', 'tipo': 'crypto'},
     'Worldcoin': {'codigo': 'WLDUSDT', 'tipo': 'crypto'},
-    'Binance Coin': {'codigo': 'BNBUSDT', 'tipo': 'crypto'},
-    'Cardano': {'codigo': 'ADAUSDT', 'tipo': 'crypto'},
     'Solana': {'codigo': 'SOLUSDT', 'tipo': 'crypto'},
-    'Ripple': {'codigo': 'XRPUSDT', 'tipo': 'crypto'},
-    'Dogecoin': {'codigo': 'DOGEUSDT', 'tipo': 'crypto'},
-    'Polygon': {'codigo': 'MATICUSDT', 'tipo': 'crypto'},
-    'Litecoin': {'codigo': 'LTCUSDT', 'tipo': 'crypto'}
+    'Ripple': {'codigo': 'XRPUSDT', 'tipo': 'crypto'}
 }
 
 if 'estado' not in st.session_state: st.session_state.estado = 'analizando'
-if 'par_sel' not in st.session_state: st.session_state.par_sel = 'EUR/USD'
+if 'par_sel' not in st.session_state: st.session_state.par_sel = 'Bitcoin'
 if 'senal' not in st.session_state: st.session_state.senal = None
 if 'pesos' not in st.session_state: st.session_state.pesos = cargar_patrones()
 if 'resultado_guardado' not in st.session_state: st.session_state.resultado_guardado = False
 if 'minuto_anterior' not in st.session_state: st.session_state.minuto_anterior = None
+if 'precio_real_entrada' not in st.session_state: st.session_state.precio_real_entrada = None
 
 CSS = """
 <style>
@@ -395,9 +383,11 @@ body { background: #000; color: #fff; font-family: Arial, sans-serif; }
 .radar { width: 240px; height: 240px; border-radius: 50%; display: flex; align-items: center; justify-content: center; margin: 25px auto; }
 .radar-green { border: 4px solid #00ff00; background: radial-gradient(circle, #0a2a1a, #000); box-shadow: 0 0 40px rgba(0, 255, 0, 0.6); }
 .radar-red { border: 4px solid #ff0000; background: radial-gradient(circle, #2a0a0a, #000); box-shadow: 0 0 40px rgba(255, 0, 0, 0.6); }
+.radar-yellow { border: 4px solid #ffd700; background: radial-gradient(circle, #2a2a1a, #000); box-shadow: 0 0 40px rgba(255, 215, 0, 0.6); }
 .radar-number { font-size: 90px; font-weight: bold; text-shadow: 0 0 25px currentColor; }
 .radar-number-green { color: #00ff00; }
 .radar-number-red { color: #ff0000; }
+.radar-number-yellow { color: #ffd700; font-size: 28px; text-align: center; }
 .info-panel { background: #1a1a2e; border: 2px solid #00ff88; border-radius: 10px; padding: 15px; margin: 12px 0; }
 .info-panel strong { color: #00ff88; }
 .stat-box { background: #1a1a2e; border: 2px solid #ffd700; border-radius: 10px; padding: 12px; text-align: center; }
@@ -411,7 +401,7 @@ if st.button("🔒 Cerrar Sesión", key="logout_btn"):
     st.session_state.usuario_actual = ""
     st.rerun()
 
-st.markdown(f'<div class="main-header"><h1>ZT TRADERS</h1><p>Bienvenido: {st.session_state.usuario_actual} | Binance + Yahoo Finance</p></div>', unsafe_allow_html=True)
+st.markdown(f'<div class="main-header"><h1>ZT TRADERS</h1><p>Bienvenido: {st.session_state.usuario_actual} | Auto-Reset Activo</p></div>', unsafe_allow_html=True)
 
 col1, col2 = st.columns([2, 1])
 with col1:
@@ -435,12 +425,12 @@ with c1: st.markdown(f'<div class="stat-box"><strong style="color:#ffd700;">Winr
 with c2: st.markdown(f'<div class="stat-box"><strong style="color:#ffd700;">Operaciones</strong><br><span style="color:#00ff88; font-size:22px;">{st.session_state.pesos["total_ops"]}</span></div>', unsafe_allow_html=True)
 with c3: st.markdown(f'<div class="stat-box"><strong style="color:#ffd700;">Ganadas</strong><br><span style="color:#00ff88; font-size:22px;">{st.session_state.pesos["total_ganadas"]}</span></div>', unsafe_allow_html=True)
 with c4: 
-    if modelo_info and ops_con_indicadores >= 20:
+    if modelo_info and ops_con_indicadores >= 15:
         precision = modelo_info["accuracy"] * 100
-        color_precision = "#00ff88" if precision >= 60 else "#ffaa00" if precision >= 50 else "#ff4444"
-        st.markdown(f'<div class="stat-box"><strong style="color:#ffd700;">ML Precisión</strong><br><span style="color:{color_precision}; font-size:22px;">{precision:.0f}%</span><br><small style="color:#aaa;">({ops_con_indicadores} muestras)</small></div>', unsafe_allow_html=True)
+        color_p = "#00ff88" if precision >= 60 else "#ffaa00" if precision >= 50 else "#ff4444"
+        st.markdown(f'<div class="stat-box"><strong style="color:#ffd700;">ML</strong><br><span style="color:{color_p}; font-size:22px;">{precision:.0f}%</span></div>', unsafe_allow_html=True)
     else:
-        st.markdown(f'<div class="stat-box"><strong style="color:#ffd700;">ML Status</strong><br><span style="color:#ff8800; font-size:18px;">Entrenando...<br>({ops_con_indicadores}/20)</span></div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="stat-box"><strong style="color:#ffd700;">ML</strong><br><span style="color:#ff8800; font-size:18px;">({ops_con_indicadores}/15)</span></div>', unsafe_allow_html=True)
 
 st.markdown("---")
 
@@ -456,77 +446,102 @@ elif st.session_state.minuto_anterior != minuto_actual:
     st.session_state.minuto_anterior = minuto_actual
 
 if minuto_es_par:
-    if segundo_actual < 55:
+    if segundo_actual < 50:
+        st.markdown('<div class="signal-box signal-wait">ESPERANDO...</div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="info-panel" style="text-align:center;"><strong>Próximo análisis en: {50 - segundo_actual}s</strong></div>', unsafe_allow_html=True)
+        time_module.sleep(1)
+        st.rerun()
+    elif segundo_actual < 55:
         if st.session_state.estado != 'analizando':
             st.session_state.estado = 'analizando'
             st.session_state.senal = None
-            st.session_state.resultado_guardado = False
         if st.session_state.senal is None:
             st.session_state.senal = analizar_par(codigo, tipo)
-        st.markdown('<div class="signal-box signal-wait">ANALIZANDO...</div>', unsafe_allow_html=True)
-        st.markdown('<div class="info-panel" style="text-align:center;"><strong>La IA está analizando el mercado...</strong></div>', unsafe_allow_html=True)
-        time_module.sleep(1)
+        
+        if st.session_state.senal and st.session_state.senal['señal'] == 'ESPERA':
+            st.markdown('<div class="signal-box signal-wait">MERCADO LATERAL</div>', unsafe_allow_html=True)
+            st.markdown('<div class="info-panel" style="text-align:center;"><strong>La IA prefiere no operar.</strong></div>', unsafe_allow_html=True)
+        else:
+            st.markdown('<div class="signal-box signal-wait">ANALIZANDO...</div>', unsafe_allow_html=True)
+            st.markdown('<div class="info-panel" style="text-align:center;"><strong>La IA está calculando...</strong></div>', unsafe_allow_html=True)
+        time_module.sleep(0.5)
         st.rerun()
     else:
         if st.session_state.estado != 'senal':
             st.session_state.estado = 'senal'
             if st.session_state.senal is None:
                 st.session_state.senal = analizar_par(codigo, tipo)
+                
         señal = st.session_state.senal
+        if not señal or señal['señal'] == 'ESPERA':
+            st.markdown('<div class="signal-box signal-wait">SIN SEÑAL CLARA</div>', unsafe_allow_html=True)
+            st.markdown('<div class="info-panel" style="text-align:center;"><strong>Mejor no operar en este minuto.</strong></div>', unsafe_allow_html=True)
+            time_module.sleep(0.5)
+            st.rerun()
+            
         es_call = señal['señal'] == 'CALL'
         segundos_restantes = 59 - segundo_actual
         tipo_signal = "CALL" if es_call else "PUT"
         clase_box = "signal-call" if es_call else "signal-put"
         clase_radar = "radar-green" if es_call else "radar-red"
         clase_numero = "radar-number-green" if es_call else "radar-number-red"
+        
         st.markdown(f'<div class="signal-box {clase_box}">{tipo_signal}</div>', unsafe_allow_html=True)
-        st.markdown(f'<div class="info-panel"><strong>Punto:</strong> {round(señal["precio"], 5)} | <strong>Confianza:</strong> {señal["confianza"]:.1f}%</div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="info-panel"><strong>Confianza:</strong> {señal["confianza"]:.1f}%<br><strong>Razon:</strong> {señal["razon"]}</div>', unsafe_allow_html=True)
         st.markdown(f'<div class="radar {clase_radar}"><div class="radar-number {clase_numero}">{segundos_restantes}</div></div>', unsafe_allow_html=True)
         time_module.sleep(0.3)
         st.rerun()
 else:
     if st.session_state.estado != 'operando':
         st.session_state.estado = 'operando'
+        st.session_state.precio_real_entrada = obtener_precio_actual(codigo, tipo)
+    
     señal = st.session_state.senal
-    if señal is None:
-        señal = analizar_par(codigo, tipo)
-        st.session_state.senal = señal
+    if not señal or señal['señal'] == 'ESPERA':
+        st.markdown('<div class="signal-box signal-wait">ESPERANDO...</div>', unsafe_allow_html=True)
+        time_module.sleep(1)
+        st.rerun()
+    
     es_call = señal['señal'] == 'CALL'
     segundos_restantes_op = 59 - segundo_actual
     tipo_signal = "CALL" if es_call else "PUT"
     clase_box = "signal-call" if es_call else "signal-put"
     clase_radar = "radar-green" if es_call else "radar-red"
     clase_numero = "radar-number-green" if es_call else "radar-number-red"
+    
+    precio_entrada = st.session_state.precio_real_entrada
+    
     st.markdown(f'<div class="signal-box {clase_box}">{tipo_signal}</div>', unsafe_allow_html=True)
-    st.markdown(f'<div class="info-panel"><strong>Entrada:</strong> {round(señal["precio"], 5)} | <strong>Confianza:</strong> {señal["confianza"]:.1f}%</div>', unsafe_allow_html=True)
+    if precio_entrada:
+        st.markdown(f'<div class="info-panel"><strong>Entrada REAL:</strong> {round(precio_entrada, 5)} | <strong>Confianza:</strong> {señal["confianza"]:.1f}%</div>', unsafe_allow_html=True)
     st.markdown(f'<div class="radar {clase_radar}"><div class="radar-number {clase_numero}">{segundos_restantes_op}</div></div>', unsafe_allow_html=True)
     st.warning("No cierres esta pagina")
     
     if segundo_actual >= 58 and not st.session_state.resultado_guardado:
-        precio_entrada = señal['precio']
-        precio_actual = obtener_precio_actual(codigo, tipo)
-        resultado_interno = 'PERDIDA'
-        if precio_actual is not None and precio_entrada > 0:
-            if es_call and precio_actual > precio_entrada: resultado_interno = 'GANADA'
-            elif not es_call and precio_actual < precio_entrada: resultado_interno = 'GANADA'
-        elif precio_entrada == 0.0:
-            resultado_interno = None
-        if resultado_interno is not None:
+        if precio_entrada and precio_entrada > 0:
+            precio_actual = obtener_precio_actual(codigo, tipo)
+            resultado_interno = 'PERDIDA'
+            if precio_actual is not None:
+                if es_call and precio_actual > precio_entrada:
+                    resultado_interno = 'GANADA'
+                elif not es_call and precio_actual < precio_entrada:
+                    resultado_interno = 'GANADA'
             indicadores = señal.get('indicadores', {})
-            aprender_en_segundo_plano(señal['señal'], resultado_interno, indicadores)
+            aprender_en_segundo_plano(señal['señal'], resultado_interno, indicadores, precio_entrada)
             st.session_state.pesos = cargar_patrones()
         st.session_state.resultado_guardado = True
     time_module.sleep(0.5)
     st.rerun()
 
 st.markdown("---")
-st.markdown("### Historial")
+st.markdown("### Historial Reciente")
 hist = cargar_historial()
 if hist:
     for op in reversed(hist[-10:]):
         emoji = "✅" if op['resultado'] == 'GANADA' else "❌"
+        precio_ent = op.get('precio_entrada_real', 0)
         st.write(f"{emoji} {op['fecha']} - {op['señal']} - {op['resultado']}")
 else:
-    st.info("La IA está empezando a entrenar desde cero.")
+    st.info("Memoria limpia. La IA está aprendiendo desde cero.")
 
-st.markdown(f'<div class="footer">ZT TRADERS | Usuario: {st.session_state.usuario_actual} | Binance + Yahoo Finance</div>', unsafe_allow_html=True)
+st.markdown(f'<div class="footer">ZT TRADERS | Usuario: {st.session_state.usuario_actual} | Auto-Reset Activo</div>', unsafe_allow_html=True)
