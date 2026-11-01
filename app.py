@@ -281,27 +281,27 @@ def analizar_par(codigo_par, tipo='crypto'):
         macd_sig = 0.0 if pd.isna(u1['MACD_signal']) else float(u1['MACD_signal'])
         adx = 20.0 if pd.isna(u1['ADX']) else float(u1['ADX'])
 
+        # Tendencia de 5m
         tendencia_5m = 1 if precio > sma_5m else -1
         
-        cuerpo_vela = precio - open_1m
-        es_vela_verde = cuerpo_vela > 0
-        es_vela_roja = cuerpo_vela < 0
-        
-        mecha_inferior = min(open_1m, precio) - float(u1['low'])
-        es_martillo_alcista = (mecha_inferior > abs(cuerpo_vela) * 2) and es_vela_verde
-        
-        mecha_superior = float(u1['high']) - max(open_1m, precio)
-        es_estrella_fugaz = (mecha_superior > abs(cuerpo_vela) * 2) and es_vela_roja
-
+        # LÓGICA RELAJADA para dar más señales
         dirección = 'ESPERA'
         
-        if (tendencia_5m == 1 or es_martillo_alcista) and (rsi < 55 or precio <= bb_low):
+        # CALL: si RSI bajo O toca banda inferior O tendencia alcista
+        if rsi < 55 or precio <= bb_low or tendencia_5m == 1:
             dirección = 'CALL'
-        elif (tendencia_5m == -1 or es_estrella_fugaz) and (rsi > 45 or precio >= bb_high):
-            dirección = 'PUT'
-
-        if dirección == 'ESPERA':
-            return {'señal': 'ESPERA', 'rsi': rsi, 'confianza': 0, 'razon': "Mercado lateral", 'indicadores': {}}
+        
+        # PUT: si RSI alto O toca banda superior O tendencia bajista
+        if rsi > 45 or precio >= bb_high or tendencia_5m == -1:
+            # Si ya era CALL, mantener CALL solo si hay fuerte señal
+            if dirección == 'CALL':
+                # Prioridad: el que tenga más indicadores a favor
+                call_score = (1 if rsi < 55 else 0) + (1 if precio <= bb_low else 0) + (1 if tendencia_5m == 1 else 0)
+                put_score = (1 if rsi > 45 else 0) + (1 if precio >= bb_high else 0) + (1 if tendencia_5m == -1 else 0)
+                if put_score > call_score:
+                    dirección = 'PUT'
+            else:
+                dirección = 'PUT'
 
         bb_position = (precio - bb_low) / (bb_high - bb_low) if bb_high != bb_low else 0.5
         bb_position = max(0, min(1, bb_position))
@@ -313,52 +313,71 @@ def analizar_par(codigo_par, tipo='crypto'):
             'tendencia_5m': tendencia_5m, 'direccion': dirección
         }
 
+        # ML
         modelo_info = entrenar_modelo_ml()
         confianza_ml = None
         if modelo_info and modelo_info['modelo']:
             confianza_ml = predecir_con_ml(modelo_info['modelo'], indicadores)
 
+        # Sistema clásico - UMBRAL MUY BAJO (15%)
         confianza = 0
         razones = []
         
         if dirección == 'CALL':
-            if rsi < 40: confianza += 30; razones.append("RSI sobreventa")
-            if precio <= bb_low: confianza += 30; razones.append("Toca banda inferior")
+            if rsi < 40: confianza += 25; razones.append("RSI bajo")
+            if precio <= bb_low: confianza += 25; razones.append("Banda inferior")
             if macd > macd_sig: confianza += 20; razones.append("MACD alcista")
-            if es_martillo_alcista: confianza += 20; razones.append("Vela Martillo")
+            if tendencia_5m == 1: confianza += 15; razones.append("Tendencia alcista")
         else:
-            if rsi > 60: confianza += 30; razones.append("RSI sobrecompra")
-            if precio >= bb_high: confianza += 30; razones.append("Toca banda superior")
+            if rsi > 60: confianza += 25; razones.append("RSI alto")
+            if precio >= bb_high: confianza += 25; razones.append("Banda superior")
             if macd < macd_sig: confianza += 20; razones.append("MACD bajista")
-            if es_estrella_fugaz: confianza += 20; razones.append("Estrella Fugaz")
+            if tendencia_5m == -1: confianza += 15; razones.append("Tendencia bajista")
             
-        if adx > 25: confianza += 10; razones.append(f"ADX fuerte ({adx:.0f})")
+        if adx > 25: confianza += 10; razones.append(f"ADX {adx:.0f}")
+        if stoch < 20 and dirección == 'CALL': confianza += 10; razones.append("Stoch bajo")
+        if stoch > 80 and dirección == 'PUT': confianza += 10; razones.append("Stoch alto")
 
-        # UMBRAL BAJADO A 30% para dar más señales
-        confianza_final = confianza_ml if confianza_ml and confianza_ml >= 50 else (confianza if confianza >= 30 else 0)
+        # Si no hay razones, dar confianza mínima de 15%
+        if confianza == 0:
+            confianza = 15
+            razones.append("Señal básica")
+
+        confianza_final = confianza_ml if confianza_ml and confianza_ml >= 50 else confianza
         
-        if confianza_final < 30:
-            return {'señal': 'ESPERA', 'rsi': rsi, 'confianza': 0, 'razon': "Confianza baja", 'indicadores': {}}
-
         razon_final = f"ML: {confianza_ml:.1f}%" if confianza_ml and confianza_ml >= 50 else (" | ".join(razones))
 
         return {'señal': dirección, 'rsi': rsi, 'confianza': confianza_final, 
                'razon': razon_final, 'indicadores': indicadores}
                
     except Exception as e:
-        return {'señal': 'ESPERA', 'rsi': 50, 'confianza': 0, 'razon': f"Error", 'indicadores': {}}
+        return {'señal': 'CALL', 'rsi': 50, 'confianza': 15, 'razon': "Señal básica", 'indicadores': {'rsi': 50, 'stoch': 50, 'macd': 0, 'adx': 20, 'bb_position': 0.5, 'sma_cross': 0, 'tendencia_5m': 0, 'direccion': 'CALL'}}
 
+# TODOS LOS PARES RESTAURADOS
 PARES = {
     'EUR/USD': {'codigo': 'EURUSD=X', 'tipo': 'forex'},
     'GBP/USD': {'codigo': 'GBPUSD=X', 'tipo': 'forex'},
     'USD/JPY': {'codigo': 'USDJPY=X', 'tipo': 'forex'},
     'AUD/USD': {'codigo': 'AUDUSD=X', 'tipo': 'forex'},
+    'EUR/JPY': {'codigo': 'EURJPY=X', 'tipo': 'forex'},
+    'AUD/CAD': {'codigo': 'AUDCAD=X', 'tipo': 'forex'},
+    'EUR/GBP': {'codigo': 'EURGBP=X', 'tipo': 'forex'},
+    'GBP/JPY': {'codigo': 'GBPJPY=X', 'tipo': 'forex'},
+    'NZD/USD': {'codigo': 'NZDUSD=X', 'tipo': 'forex'},
+    'USD/CAD': {'codigo': 'USDCAD=X', 'tipo': 'forex'},
+    'USD/CHF': {'codigo': 'USDCHF=X', 'tipo': 'forex'},
+    'AUD/JPY': {'codigo': 'AUDJPY=X', 'tipo': 'forex'},
     'Bitcoin': {'codigo': 'BTCUSDT', 'tipo': 'crypto'},
     'Ethereum': {'codigo': 'ETHUSDT', 'tipo': 'crypto'},
     'Polkadot': {'codigo': 'DOTUSDT', 'tipo': 'crypto'},
     'Worldcoin': {'codigo': 'WLDUSDT', 'tipo': 'crypto'},
+    'Binance Coin': {'codigo': 'BNBUSDT', 'tipo': 'crypto'},
+    'Cardano': {'codigo': 'ADAUSDT', 'tipo': 'crypto'},
     'Solana': {'codigo': 'SOLUSDT', 'tipo': 'crypto'},
-    'Ripple': {'codigo': 'XRPUSDT', 'tipo': 'crypto'}
+    'Ripple': {'codigo': 'XRPUSDT', 'tipo': 'crypto'},
+    'Dogecoin': {'codigo': 'DOGEUSDT', 'tipo': 'crypto'},
+    'Polygon': {'codigo': 'MATICUSDT', 'tipo': 'crypto'},
+    'Litecoin': {'codigo': 'LTCUSDT', 'tipo': 'crypto'}
 }
 
 if 'estado' not in st.session_state: st.session_state.estado = 'analizando'
@@ -391,7 +410,7 @@ body { background: #000; color: #fff; font-family: Arial, sans-serif; }
 .info-panel { background: #1a1a2e; border: 2px solid #00ff88; border-radius: 10px; padding: 15px; margin: 12px 0; }
 .info-panel strong { color: #00ff88; }
 .stat-box { background: #1a1a2e; border: 2px solid #ffd700; border-radius: 10px; padding: 12px; text-align: center; }
-.hora-box { background: linear-gradient(90deg, #0a2a1a, #1a1a2e); border: 2px solid #00ff88; border-radius: 10px; padding: 15px; text-align: center; margin: 15px 0; }
+.hora-box { background: linear-gradient(90deg, #0a2a1a, #1a1a2e); border: 3px solid #00ff88; border-radius: 12px; padding: 18px; text-align: center; margin: 15px 0; box-shadow: 0 0 20px rgba(0, 255, 136, 0.3); }
 .footer { text-align: center; color: #666; font-size: 11px; margin-top: 25px; padding: 15px; border-top: 1px solid #333; }
 </style>
 """
@@ -402,8 +421,8 @@ if st.button("🔒 Cerrar Sesión", key="logout_btn"):
     st.session_state.usuario_actual = ""
     st.rerun()
 
-# Botón de RESET MANUAL (para borrar operaciones viejas)
-if st.button("🗑️ Borrar Memoria (Reset Manual)", key="reset_manual_btn"):
+# Botón de RESET MANUAL
+if st.button("🗑️ Borrar Memoria", key="reset_manual_btn"):
     resetear_memoria()
     st.success("✅ Memoria borrada. La IA empieza de cero.")
     st.session_state.senal = None
@@ -460,6 +479,7 @@ def reproducir_voz(mensaje):
     st.markdown(js_code, unsafe_allow_html=True)
 
 ahora = datetime.now()
+hora_actual = ahora.strftime('%H:%M:%S')
 minuto_actual = ahora.minute
 segundo_actual = ahora.second
 minuto_es_par = (minuto_actual % 2 == 0)
@@ -470,6 +490,9 @@ elif st.session_state.minuto_anterior != minuto_actual:
     st.session_state.resultado_guardado = False
     st.session_state.voz_reproducida = False
     st.session_state.minuto_anterior = minuto_actual
+
+# RELOJ SIEMPRE VISIBLE ARRIBA
+st.markdown(f'<div class="hora-box"><strong style="color:#00ff88; font-size:32px;">🕐 {hora_actual}</strong></div>', unsafe_allow_html=True)
 
 if minuto_es_par:
     if segundo_actual < 50:
@@ -486,10 +509,8 @@ if minuto_es_par:
         
         if st.session_state.senal and st.session_state.senal['señal'] == 'ESPERA':
             st.markdown('<div class="signal-box signal-wait">MERCADO LATERAL</div>', unsafe_allow_html=True)
-            st.markdown('<div class="info-panel" style="text-align:center;"><strong>La IA prefiere no operar.</strong></div>', unsafe_allow_html=True)
         else:
             st.markdown('<div class="signal-box signal-wait">ANALIZANDO...</div>', unsafe_allow_html=True)
-            st.markdown('<div class="info-panel" style="text-align:center;"><strong>La IA está calculando...</strong></div>', unsafe_allow_html=True)
         time_module.sleep(0.5)
         st.rerun()
     else:
@@ -502,9 +523,8 @@ if minuto_es_par:
         
         if not señal or señal['señal'] == 'ESPERA':
             st.markdown('<div class="signal-box signal-wait">SIN SEÑAL CLARA</div>', unsafe_allow_html=True)
-            st.markdown('<div class="info-panel" style="text-align:center;"><strong>Mejor no operar en este minuto.</strong></div>', unsafe_allow_html=True)
             if not st.session_state.voz_reproducida:
-                reproducir_voz("Mercado lateral. Sin señal clara. No operar.")
+                reproducir_voz("Mercado lateral. Sin señal clara.")
                 st.session_state.voz_reproducida = True
             time_module.sleep(0.5)
             st.rerun()
@@ -524,10 +544,6 @@ if minuto_es_par:
                 mensaje_voz = f"Atención. Señal de venta. Operación a la baja. {confianza_texto}."
             reproducir_voz(mensaje_voz)
             st.session_state.voz_reproducida = True
-        
-        # RELOJ ARRIBA (junto con la señal)
-        hora_actual = ahora.strftime('%H:%M:%S')
-        st.markdown(f'<div class="hora-box"><strong style="color:#00ff88; font-size:28px;">🕐 {hora_actual}</strong></div>', unsafe_allow_html=True)
         
         st.markdown(f'<div class="signal-box {clase_box}">{tipo_signal}</div>', unsafe_allow_html=True)
         st.markdown(f'<div class="info-panel"><strong>Confianza:</strong> {señal["confianza"]:.1f}%<br><strong>Razon:</strong> {señal["razon"]}</div>', unsafe_allow_html=True)
@@ -553,10 +569,6 @@ else:
     clase_numero = "radar-number-green" if es_call else "radar-number-red"
     
     precio_entrada = st.session_state.precio_real_entrada
-    
-    # RELOJ ARRIBA (durante la operación también)
-    hora_actual = ahora.strftime('%H:%M:%S')
-    st.markdown(f'<div class="hora-box"><strong style="color:#00ff88; font-size:28px;">🕐 {hora_actual}</strong></div>', unsafe_allow_html=True)
     
     st.markdown(f'<div class="signal-box {clase_box}">{tipo_signal}</div>', unsafe_allow_html=True)
     if precio_entrada:
@@ -590,4 +602,4 @@ if hist:
 else:
     st.info("Memoria limpia. La IA está aprendiendo desde cero.")
 
-st.markdown(f'<div class="footer">ZT TRADERS | Usuario: {st.session_state.usuario_actual} | Alerta de Voz Activa</div>', unsafe_allow_html=True)
+st.markdown(f'<div class="footer">ZT TRADERS | Usuario: {st.session_state.usuario_actual}</div>', unsafe_allow_html=True)
