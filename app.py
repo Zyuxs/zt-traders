@@ -297,9 +297,7 @@ def reproducir_voz(mensaje):
     """
     st.markdown(js_code, unsafe_allow_html=True)
 
-# TODOS LOS PARES: 12 Forex + 11 Cripto = 23 pares
 PARES = {
-    # FOREX (Yahoo Finance)
     'EUR/USD': {'codigo': 'EURUSD=X', 'tipo': 'forex'},
     'GBP/USD': {'codigo': 'GBPUSD=X', 'tipo': 'forex'},
     'USD/JPY': {'codigo': 'USDJPY=X', 'tipo': 'forex'},
@@ -312,7 +310,6 @@ PARES = {
     'USD/CAD': {'codigo': 'USDCAD=X', 'tipo': 'forex'},
     'USD/CHF': {'codigo': 'USDCHF=X', 'tipo': 'forex'},
     'AUD/JPY': {'codigo': 'AUDJPY=X', 'tipo': 'forex'},
-    # CRIPTO (Binance - Tiempo Real)
     'Bitcoin': {'codigo': 'BTCUSDT', 'tipo': 'crypto'},
     'Ethereum': {'codigo': 'ETHUSDT', 'tipo': 'crypto'},
     'Polkadot': {'codigo': 'DOTUSDT', 'tipo': 'crypto'},
@@ -337,43 +334,70 @@ if 'voz_reproducida' not in st.session_state: st.session_state.voz_reproducida =
 
 CSS = """
 <style>
+/* ===== ESTILOS BASE (PC) ===== */
 body { background: #000; color: #fff; font-family: 'Arial Black', Arial, sans-serif; margin: 0; padding: 0; }
-.main-container { max-width: 450px; margin: 0 auto; padding: 8px; }
-.header { background: linear-gradient(90deg, #1a0a2e, #0a1a2e); padding: 10px; border-radius: 12px; border: 2px solid #ffd700; text-align: center; margin-bottom: 8px; box-shadow: 0 0 20px rgba(255, 215, 0, 0.3); }
-.header h1 { color: #ffd700; margin: 0; font-size: 22px; letter-spacing: 3px; text-shadow: 0 0 10px #ffd700; }
-.header p { color: #aaa; margin: 3px 0 0 0; font-size: 10px; }
-.stats-row { display: grid; grid-template-columns: 1fr 1fr 1fr 1fr; gap: 4px; margin-bottom: 8px; }
-.stat-box { background: linear-gradient(135deg, #0a1a2e, #1a0a2e); border: 2px solid #ffd700; border-radius: 8px; padding: 6px; text-align: center; box-shadow: 0 0 10px rgba(255, 215, 0, 0.2); }
-.stat-box strong { color: #ffd700; font-size: 10px; display: block; }
-.stat-box span { color: #00ff88; font-size: 16px; font-weight: bold; }
-.hora-box { background: linear-gradient(90deg, #0a2a1a, #1a1a2e); border: 2px solid #00ff88; border-radius: 10px; padding: 10px; text-align: center; margin-bottom: 8px; box-shadow: 0 0 15px rgba(0, 255, 136, 0.4); }
-.hora-box span { color: #00ff88; font-size: 26px; font-weight: bold; text-shadow: 0 0 10px #00ff88; }
-.signal-box { padding: 18px; border-radius: 12px; text-align: center; font-size: 30px; font-weight: bold; margin: 8px 0; letter-spacing: 3px; animation: pulse 1.5s infinite; }
-.signal-call { background: linear-gradient(135deg, #00cc00, #00ff00); border: 3px solid #00ff00; color: white; box-shadow: 0 0 40px rgba(0, 255, 0, 0.8); }
-.signal-put { background: linear-gradient(135deg, #cc0000, #ff0000); border: 3px solid #ff0000; color: white; box-shadow: 0 0 40px rgba(255, 0, 0, 0.8); }
-.signal-wait { background: linear-gradient(135deg, #1a1a2e, #0a1a2e); border: 2px solid #ffd700; color: #ffd700; animation: none; }
-@keyframes pulse { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.02); } }
-.radar-container { position: relative; width: 200px; height: 200px; margin: 10px auto; }
-.radar { width: 200px; height: 200px; border-radius: 50%; position: relative; overflow: hidden; border: 3px solid; }
-.radar-green { border-color: #00ff00; background: radial-gradient(circle, #0a2a1a, #000); box-shadow: 0 0 40px rgba(0, 255, 0, 0.6), inset 0 0 40px rgba(0, 255, 0, 0.2); }
-.radar-red { border-color: #ff0000; background: radial-gradient(circle, #2a0a0a, #000); box-shadow: 0 0 40px rgba(255, 0, 0, 0.6), inset 0 0 40px rgba(255, 0, 0, 0.2); }
-.radar-yellow { border-color: #ffd700; background: radial-gradient(circle, #2a2a1a, #000); box-shadow: 0 0 40px rgba(255, 215, 0, 0.6), inset 0 0 40px rgba(255, 215, 0, 0.2); }
-.radar-sweep { position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: conic-gradient(from 0deg, transparent 0deg, rgba(0, 255, 136, 0.4) 60deg, transparent 120deg); animation: sweep 3s linear infinite; }
-.radar-sweep-red { background: conic-gradient(from 0deg, transparent 0deg, rgba(255, 0, 0, 0.4) 60deg, transparent 120deg); }
-.radar-sweep-yellow { background: conic-gradient(from 0deg, transparent 0deg, rgba(255, 215, 0, 0.4) 60deg, transparent 120deg); }
+.main-container { max-width: 700px; margin: 0 auto; padding: 15px; }
+.header { background: linear-gradient(90deg, #1a0a2e, #0a1a2e); padding: 15px; border-radius: 15px; border: 2px solid #ffd700; text-align: center; margin-bottom: 15px; box-shadow: 0 0 30px rgba(255, 215, 0, 0.4); }
+.header h1 { color: #ffd700; margin: 0; font-size: 32px; letter-spacing: 4px; text-shadow: 0 0 15px #ffd700; }
+.header p { color: #aaa; margin: 5px 0 0 0; font-size: 14px; }
+.stats-row { display: grid; grid-template-columns: 1fr 1fr 1fr 1fr; gap: 10px; margin-bottom: 15px; }
+.stat-box { background: linear-gradient(135deg, #0a1a2e, #1a0a2e); border: 2px solid #ffd700; border-radius: 12px; padding: 12px; text-align: center; box-shadow: 0 0 15px rgba(255, 215, 0, 0.3); }
+.stat-box strong { color: #ffd700; font-size: 13px; display: block; margin-bottom: 5px; }
+.stat-box span { color: #00ff88; font-size: 24px; font-weight: bold; }
+.hora-box { background: linear-gradient(90deg, #0a2a1a, #1a1a2e); border: 3px solid #00ff88; border-radius: 12px; padding: 15px; text-align: center; margin-bottom: 15px; box-shadow: 0 0 25px rgba(0, 255, 136, 0.5); }
+.hora-box span { color: #00ff88; font-size: 36px; font-weight: bold; text-shadow: 0 0 15px #00ff88; }
+.signal-box { padding: 25px; border-radius: 15px; text-align: center; font-size: 40px; font-weight: bold; margin: 15px 0; letter-spacing: 4px; animation: pulse 1.5s infinite; }
+.signal-call { background: linear-gradient(135deg, #00cc00, #00ff00); border: 4px solid #00ff00; color: white; box-shadow: 0 0 50px rgba(0, 255, 0, 0.8); }
+.signal-put { background: linear-gradient(135deg, #cc0000, #ff0000); border: 4px solid #ff0000; color: white; box-shadow: 0 0 50px rgba(255, 0, 0, 0.8); }
+.signal-wait { background: linear-gradient(135deg, #1a1a2e, #0a1a2e); border: 3px solid #ffd700; color: #ffd700; animation: none; font-size: 28px; }
+@keyframes pulse { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.03); } }
+.radar-container { position: relative; width: 280px; height: 280px; margin: 20px auto; }
+.radar { width: 280px; height: 280px; border-radius: 50%; position: relative; overflow: hidden; border: 4px solid; }
+.radar-green { border-color: #00ff00; background: radial-gradient(circle, #0a2a1a, #000); box-shadow: 0 0 50px rgba(0, 255, 0, 0.7), inset 0 0 50px rgba(0, 255, 0, 0.3); }
+.radar-red { border-color: #ff0000; background: radial-gradient(circle, #2a0a0a, #000); box-shadow: 0 0 50px rgba(255, 0, 0, 0.7), inset 0 0 50px rgba(255, 0, 0, 0.3); }
+.radar-yellow { border-color: #ffd700; background: radial-gradient(circle, #2a2a1a, #000); box-shadow: 0 0 50px rgba(255, 215, 0, 0.7), inset 0 0 50px rgba(255, 215, 0, 0.3); }
+.radar-sweep { position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: conic-gradient(from 0deg, transparent 0deg, rgba(0, 255, 136, 0.5) 60deg, transparent 120deg); animation: sweep 3s linear infinite; }
+.radar-sweep-red { background: conic-gradient(from 0deg, transparent 0deg, rgba(255, 0, 0, 0.5) 60deg, transparent 120deg); }
+.radar-sweep-yellow { background: conic-gradient(from 0deg, transparent 0deg, rgba(255, 215, 0, 0.5) 60deg, transparent 120deg); }
 @keyframes sweep { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
 .radar-center { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); text-align: center; z-index: 10; }
-.radar-number { font-size: 70px; font-weight: bold; text-shadow: 0 0 20px currentColor; line-height: 1; }
+.radar-number { font-size: 90px; font-weight: bold; text-shadow: 0 0 30px currentColor; line-height: 1; }
 .radar-number-green { color: #00ff00; }
 .radar-number-red { color: #ff0000; }
-.radar-number-yellow { color: #ffd700; font-size: 20px; }
-.radar-label { color: #fff; font-size: 10px; margin-top: 5px; letter-spacing: 2px; }
-.info-panel { background: linear-gradient(135deg, #0a1a2e, #1a0a2e); border: 2px solid #00ff88; border-radius: 10px; padding: 10px; margin: 8px 0; font-size: 12px; box-shadow: 0 0 15px rgba(0, 255, 136, 0.3); }
+.radar-number-yellow { color: #ffd700; font-size: 28px; }
+.radar-label { color: #fff; font-size: 12px; margin-top: 8px; letter-spacing: 3px; }
+.info-panel { background: linear-gradient(135deg, #0a1a2e, #1a0a2e); border: 2px solid #00ff88; border-radius: 12px; padding: 15px; margin: 15px 0; font-size: 16px; box-shadow: 0 0 20px rgba(0, 255, 136, 0.4); }
 .info-panel strong { color: #00ff88; }
-.controls { display: flex; gap: 5px; margin-bottom: 8px; }
-.controls select { flex: 1; background: #1a1a2e; color: #fff; border: 2px solid #ffd700; border-radius: 8px; padding: 8px; font-size: 12px; font-weight: bold; }
-.controls button { background: #ff4444; color: white; border: none; border-radius: 8px; padding: 8px 12px; font-size: 11px; font-weight: bold; cursor: pointer; }
-.footer { text-align: center; color: #666; font-size: 10px; margin-top: 10px; padding: 8px; border-top: 1px solid #333; }
+.controls-row { display: flex; gap: 10px; margin-bottom: 15px; align-items: center; }
+.controls-row select { flex: 1; background: #1a1a2e; color: #fff; border: 2px solid #ffd700; border-radius: 10px; padding: 12px; font-size: 14px; font-weight: bold; }
+.controls-row button { background: #ff4444; color: white; border: none; border-radius: 10px; padding: 12px 20px; font-size: 14px; font-weight: bold; cursor: pointer; box-shadow: 0 0 15px rgba(255, 68, 68, 0.5); }
+.footer { text-align: center; color: #666; font-size: 12px; margin-top: 20px; padding: 12px; border-top: 1px solid #333; }
+
+/* ===== ESTILOS MÓVIL (pantallas menores a 600px) ===== */
+@media (max-width: 600px) {
+    .main-container { max-width: 100%; padding: 6px; }
+    .header { padding: 8px; border-radius: 10px; margin-bottom: 6px; }
+    .header h1 { font-size: 20px; letter-spacing: 2px; }
+    .header p { font-size: 10px; margin-top: 2px; }
+    .stats-row { grid-template-columns: 1fr 1fr 1fr 1fr; gap: 3px; margin-bottom: 6px; }
+    .stat-box { padding: 4px; border-radius: 6px; }
+    .stat-box strong { font-size: 8px; margin-bottom: 2px; }
+    .stat-box span { font-size: 14px; }
+    .hora-box { padding: 8px; margin-bottom: 6px; border-radius: 8px; }
+    .hora-box span { font-size: 24px; }
+    .signal-box { padding: 14px; font-size: 26px; margin: 6px 0; letter-spacing: 2px; }
+    .signal-wait { font-size: 20px; }
+    .radar-container { width: 160px; height: 160px; margin: 8px auto; }
+    .radar { width: 160px; height: 160px; border-width: 3px; }
+    .radar-number { font-size: 60px; }
+    .radar-number-yellow { font-size: 18px; }
+    .radar-label { font-size: 9px; margin-top: 3px; }
+    .info-panel { padding: 8px; margin: 6px 0; font-size: 11px; border-radius: 8px; }
+    .controls-row { gap: 4px; margin-bottom: 6px; }
+    .controls-row select { padding: 8px; font-size: 11px; }
+    .controls-row button { padding: 8px 12px; font-size: 11px; }
+    .footer { font-size: 9px; margin-top: 8px; padding: 6px; }
+}
 </style>
 """
 st.markdown(CSS, unsafe_allow_html=True)
