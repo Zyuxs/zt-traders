@@ -1,4 +1,4 @@
- import streamlit as st
+import streamlit as st
 import streamlit.components.v1 as components
 import pandas as pd
 import requests
@@ -346,7 +346,6 @@ codigo_info = PARES[par_nombre]
 codigo, tipo = codigo_info['codigo'], codigo_info['tipo']
 
 # --- INTEGRACIÓN DE GRÁFICO TRADINGVIEW EN VIVO ---
-# Mapeo dinámico para el widget de velas de TradingView
 tv_symbol = f"BINANCE:{codigo}" if tipo == 'crypto' else f"FX:{codigo.replace('=X', '')}"
 widget_html = f"""
 <div class="tradingview-widget-container" style="height:190px;width:100%">
