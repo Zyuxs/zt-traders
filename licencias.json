@@ -5,14 +5,14 @@
   },
    "GREYNELLYS": {
     "vence": "2027-12-01",
-    "device_id": "GREYTRADER"
+    "device_id": null
   },
   "TELEFONOREDMI13": {
     "vence": "2027-12-01",
-    "device_id": "telefonoredmi13"
+    "device_id": null
   },
   "TELEFONOTRADER": {
     "vence": "2027-12-15",
-    "device_id": "telefonoTD"
+    "device_id": null
   }
 }
