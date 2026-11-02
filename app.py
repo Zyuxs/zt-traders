@@ -6,6 +6,7 @@ import ta
 import time as time_module
 import json
 import os
+import uuid
 from datetime import datetime
 from sklearn.ensemble import RandomForestClassifier
 
@@ -13,65 +14,111 @@ st.set_page_config(page_title="ZT TRADERS", layout="centered", page_icon="🎯")
 
 ARCHIVO_HISTORIAL = "historial.json"
 ARCHIVO_PATRONES = "patrones.json"
-ARCHIVO_USUARIOS = "usuarios.json"
+ARCHIVO_LICENCIAS = "licencias.json"
 
-def cargar_usuarios():
-    if os.path.exists(ARCHIVO_USUARIOS):
+def cargar_licencias():
+    if os.path.exists(ARCHIVO_LICENCIAS):
         try:
-            with open(ARCHIVO_USUARIOS, 'r') as f:
+            with open(ARCHIVO_LICENCIAS, 'r') as f:
                 return json.load(f)
         except:
             return {}
     return {}
 
-def verificar_usuario(usuario, clave):
-    usuarios = cargar_usuarios()
-    if usuario not in usuarios:
-        return False, "Usuario no encontrado"
-    datos = usuarios[usuario]
-    if datos['clave'] != clave:
-        return False, "Contraseña incorrecta"
-    fecha_vence = datetime.strptime(datos['vence'], '%Y-%m-%d').date()
-    hoy = datetime.now().date()
-    if hoy > fecha_vence:
-        return False, f"Tu membresia vencio el {datos['vence']}. Contacta al administrador."
-    return True, datos.get('nombre', usuario)
+def guardar_licencias(licencias):
+    try:
+        with open(ARCHIVO_LICENCIAS, 'w') as f:
+            json.dump(licencias, f, indent=2)
+    except:
+        pass
 
-if 'logueado' not in st.session_state:
-    st.session_state.logueado = False
+# --- SISTEMA DE LICENCIA Y SEGURIDAD POR DISPOSITIVO ---
+if 'licencia_activa' not in st.session_state:
+    st.session_state.licencia_activa = False
 if 'usuario_actual' not in st.session_state:
     st.session_state.usuario_actual = ""
 
-if not st.session_state.logueado:
+params = st.query_params
+device_token = params.get("zt_token", None)
+
+if device_token and not st.session_state.licencia_activa:
+    licencias = cargar_licencias()
+    if device_token == "admin_master_device":
+        st.session_state.licencia_activa = True
+        st.session_state.usuario_actual = "👑 Admin Master"
+    else:
+        for k, v in licencias.items():
+            if v.get("device_id") == device_token:
+                try:
+                    if datetime.now().date() <= datetime.strptime(v['vence'], '%Y-%m-%d').date():
+                        st.session_state.licencia_activa = True
+                        st.session_state.usuario_actual = f"Licencia ({k[:8]}...)"
+                except:
+                    pass
+
+if not st.session_state.licencia_activa:
     st.markdown("""
     <style>
     body { background: #000; color: #fff; font-family: Arial, sans-serif; margin: 0; padding: 0; }
-    .login-container { max-width: 320px; margin: 40px auto; padding: 20px; background: linear-gradient(135deg, #0a0a1a, #1a0a2e); border-radius: 12px; border: 2px solid #ffd700; box-shadow: 0 0 30px rgba(255, 215, 0, 0.4); }
-    .login-title { color: #ffd700; text-align: center; font-size: 22px; font-weight: bold; margin-bottom: 5px; letter-spacing: 2px; }
-    .login-subtitle { color: #aaa; text-align: center; font-size: 11px; margin-bottom: 20px; }
+    .login-container { max-width: 320px; margin: 50px auto; padding: 20px; background: linear-gradient(135deg, #0a0a1a, #1a0a2e); border-radius: 12px; border: 2px solid #ffd700; box-shadow: 0 0 30px rgba(255, 215, 0, 0.4); text-align: center; }
+    .login-title { color: #ffd700; font-size: 22px; font-weight: bold; margin-bottom: 5px; letter-spacing: 2px; }
+    .login-subtitle { color: #aaa; font-size: 11px; margin-bottom: 20px; }
     </style>
     """, unsafe_allow_html=True)
+    
     st.markdown('<div class="login-container">', unsafe_allow_html=True)
     st.markdown('<div class="login-title">⚡ ZT TRADERS</div>', unsafe_allow_html=True)
-    st.markdown('<div class="login-subtitle">Sistema de Acceso Privado</div>', unsafe_allow_html=True)
-    with st.form("login_form", clear_on_submit=False):
-        usuario_input = st.text_input("Usuario", placeholder="Ingresa tu usuario")
-        clave_input = st.text_input("Contraseña", type="password", placeholder="Ingresa tu contraseña")
-        submit = st.form_submit_button("⚡ ENTRAR", use_container_width=True)
-        if submit:
-            if usuario_input and clave_input:
-                ok, mensaje = verificar_usuario(usuario_input, clave_input)
-                if ok:
-                    st.session_state.logueado = True
-                    st.session_state.usuario_actual = mensaje
+    st.markdown('<div class="login-subtitle">Sistema de Licencia Protegido</div>', unsafe_allow_html=True)
+    
+    with st.form("licencia_form"):
+        key_input = st.text_input("License Key", placeholder="Ingresa tu Key", type="password")
+        submit_key = st.form_submit_button("⚡ ACTIVAR", use_container_width=True)
+        
+        if submit_key:
+            if key_input:
+                if key_input == "ADMIN-MASTER-2026":
+                    st.session_state.licencia_activa = True
+                    st.session_state.usuario_actual = "👑 Admin Master"
+                    st.query_params["zt_token"] = "admin_master_device"
+                    st.success("¡Acceso Admin concedido!")
                     st.rerun()
                 else:
-                    st.error(mensaje)
+                    licencias = cargar_licencias()
+                    if key_input in licencias:
+                        datos = licencias[key_input]
+                        try:
+                            fecha_vence = datetime.strptime(datos['vence'], '%Y-%m-%d').date()
+                            hoy = datetime.now().date()
+                            
+                            if hoy > fecha_vence:
+                                st.error(f"❌ La Key venció el {datos['vence']}.")
+                            else:
+                                if datos['device_id'] is None:
+                                    nuevo_token = str(uuid.uuid4())
+                                    datos['device_id'] = nuevo_token
+                                    guardar_licencias(licencias)
+                                    st.query_params["zt_token"] = nuevo_token
+                                    st.session_state.licencia_activa = True
+                                    st.session_state.usuario_actual = f"Licencia ({key_input[:8]}...)"
+                                    st.success("¡Licencia vinculada a este equipo con éxito!")
+                                    st.rerun()
+                                else:
+                                    if device_token == datos['device_id']:
+                                        st.session_state.licencia_activa = True
+                                        st.session_state.usuario_actual = f"Licencia ({key_input[:8]}...)"
+                                        st.rerun()
+                                    else:
+                                        st.error("❌ Esta Key ya está activada en otro dispositivo.")
+                        except:
+                            st.error("Error al validar fecha.")
+                    else:
+                        st.error("❌ Key inválida o inexistente.")
             else:
-                st.warning("Completa todos los campos")
+                st.warning("Ingresa una clave.")
     st.markdown('</div>', unsafe_allow_html=True)
     st.stop()
 
+# --- FUNCIONALIDADES DE TRADING Y ML ---
 def cargar_patrones():
     if os.path.exists(ARCHIVO_PATRONES):
         try:
@@ -273,7 +320,7 @@ def reproducir_voz(mensaje):
     """
     st.markdown(js_code, unsafe_allow_html=True)
 
-# TODOS LOS 23 PARES ORIGINALES ORDENADOS Y PROTEGIDOS
+# 23 PARES ORIGINALES COMPLETOS
 PARES = {
     'Bitcoin': {'codigo': 'BTCUSDT', 'tipo': 'crypto'},
     'Ethereum': {'codigo': 'ETHUSDT', 'tipo': 'crypto'},
