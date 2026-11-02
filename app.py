@@ -196,28 +196,60 @@ def obtener_precio_actual(codigo_par, tipo='crypto', df_actual=None):
     return None
 
 # ==========================================
-# 🔊 SISTEMA DE VOZ (Alerta si >= 70%)
+# 🔊 SISTEMA DE VOZ MEJORADO (Solución definitiva)
 # ==========================================
 def reproducir_voz(mensaje):
+    """Reproduce voz usando un iframe grande y visible"""
     m = mensaje.replace("'", "\\'").replace('"', '\\"')
-    script = f"""
-    <script>
-    (function() {{
-        if ('speechSynthesis' in window) {{
-            window.speechSynthesis.cancel();
-            setTimeout(function() {{
-                const msg = new SpeechSynthesisUtterance('{m}');
-                msg.lang = 'es-ES';
-                msg.rate = 1.0;
-                msg.pitch = 1.1;
-                msg.volume = 1.0;
-                window.speechSynthesis.speak(msg);
-            }}, 100);
-        }}
-    }})();
-    </script>
+    html_voz = f"""
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    </head>
+    <body style="margin:0;padding:10px;background:#1a1a2e;font-family:Arial;">
+        <div style="color:#00ff88;font-size:14px;font-weight:bold;text-align:center;">
+            🔊 {mensaje}
+        </div>
+        <script>
+        (function() {{
+            if ('speechSynthesis' in window) {{
+                // Cancelar cualquier voz anterior
+                window.speechSynthesis.cancel();
+                
+                // Esperar un poco para que el cancel se procese
+                setTimeout(function() {{
+                    const msg = new SpeechSynthesisUtterance('{m}');
+                    msg.lang = 'es-ES';
+                    msg.rate = 0.9;
+                    msg.pitch = 1.2;
+                    msg.volume = 1.0;
+                    
+                    msg.onstart = function() {{
+                        console.log('Voz iniciada');
+                    }};
+                    
+                    msg.onend = function() {{
+                        console.log('Voz terminada');
+                    }};
+                    
+                    msg.onerror = function(e) {{
+                        console.error('Error de voz:', e);
+                    }};
+                    
+                    window.speechSynthesis.speak(msg);
+                }}, 300);
+            }} else {{
+                console.error('SpeechSynthesis no disponible');
+            }}
+        }})();
+        </script>
+    </body>
+    </html>
     """
-    st.markdown(script, unsafe_allow_html=True)
+    # Iframe VISIBLE de 150x80 (no oculto)
+    components.html(html_voz, height=80, width=150)
 
 def analizar_par(codigo_par, tipo='crypto', td_symbol=None):
     try:
@@ -305,7 +337,6 @@ def analizar_par(codigo_par, tipo='crypto', td_symbol=None):
                 confianza = int((confianza + prob_ml) / 2)
                 razones.append(f"🧠 IA: {prob_ml}%")
         
-        # Asegurar que confianza esté entre 45 y 95
         confianza = max(45, min(confianza, 95))
         
         return {'señal': direccion, 'confianza': confianza, 'razon': " | ".join(razones), 'indicadores': indicadores, 'df': df_1m}
@@ -348,6 +379,7 @@ if 'minuto_anterior' not in st.session_state: st.session_state.minuto_anterior =
 if 'precio_real_entrada' not in st.session_state: st.session_state.precio_real_entrada = None
 if 'voz_reproducida' not in st.session_state: st.session_state.voz_reproducida = False
 if 'df_cache' not in st.session_state: st.session_state.df_cache = None
+if 'voz_activada' not in st.session_state: st.session_state.voz_activada = False
 
 CSS = """
 <style>
@@ -385,12 +417,26 @@ body { background: #02040a; color: #f1f5f9; font-family: 'Inter', -apple-system,
 .ml-status { background: rgba(15, 23, 42, 0.9); border: 1px solid #a855f7; border-radius: 6px; padding: 5px; font-size: 10px; text-align: center; margin: 4px 0; }
 .ml-status small { color: #a855f7; font-size: 8px; font-weight: 800; display: block; text-transform: uppercase; }
 .ml-status span { color: #d8b4fe; font-size: 12px; font-weight: 900; }
+.btn-voz { background: linear-gradient(135deg, #7c3aed, #5b21b6); color: white; border: none; border-radius: 8px; padding: 12px; font-size: 13px; font-weight: 900; cursor: pointer; width: 100%; margin: 4px 0; text-transform: uppercase; letter-spacing: 1px; box-shadow: 0 0 20px rgba(124, 58, 237, 0.5); animation: pulse-btn 2s infinite; }
+@keyframes pulse-btn { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.02); } }
 </style>
 """
 st.markdown(CSS, unsafe_allow_html=True)
 
 st.markdown('<div class="terminal-container">', unsafe_allow_html=True)
 st.markdown(f'<div class="term-header"><div class="term-title">⚡ ZT TRADERS PRO</div><div class="term-sub">OPERADOR: {st.session_state.usuario_actual} | IA + VOZ ACTIVA</div></div>', unsafe_allow_html=True)
+
+# ==========================================
+# 🔊 BOTÓN PARA ACTIVAR VOZ (OBLIGATORIO)
+# ==========================================
+if not st.session_state.voz_activada:
+    st.markdown('<div style="background:#7c3aed;padding:10px;border-radius:8px;margin:8px 0;text-align:center;color:white;font-weight:bold;">⚠️ DEBES ACTIVAR LA VOZ PRIMERO</div>', unsafe_allow_html=True)
+    if st.button("🔊 ACTIVAR SISTEMA DE VOZ (TOCAR UNA VEZ)", key="btn_activar_voz", use_container_width=True):
+        reproducir_voz("Sistema de voz activado correctamente. Z T Traders listo para operar.")
+        st.session_state.voz_activada = True
+        st.success("✅ Voz activada. Ahora escucharás las señales de alta confianza.")
+        time_module.sleep(2)
+        st.rerun()
 
 es_admin = (st.session_state.usuario_actual == "👑 Admin Master")
 if es_admin:
@@ -476,7 +522,7 @@ if minuto_es_par:
         confianza_actual = int(señal['confianza'])
         
         # 🔊 REPRODUCIR VOZ SOLO SI CONFIANZA >= 70%
-        if not st.session_state.voz_reproducida:
+        if not st.session_state.voz_reproducida and st.session_state.voz_activada:
             if confianza_actual >= 70:
                 tipo_texto = "COMPRA" if es_call else "VENTA"
                 mensaje = f"Atención. Señal de alta confianza. {tipo_texto}. {confianza_actual} por ciento. Entrar ahora."
@@ -488,7 +534,6 @@ if minuto_es_par:
         c_val = "num-green" if es_call else "num-red"
         t_sig = "🟢 COMPRA (CALL)" if es_call else "🔴 VENTA (PUT)"
         
-        # Color del porcentaje según confianza
         if confianza_actual >= 70:
             color_confianza = "#00ff88"
             icono_alerta = "🔊"
