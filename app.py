@@ -484,4 +484,45 @@ with pantalla_dinamica.container():
             
             st.markdown(f'<div class="signal-box {clase_box}">{tipo_signal}</div>', unsafe_allow_html=True)
             st.markdown(f'<div class="info-panel">Confianza IA: <strong>{señal["confianza"]:.0f}%</strong> | <strong>{señal["razon"]}</strong></div>', unsafe_allow_html=True)
-            st.markdown(f'<div class="radar-container"><div class="radar {clase_radar}"><div class="radar
+            st.markdown(f'<div class="radar-container"><div class="radar {clase_radar}"><div class="radar-center"><div class="radar-number {clase_numero}">{segundos_restantes}</div><div class="radar-label">SEGUNDOS</div></div></div></div>', unsafe_allow_html=True)
+            time_module.sleep(0.3)
+            st.rerun()
+    else:
+        if st.session_state.estado != 'operando':
+            st.session_state.estado = 'operando'
+            st.session_state.precio_real_entrada = obtener_precio_actual(codigo, tipo)
+        
+        señal = st.session_state.senal
+        if señal is None:
+            señal = {'señal': 'CALL', 'confianza': 60, 'razon': "Esperando"}
+        
+        es_call = señal['señal'] == 'CALL'
+        segundos_restantes_op = 59 - segundo_actual
+        
+        clase_box = "signal-call" if es_call else "signal-put"
+        clase_radar = "radar-green" if es_call else "radar-red"
+        clase_numero = "radar-number-green" if es_call else "radar-number-red"
+        tipo_signal = "🟢 EN CURSO (CALL)" if es_call else "🔴 EN CURSO (PUT)"
+        
+        st.markdown(f'<div class="signal-box {clase_box}">{tipo_signal}</div>', unsafe_allow_html=True)
+        if st.session_state.precio_real_entrada:
+            st.markdown(f'<div class="info-panel">Entrada: <strong>{round(st.session_state.precio_real_entrada, 5)}</strong></div>', unsafe_allow_html=True)
+        
+        st.markdown(f'<div class="radar-container"><div class="radar {clase_radar}"><div class="radar-center"><div class="radar-number {clase_numero}">{segundos_restantes_op}</div><div class="radar-label">EXPIRACIÓN</div></div></div></div>', unsafe_allow_html=True)
+        
+        if segundo_actual >= 58 and not st.session_state.resultado_guardado:
+            if st.session_state.precio_real_entrada and st.session_state.precio_real_entrada > 0:
+                precio_actual = obtener_precio_actual(codigo, tipo)
+                resultado_interno = 'PERDIDA'
+                if precio_actual is not None:
+                    if es_call and precio_actual > st.session_state.precio_real_entrada:
+                        resultado_interno = 'GANADA'
+                    elif not es_call and precio_actual < st.session_state.precio_real_entrada:
+                        resultado_interno = 'GANADA'
+                aprender_en_segundo_plano(señal['señal'], resultado_interno, señal.get('indicadores', {}), st.session_state.precio_real_entrada)
+                st.session_state.pesos = cargar_patrones()
+            st.session_state.resultado_guardado = True
+        time_module.sleep(0.5)
+        st.rerun()
+
+st.markdown('</div>', unsafe_allow_html=True)
