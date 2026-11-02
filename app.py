@@ -7,6 +7,7 @@ import time as time_module
 import json
 import os
 import uuid
+import textwrap
 from datetime import datetime
 from sklearn.ensemble import RandomForestClassifier
 
@@ -440,7 +441,7 @@ st.markdown(f"""
 </div>
 """, unsafe_allow_html=True)
 
-# CONTENEDOR DINÁMICO ÚNICO (Garantiza un solo radar/cronómetro en pantalla)
+# CONTENEDOR DINÁMICO UNIFICADO (Garantiza un solo radar y evita errores de sintaxis en Markdown)
 pantalla_dinamica = st.empty()
 
 ahora = datetime.now()
@@ -457,15 +458,16 @@ elif st.session_state.minuto_anterior != minuto_actual:
     st.session_state.voz_reproducida = False
     st.session_state.minuto_anterior = minuto_actual
 
+# Construcción limpia de HTML con textwrap.dedent para evitar bloques de código Markdown
 html_dinamico = f'<div class="hora-box"><span>🕐 {hora_actual}</span></div>'
 
 if minuto_es_par:
     if segundo_actual < 55:
-        html_dinamico += f"""
+        html_dinamico += textwrap.dedent(f"""
         <div class="signal-box signal-wait">📊 ESCANEANDO MERCADO...</div>
         <div class="info-panel">⏱️ Próxima señal en: <strong>{55 - segundo_actual}s</strong></div>
         <div class="radar-container"><div class="radar radar-yellow"><div class="radar-center"><div class="radar-number radar-number-yellow">IA</div><div class="radar-label">ACTIVA</div></div></div></div>
-        """
+        """)
         pantalla_dinamica.markdown(html_dinamico, unsafe_allow_html=True)
         time_module.sleep(1)
         st.rerun()
@@ -490,11 +492,11 @@ if minuto_es_par:
         clase_numero = "radar-number-green" if es_call else "radar-number-red"
         tipo_signal = "🟢 COMPRA (CALL)" if es_call else "🔴 VENTA (PUT)"
         
-        html_dinamico += f"""
+        html_dinamico += textwrap.dedent(f"""
         <div class="signal-box {clase_box}">{tipo_signal}</div>
         <div class="info-panel">Confianza IA: <strong>{señal["confianza"]:.0f}%</strong> | <strong>{señal["razon"]}</strong></div>
         <div class="radar-container"><div class="radar {clase_radar}"><div class="radar-center"><div class="radar-number {clase_numero}">{segundos_restantes}</div><div class="radar-label">SEGUNDOS</div></div></div></div>
-        """
+        """)
         pantalla_dinamica.markdown(html_dinamico, unsafe_allow_html=True)
         time_module.sleep(0.3)
         st.rerun()
@@ -515,16 +517,16 @@ else:
     clase_numero = "radar-number-green" if es_call else "radar-number-red"
     tipo_signal = "🟢 EN CURSO (CALL)" if es_call else "🔴 EN CURSO (PUT)"
     
-    html_dinamico += f"""
+    html_dinamico += textwrap.dedent(f"""
     <div class="signal-box {clase_box}">{tipo_signal}</div>
-    """
+    """)
     if st.session_state.precio_real_entrada:
-        html_dinamico += f"""
+        html_dinamico += textwrap.dedent(f"""
         <div class="info-panel">Entrada: <strong>{round(st.session_state.precio_real_entrada, 5)}</strong></div>
-        """
-    html_dinamico += f"""
+        """)
+    html_dinamico += textwrap.dedent(f"""
     <div class="radar-container"><div class="radar {clase_radar}"><div class="radar-center"><div class="radar-number {clase_numero}">{segundos_restantes_op}</div><div class="radar-label">EXPIRACIÓN</div></div></div></div>
-    """
+    """)
     
     pantalla_dinamica.markdown(html_dinamico, unsafe_allow_html=True)
     
