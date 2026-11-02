@@ -196,7 +196,7 @@ def obtener_precio_actual(codigo_par, tipo='crypto', df_actual=None):
     return None
 
 # ==========================================
-# 🔊 SISTEMA DE VOZ (Solo alerta si >= 75%)
+# 🔊 SISTEMA DE VOZ (Solo alerta si >= 70%)
 # ==========================================
 def reproducir_voz(mensaje):
     m = mensaje.replace("'", "\\'").replace('"', '\\"')
@@ -466,9 +466,9 @@ if minuto_es_par:
         es_call = señal['señal'] == 'CALL'
         segundos_restantes = 59 - segundo_actual
         
-        # 🔊 REPRODUCIR VOZ SOLO SI CONFIANZA >= 75%
+        # 🔊 REPRODUCIR VOZ SOLO SI CONFIANZA >= 70%
         if not st.session_state.voz_reproducida:
-            if señal['confianza'] >= 75:
+            if señal['confianza'] >= 70:
                 tipo_texto = "COMPRA" if es_call else "VENTA"
                 mensaje = f"Atención. Señal de alta confianza. {tipo_texto}. {int(señal['confianza'])} por ciento. Entrar ahora."
                 reproducir_voz(mensaje)
