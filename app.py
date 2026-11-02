@@ -124,6 +124,46 @@ def resetear_memoria():
     if os.path.exists(ARCHIVO_PATRONES): os.remove(ARCHIVO_PATRONES)
     st.session_state.pesos = {'total_ops': 0, 'total_ganadas': 0, 'winrate': 0.0}
 
+def entrenar_modelo_ml():
+    try:
+        hist = cargar_historial()
+        if len(hist) < 15: return None
+        X, y = [], []
+        for op in hist:
+            ind = op.get('indicadores', {})
+            features = [
+                ind.get('rsi', 50), ind.get('stoch', 50), ind.get('macd_diff', 0),
+                ind.get('bb_pos', 0.5), ind.get('tendencia_5m', 0),
+                1 if ind.get('es_martillo', False) else 0,
+                1 if ind.get('es_estrella_fugaz', False) else 0,
+                1 if ind.get('es_envolvente_alcista', False) else 0,
+                1 if ind.get('es_envolvente_bajista', False) else 0,
+                1 if op['señal'] == 'CALL' else 0
+            ]
+            X.append(features)
+            y.append(1 if op['resultado'] == 'GANADA' else 0)
+        modelo = RandomForestClassifier(n_estimators=80, max_depth=5, random_state=42, min_samples_split=3)
+        modelo.fit(X, y)
+        return modelo
+    except: return None
+
+def predecir_con_ml(modelo, indicadores, direccion):
+    try:
+        features = [
+            indicadores.get('rsi', 50), indicadores.get('stoch', 50),
+            indicadores.get('macd_diff', 0), indicadores.get('bb_pos', 0.5),
+            indicadores.get('tendencia_5m', 0),
+            1 if indicadores.get('es_martillo', False) else 0,
+            1 if indicadores.get('es_estrella_fugaz', False) else 0,
+            1 if indicadores.get('es_envolvente_alcista', False) else 0,
+            1 if indicadores.get('es_envolvente_bajista', False) else 0,
+            1 if direccion == 'CALL' else 0
+        ]
+        prob = modelo.predict_proba([features])[0]
+        idx = 1 if direccion == 'CALL' else 0
+        return int(prob[idx] * 100)
+    except: return None
+
 def obtener_datos_binance(symbol, interval='1m', limit=60):
     try:
         res = requests.get("https://api.binance.com/api/v3/klines", params={'symbol': symbol, 'interval': interval, 'limit': limit}, timeout=5).json()
@@ -156,8 +196,35 @@ def obtener_precio_actual(codigo_par, tipo='crypto', df_actual=None):
     return None
 
 # ==========================================
-# 🧠 MOTOR DE APRENDIZAJE CON DETECCIÓN DE VELAS + CONFLUENCIA
+# 🔊 SISTEMA DE VOZ ROBUSTO (ARREGLADO)
 # ==========================================
+def reproducir_voz(mensaje):
+    """Reproduce voz usando components.html (más estable que st.markdown)"""
+    m = mensaje.replace("'", "\\'").replace('"', '\\"')
+    html_voz = f"""
+    <!DOCTYPE html>
+    <html>
+    <head><meta charset="utf-8"></head>
+    <body>
+    <script>
+    (function() {{
+        if ('speechSynthesis' in window) {{
+            window.speechSynthesis.cancel();
+            const msg = new SpeechSynthesisUtterance('{m}');
+            msg.lang = 'es-ES';
+            msg.rate = 1.0;
+            msg.pitch = 1.1;
+            msg.volume = 1.0;
+            window.speechSynthesis.speak(msg);
+        }}
+    }})();
+    </script>
+    </body>
+    </html>
+    """
+    # Usar components.html en lugar de st.markdown (NO se cancela con rerun)
+    components.html(html_voz, height=0, width=0)
+
 def analizar_par(codigo_par, tipo='crypto', td_symbol=None):
     try:
         df_1m = obtener_datos_binance(codigo_par, limit=60) if tipo == 'crypto' else obtener_datos_twelvedata(td_symbol, limit=60)
@@ -167,7 +234,6 @@ def analizar_par(codigo_par, tipo='crypto', td_symbol=None):
             return {'señal': 'CALL', 'confianza': 50, 'razon': "Sincronizando datos...", 'indicadores': {}, 'df': None}
         
         c = 'close'
-        # INDICADORES TÉCNICOS
         df_1m['RSI'] = ta.momentum.RSIIndicator(df_1m[c], window=14).rsi()
         df_1m['STOCH'] = ta.momentum.StochasticOscillator(df_1m['high'], df_1m['low'], df_1m[c]).stoch()
         macd = ta.trend.MACD(df_1m[c])
@@ -195,7 +261,6 @@ def analizar_par(codigo_par, tipo='crypto', td_symbol=None):
         bb_pos = (precio - bb_low) / (bb_high - bb_low) if (bb_high - bb_low) > 0 else 0.5
         tendencia_5m = 1 if precio > sma_5m else -1
         
-        # DETECCIÓN DE VELAS (PRICE ACTION)
         cuerpo_actual = abs(precio - open_p)
         mecha_inf = min(open_p, precio) - float(u1['low'])
         mecha_sup = float(u1['high']) - max(open_p, precio)
@@ -205,25 +270,20 @@ def analizar_par(codigo_par, tipo='crypto', td_symbol=None):
         es_envolvente_alcista = (open_prev > close_prev) and (precio > open_prev) and (open_p < close_prev)
         es_envolvente_bajista = (open_prev < close_prev) and (precio < open_prev) and (open_p > close_prev)
         
-        # LÓGICA BASE: Siempre da una dirección (CALL o PUT)
         if rsi < 50 or precio <= bb_low or tendencia_5m == 1:
             direccion = 'CALL'
         else:
             direccion = 'PUT'
         
-        # CONFIANZA BASE
         confianza = 50
         razones = []
         
-        # CONFLUENCIA (Aumenta confianza)
         if direccion == 'CALL':
             if tendencia_5m == 1: confianza += 10; razones.append("Tendencia 5m+")
             if rsi < 40: confianza += 15; razones.append("RSI sobreventa")
             if precio <= bb_low: confianza += 15; razones.append("Banda inferior")
             if macd_diff > macd_sig: confianza += 10; razones.append("MACD+")
             if stoch < 30: confianza += 5; razones.append("Stoch bajo")
-            
-            # DETECCIÓN DE VELAS (BONUS)
             if es_martillo: confianza += 15; razones.append("🔨 Martillo")
             if es_envolvente_alcista: confianza += 15; razones.append("📈 Envolvente+")
         else:
@@ -232,27 +292,10 @@ def analizar_par(codigo_par, tipo='crypto', td_symbol=None):
             if precio >= bb_high: confianza += 15; razones.append("Banda superior")
             if macd_diff < macd_sig: confianza += 10; razones.append("MACD-")
             if stoch > 70: confianza += 5; razones.append("Stoch alto")
-            
-            # DETECCIÓN DE VELAS (BONUS)
             if es_estrella_fugaz: confianza += 15; razones.append("⭐ Estrella Fugaz")
             if es_envolvente_bajista: confianza += 15; razones.append("📉 Envolvente-")
         
-        if not razones:
-            razones.append("Señal básica")
-        
-        # APRENDIZAJE: Ajustar confianza basado en historial
-        hist = cargar_historial()
-        if len(hist) >= 10:
-            # Calcular winrate de las últimas 20 operaciones
-            ultimas_20 = hist[-20:]
-            ganadas_20 = sum(1 for op in ultimas_20 if op['resultado'] == 'GANADA')
-            winrate_reciente = (ganadas_20 / len(ultimas_20)) * 100
-            
-            # Si el winrate es bueno, mantener confianza. Si es malo, reducir ligeramente
-            if winrate_reciente < 40:
-                confianza = max(45, confianza - 5)  # Reducir si estamos perdiendo mucho
-            elif winrate_reciente > 60:
-                confianza = min(95, confianza + 5)  # Aumentar si estamos ganando
+        if not razones: razones.append("Señal básica")
         
         indicadores = {
             'rsi': rsi, 'stoch': stoch, 'macd_diff': macd_diff, 
@@ -261,14 +304,17 @@ def analizar_par(codigo_par, tipo='crypto', td_symbol=None):
             'es_envolvente_alcista': es_envolvente_alcista, 'es_envolvente_bajista': es_envolvente_bajista
         }
         
-        return {'señal': direccion, 'confianza': min(confianza, 95), 'razon': " | ".join(razones), 'indicadores': indicadores, 'df': df_1m}
+        modelo_ml = entrenar_modelo_ml()
+        if modelo_ml is not None:
+            prob_ml = predecir_con_ml(modelo_ml, indicadores, direccion)
+            if prob_ml is not None:
+                confianza = int((confianza + prob_ml) / 2)
+                razones.append(f"🧠 IA: {prob_ml}%")
+        
+        return {'señal': direccion, 'confianza': max(45, min(confianza, 95)), 'razon': " | ".join(razones), 'indicadores': indicadores, 'df': df_1m}
         
     except Exception as e:
         return {'señal': 'CALL', 'confianza': 50, 'razon': "Señal básica", 'indicadores': {}, 'df': None}
-
-def reproducir_voz(mensaje):
-    m = mensaje.replace("'", "\\'").replace('"', '\\"')
-    st.markdown(f"<script>if('speechSynthesis' in window){{window.speechSynthesis.cancel();const msg=new SpeechSynthesisUtterance('{m}');msg.lang='es-ES';msg.volume=1.0;window.speechSynthesis.speak(msg);}}</script>", unsafe_allow_html=True)
 
 PARES = {
     'Bitcoin': {'codigo': 'BTCUSDT', 'tipo': 'crypto', 'td': 'BTC/USD'},
@@ -336,12 +382,15 @@ body { background: #02040a; color: #f1f5f9; font-family: 'Inter', -apple-system,
 .num-red { color: #f87171; text-shadow: 0 0 15px rgba(248,113,113,0.8); }
 .num-yellow { color: #fbbf24; font-size: 16px; letter-spacing: 1px; }
 .meta-panel { background: rgba(15, 23, 42, 0.9); border: 1px solid rgba(0, 255, 136, 0.3); border-radius: 6px; padding: 5px; font-size: 10px; text-align: center; }
+.ml-status { background: rgba(15, 23, 42, 0.9); border: 1px solid #a855f7; border-radius: 6px; padding: 5px; font-size: 10px; text-align: center; margin: 4px 0; }
+.ml-status small { color: #a855f7; font-size: 8px; font-weight: 800; display: block; text-transform: uppercase; }
+.ml-status span { color: #d8b4fe; font-size: 12px; font-weight: 900; }
 </style>
 """
 st.markdown(CSS, unsafe_allow_html=True)
 
 st.markdown('<div class="terminal-container">', unsafe_allow_html=True)
-st.markdown(f'<div class="term-header"><div class="term-title">⚡ ZT TRADERS PRO</div><div class="term-sub">OPERADOR: {st.session_state.usuario_actual} | IA APRENDIZAJE ACTIVO</div></div>', unsafe_allow_html=True)
+st.markdown(f'<div class="term-header"><div class="term-title">⚡ ZT TRADERS PRO</div><div class="term-sub">OPERADOR: {st.session_state.usuario_actual} | IA + VOZ ACTIVA</div></div>', unsafe_allow_html=True)
 
 es_admin = (st.session_state.usuario_actual == "👑 Admin Master")
 if es_admin:
@@ -376,6 +425,8 @@ components.html(widget_html, height=195)
 hist = cargar_historial()
 ops, ganadas = st.session_state.pesos['total_ops'], st.session_state.pesos['total_ganadas']
 winrate = round(st.session_state.pesos['winrate'], 1)
+modelo_ml = entrenar_modelo_ml()
+ml_status = "🟢 APRENDIENDO" if modelo_ml else f"🟡 Recopilando ({len(hist)}/15)"
 
 st.markdown(f"""
 <div class="metrics-grid">
@@ -384,6 +435,7 @@ st.markdown(f"""
     <div class="metric-card"><small>Win</small><span>{ganadas}</span></div>
     <div class="metric-card"><small>IA</small><span>{len(hist)} ops</span></div>
 </div>
+<div class="ml-status"><small>Estado del Cerebro IA</small><span>{ml_status}</span></div>
 """, unsafe_allow_html=True)
 
 pantalla_dinamica = st.empty()
@@ -412,6 +464,9 @@ if minuto_es_par:
         time_module.sleep(1)
         st.rerun()
     else:
+        # ==========================================
+        # 🔊 FASE DE SEÑAL - AQUÍ SE ACTIVA LA VOZ
+        # ==========================================
         if st.session_state.senal is None or st.session_state.estado != 'senal':
             res_analisis = analizar_par(codigo, tipo, td_symbol)
             st.session_state.df_cache = res_analisis.get('df')
@@ -422,9 +477,14 @@ if minuto_es_par:
         es_call = señal['señal'] == 'CALL'
         segundos_restantes = 59 - segundo_actual
         
+        # 🔊 REPRODUCIR VOZ (UNA SOLA VEZ POR SEÑAL)
         if not st.session_state.voz_reproducida:
-            reproducir_voz(f"Señal de {'compra' if es_call else 'venta'}. Confianza {int(señal['confianza'])} por ciento.")
+            tipo_texto = "COMPRA" if es_call else "VENTA"
+            mensaje = f"Atención. Señal de {tipo_texto.lower()}. Confianza {int(señal['confianza'])} por ciento. Entrar ahora."
+            reproducir_voz(mensaje)
             st.session_state.voz_reproducida = True
+            # IMPORTANTE: Dar tiempo a la voz para hablar (2.5 segundos)
+            time_module.sleep(2.5)
         
         c_box = "signal-call" if es_call else "signal-put"
         c_radar = "ring-green" if es_call else "ring-red"
@@ -437,7 +497,7 @@ if minuto_es_par:
         <div class="radar-box"><div class="radar-ring {c_radar}"><div class="radar-content"><div class="radar-num {c_val}">{segundos_restantes}</div><small style="font-size:8px;color:#94a3b8;letter-spacing:1px;">SEGUNDOS</small></div></div></div>
         """)
         pantalla_dinamica.markdown(html_dinamico, unsafe_allow_html=True)
-        time_module.sleep(0.3)
+        time_module.sleep(0.5)
         st.rerun()
 else:
     if st.session_state.estado != 'operando':
