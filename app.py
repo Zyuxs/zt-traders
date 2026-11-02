@@ -154,7 +154,7 @@ def obtener_datos_binance(symbol, interval='1m', limit=30):
     try:
         url = f"https://api.binance.com/api/v3/klines"
         params = {'symbol': symbol, 'interval': interval, 'limit': limit}
-        response = requests.get(url, params=params, timeout=5)
+        response = requests.get(url, params=params, timeout=4)
         data = response.json()
         df = pd.DataFrame(data, columns=[
             'timestamp', 'open', 'high', 'low', 'close', 'volume',
@@ -169,7 +169,9 @@ def obtener_datos_binance(symbol, interval='1m', limit=30):
 
 def obtener_datos_yahoo(symbol, period="1d", interval="1m"):
     try:
-        datos = yf.download(symbol, period=period, interval=interval, progress=False, timeout=5)
+        datos = yf.download(symbol, period=period, interval=interval, progress=False, timeout=4)
+        if datos is None or len(datos) == 0:
+            return None
         if isinstance(datos.columns, pd.MultiIndex):
             datos.columns = datos.columns.get_level_values(0)
         datos = datos[['Open', 'High', 'Low', 'Close']].dropna().copy()
@@ -189,9 +191,9 @@ def obtener_precio_actual(codigo_par, tipo='crypto'):
     else:
         try:
             datos = yf.download(codigo_par, period="1d", interval="1m", progress=False, timeout=3)
+            if datos is None or len(datos) < 1: return None
             if isinstance(datos.columns, pd.MultiIndex):
                 datos.columns = datos.columns.get_level_values(0)
-            if len(datos) < 1: return None
             return float(datos['Close'].iloc[-1])
         except:
             return None
@@ -204,7 +206,7 @@ def analizar_par(codigo_par, tipo='crypto'):
             df = obtener_datos_yahoo(codigo_par, period="1d", interval="1m")
         
         if df is None or len(df) < 10:
-            return {'señal': 'CALL', 'confianza': 60, 'razon': "Mercado con baja liquidez", 'indicadores': {'rsi': 50, 'precio_relativo': 0.5}}
+            return {'señal': 'CALL', 'confianza': 60, 'razon': "Mercado cerrado / Sin datos", 'indicadores': {'rsi': 50, 'precio_relativo': 0.5}}
         
         c_close = 'close' if tipo == 'crypto' else 'Close'
         c_open = 'open' if tipo == 'crypto' else 'Open'
@@ -231,7 +233,7 @@ def analizar_par(codigo_par, tipo='crypto'):
             razones.append("Momentum 1M Bajista")
         else:
             dirección = 'CALL' if ema_9 >= ema_21 else 'PUT'
-            razones.append("Tendencia EMA")
+            razones.append("Tendencia EMA 9/21")
 
         confianza_base = 75 if (rsi_7 < 35 or rsi_7 > 65) else 65
         modelo_ml = entrenar_modelo_ml()
@@ -251,7 +253,7 @@ def analizar_par(codigo_par, tipo='crypto'):
 
         return {'señal': dirección, 'confianza': max(50, min(confianza, 98)), 'razon': " | ".join(razones), 'indicadores': indicadores}
     except Exception as e:
-        return {'señal': 'CALL', 'confianza': 60, 'razon': "Análisis seguro activo", 'indicadores': {'rsi': 50, 'precio_relativo': 0.5}}
+        return {'señal': 'CALL', 'confianza': 60, 'razon': "Modo seguro activo", 'indicadores': {'rsi': 50, 'precio_relativo': 0.5}}
 
 def reproducir_voz(mensaje):
     mensaje_seguro = mensaje.replace("'", "\\'").replace('"', '\\"')
@@ -271,8 +273,19 @@ def reproducir_voz(mensaje):
     """
     st.markdown(js_code, unsafe_allow_html=True)
 
-# LOS 23 PARES ORIGINALES COMPLETOS
+# TODOS LOS 23 PARES ORIGINALES ORDENADOS Y PROTEGIDOS
 PARES = {
+    'Bitcoin': {'codigo': 'BTCUSDT', 'tipo': 'crypto'},
+    'Ethereum': {'codigo': 'ETHUSDT', 'tipo': 'crypto'},
+    'Solana': {'codigo': 'SOLUSDT', 'tipo': 'crypto'},
+    'Polkadot': {'codigo': 'DOTUSDT', 'tipo': 'crypto'},
+    'Worldcoin': {'codigo': 'WLDUSDT', 'tipo': 'crypto'},
+    'Binance Coin': {'codigo': 'BNBUSDT', 'tipo': 'crypto'},
+    'Cardano': {'codigo': 'ADAUSDT', 'tipo': 'crypto'},
+    'Ripple': {'codigo': 'XRPUSDT', 'tipo': 'crypto'},
+    'Dogecoin': {'codigo': 'DOGEUSDT', 'tipo': 'crypto'},
+    'Polygon': {'codigo': 'MATICUSDT', 'tipo': 'crypto'},
+    'Litecoin': {'codigo': 'LTCUSDT', 'tipo': 'crypto'},
     'EUR/USD': {'codigo': 'EURUSD=X', 'tipo': 'forex'},
     'GBP/USD': {'codigo': 'GBPUSD=X', 'tipo': 'forex'},
     'USD/JPY': {'codigo': 'USDJPY=X', 'tipo': 'forex'},
@@ -284,18 +297,7 @@ PARES = {
     'NZD/USD': {'codigo': 'NZDUSD=X', 'tipo': 'forex'},
     'USD/CAD': {'codigo': 'USDCAD=X', 'tipo': 'forex'},
     'USD/CHF': {'codigo': 'USDCHF=X', 'tipo': 'forex'},
-    'AUD/JPY': {'codigo': 'AUDJPY=X', 'tipo': 'forex'},
-    'Bitcoin': {'codigo': 'BTCUSDT', 'tipo': 'crypto'},
-    'Ethereum': {'codigo': 'ETHUSDT', 'tipo': 'crypto'},
-    'Polkadot': {'codigo': 'DOTUSDT', 'tipo': 'crypto'},
-    'Worldcoin': {'codigo': 'WLDUSDT', 'tipo': 'crypto'},
-    'Binance Coin': {'codigo': 'BNBUSDT', 'tipo': 'crypto'},
-    'Cardano': {'codigo': 'ADAUSDT', 'tipo': 'crypto'},
-    'Solana': {'codigo': 'SOLUSDT', 'tipo': 'crypto'},
-    'Ripple': {'codigo': 'XRPUSDT', 'tipo': 'crypto'},
-    'Dogecoin': {'codigo': 'DOGEUSDT', 'tipo': 'crypto'},
-    'Polygon': {'codigo': 'MATICUSDT', 'tipo': 'crypto'},
-    'Litecoin': {'codigo': 'LTCUSDT', 'tipo': 'crypto'}
+    'AUD/JPY': {'codigo': 'AUDJPY=X', 'tipo': 'forex'}
 }
 
 if 'estado' not in st.session_state: st.session_state.estado = 'analizando'
@@ -353,7 +355,7 @@ body { background: #000; color: #fff; font-family: Arial, sans-serif; margin: 0;
 st.markdown(CSS, unsafe_allow_html=True)
 
 st.markdown('<div class="main-container">', unsafe_allow_html=True)
-st.markdown(f'<div class="header"><h1>⚡ ZT TRADERS</h1><p>User: {st.session_state.usuario_actual} | IA 23 PARES ACTIVOS</p></div>', unsafe_allow_html=True)
+st.markdown(f'<div class="header"><h1>⚡ ZT TRADERS</h1><p>User: {st.session_state.usuario_actual} | 23 PARES ACTIVOS</p></div>', unsafe_allow_html=True)
 
 col1, col2 = st.columns([3, 1])
 with col1:
