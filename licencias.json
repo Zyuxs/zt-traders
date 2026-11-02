@@ -3,11 +3,15 @@
     "vence": "2099-12-31",
     "device_id": "admin_master_device"
   },
+   "GREYNELLYS": {
+    "vence": "2027-12-01",
+    "device_id": GREYTRADER
+  },
   "ZT-CLIENTE-7892": {
     "vence": "2027-12-01",
     "device_id": telefonoredmi13
   },
-  "ZT-CLIENTE-4411": {
+  "TELEFONOTRADER": {
     "vence": "2027-12-15",
     "device_id": telefonoTD
   }
