@@ -4,11 +4,11 @@
     "device_id": "admin_master_device"
   },
   "ZT-CLIENTE-7892": {
-    "vence": "2026-12-01",
-    "device_id": null
+    "vence": "2027-12-01",
+    "device_id": telefonoredmi13
   },
   "ZT-CLIENTE-4411": {
-    "vence": "2026-12-15",
-    "device_id": null
+    "vence": "2027-12-15",
+    "device_id": telefonoTD
   }
 }
