@@ -12,7 +12,7 @@ import textwrap
 from datetime import datetime
 from sklearn.ensemble import RandomForestClassifier
 
-st.set_page_config(page_title="ZT TRADERS INSTITUTIONAL", layout="centered", page_icon="⚡")
+st.set_page_config(page_title="ZT TRADERS INSTITUTIONAL PRO", layout="centered", page_icon="⚡")
 
 ARCHIVO_HISTORIAL = "historial.json"
 ARCHIVO_PATRONES = "patrones.json"
@@ -174,33 +174,60 @@ def obtener_datos_binance(symbol, interval='1m', limit=50):
         return df
     except: return None
 
-def obtener_datos_yahoo(symbol, period="1d", interval="1m"):
+def obtener_datos_twelvedata(symbol, limit=50):
+    """Consulta la API profesional de Twelve Data para Forex exactamente sincronizada con los brókeres institucionales"""
     try:
-        datos = yf.download(symbol, period=period, interval=interval, progress=False, timeout=4)
-        if datos is None or len(datos) == 0: return None
-        if isinstance(datos.columns, pd.MultiIndex): datos.columns = datos.columns.get_level_values(0)
-        return datos[['Open', 'High', 'Low', 'Close']].dropna().copy()
-    except: return None
+        # Usamos la API key de prueba 'demo' (ideal para EUR/USD, NZD/USD, etc.)
+        formatted_symbol = symbol.replace('=X', '').replace('USD', '/USD') if '/' not in symbol else symbol
+        if 'EURUSD' in symbol: formatted_symbol = 'EUR/USD'
+        elif 'GBPUSD' in symbol: formatted_symbol = 'GBP/USD'
+        elif 'NZDUSD' in symbol: formatted_symbol = 'NZD/USD'
+        elif 'AUDUSD' in symbol: formatted_symbol = 'AUD/USD'
+        elif 'USDJPY' in symbol: formatted_symbol = 'USD/JPY'
+        elif 'USDCAD' in symbol: formatted_symbol = 'USD/CAD'
+        elif 'USDCHF' in symbol: formatted_symbol = 'USD/CHF'
+        
+        url = f"https://api.twelvedata.com/time_series?symbol={formatted_symbol}&interval=1min&outputsize={limit}&apikey=demo"
+        res = requests.get(url, timeout=4).json()
+        
+        if 'values' in res:
+            df = pd.DataFrame(res['values'])
+            df = df.iloc[::-1].reset_index(drop=True) # Invertir orden cronológico
+            for c in ['open', 'high', 'low', 'close']:
+                df[c] = pd.to_numeric(df[c])
+            return df
+        return None
+    except:
+        return None
 
-def obtener_precio_actual(codigo_par, tipo='crypto'):
+def obtener_precio_actual(codigo_par, tipo='crypto', df_actual=None):
+    if df_actual is not None and len(df_actual) > 0:
+        c_close = 'close' if tipo == 'crypto' else 'close'
+        return float(df_actual[c_close].iloc[-1])
+    
     if tipo == 'crypto':
         try:
             return float(requests.get(f"https://api.binance.com/api/v3/ticker/price?symbol={codigo_par}", timeout=3).json()['price'])
         except: return None
     else:
         try:
-            datos = yf.download(codigo_par, period="1d", interval="1m", progress=False, timeout=3)
-            if isinstance(datos.columns, pd.MultiIndex): datos.columns = datos.columns.get_level_values(0)
-            return float(datos['Close'].iloc[-1])
-        except: return None
+            df = obtener_datos_twelvedata(codigo_par, limit=1)
+            if df is not None and len(df) > 0:
+                return float(df['close'].iloc[-1])
+        except: pass
+        return None
 
 def analizar_par(codigo_par, tipo='crypto'):
     try:
-        df = obtener_datos_binance(codigo_par, limit=50) if tipo == 'crypto' else obtener_datos_yahoo(codigo_par)
-        if df is None or len(df) < 20: return {'señal': 'CALL', 'confianza': 60, 'razon': "Sincronizando mercado", 'indicadores': {'rsi': 50, 'macd_diff': 0, 'bb_pos': 0.5}}
-        
-        c_close = 'close' if tipo == 'crypto' else 'Close'
-        c_open = 'open' if tipo == 'crypto' else 'Open'
+        if tipo == 'crypto':
+            df = obtener_datos_binance(codigo_par, limit=50)
+            c_close, c_open = 'close', 'open'
+        else:
+            df = obtener_datos_twelvedata(codigo_par, limit=50)
+            c_close, c_open = 'close', 'open'
+            
+        if df is None or len(df) < 20: 
+            return {'señal': 'CALL', 'confianza': 60, 'razon': "Sincronizando mercado institucional", 'indicadores': {'rsi': 50, 'macd_diff': 0, 'bb_pos': 0.5}, 'df': None}
         
         df['RSI_7'] = ta.momentum.RSIIndicator(df[c_close], window=7).rsi()
         macd = ta.trend.MACD(df[c_close])
@@ -242,8 +269,8 @@ def analizar_par(codigo_par, tipo='crypto'):
             except: confianza = confianza_base
         else: confianza = confianza_base
 
-        return {'señal': dirección, 'confianza': max(45, min(confianza, 99)), 'razon': " | ".join(razones), 'indicadores': indicadores}
-    except: return {'señal': 'CALL', 'confianza': 60, 'razon': "Modo Seguro", 'indicadores': {'rsi': 50, 'macd_diff': 0, 'bb_pos': 0.5}}
+        return {'señal': dirección, 'confianza': max(45, min(confianza, 99)), 'razon': " | ".join(razones), 'indicadores': indicadores, 'df': df}
+    except: return {'señal': 'CALL', 'confianza': 60, 'razon': "Modo Seguro", 'indicadores': {'rsi': 50, 'macd_diff': 0, 'bb_pos': 0.5}, 'df': None}
 
 def reproducir_voz(mensaje):
     m = mensaje.replace("'", "\\'").replace('"', '\\"')
@@ -273,6 +300,7 @@ if 'resultado_guardado' not in st.session_state: st.session_state.resultado_guar
 if 'minuto_anterior' not in st.session_state: st.session_state.minuto_anterior = None
 if 'precio_real_entrada' not in st.session_state: st.session_state.precio_real_entrada = None
 if 'voz_reproducida' not in st.session_state: st.session_state.voz_reproducida = False
+if 'df_cache' not in st.session_state: st.session_state.df_cache = None
 
 # ESTILOS CSS INSTITUCIONALES AVANZADOS
 CSS = """
@@ -283,22 +311,18 @@ CSS = """
 body { background: #02040a; color: #f1f5f9; font-family: 'Inter', -apple-system, sans-serif; }
 .terminal-container { width: 100%; max-width: 430px; margin: 0 auto; display: flex; flex-direction: column; gap: 4px; }
 
-/* ENCABEZADO DE ÉLITE */
 .term-header { background: linear-gradient(135deg, #090f24 0%, #030712 100%); border: 1.5px solid rgba(0, 255, 136, 0.4); border-radius: 12px; padding: 8px; text-align: center; box-shadow: 0 4px 25px rgba(0,0,0,0.9); }
 .term-title { color: #00ff88; font-size: 16px; font-weight: 900; letter-spacing: 3px; margin: 0; text-shadow: 0 0 12px rgba(0,255,136,0.5); }
 .term-sub { color: #94a3b8; font-size: 9px; font-weight: 600; letter-spacing: 1px; margin-top: 2px; text-transform: uppercase; }
 
-/* TARJETAS DE ESTADÍSTICAS */
 .metrics-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px; margin: 4px 0; }
 .metric-card { background: rgba(15, 23, 42, 0.85); border: 1px solid rgba(0, 255, 136, 0.25); border-radius: 8px; padding: 5px 2px; text-align: center; box-shadow: 0 2px 10px rgba(0,0,0,0.5); }
 .metric-card small { color: #64748b; font-size: 8px; font-weight: 800; display: block; text-transform: uppercase; }
 .metric-card span { color: #00ff88; font-size: 13px; font-weight: 900; text-shadow: 0 0 8px rgba(0,255,136,0.4); }
 
-/* RELOJ DIGITAL DE PRECISIÓN */
 .clock-display { background: rgba(3, 30, 18, 0.9); border: 1px solid #00ff88; border-radius: 8px; padding: 4px; text-align: center; box-shadow: 0 0 15px rgba(0,255,136,0.2); }
 .clock-display span { color: #00ff88; font-size: 17px; font-weight: 900; text-shadow: 0 0 10px rgba(0,255,136,0.6); font-family: monospace; letter-spacing: 1px; }
 
-/* SEÑAL Y RADAR LÁSER */
 .signal-banner { padding: 9px; border-radius: 10px; text-align: center; font-size: 21px; font-weight: 900; letter-spacing: 2px; margin: 4px 0; text-transform: uppercase; }
 .signal-call { background: linear-gradient(135deg, #065f46, #059669); border: 1.5px solid #34d399; color: #fff; box-shadow: 0 0 25px rgba(52,211,153,0.5); }
 .signal-put { background: linear-gradient(135deg, #991b1b, #dc2626); border: 1.5px solid #f87171; color: #fff; box-shadow: 0 0 25px rgba(248,113,113,0.5); }
@@ -416,6 +440,7 @@ if minuto_es_par:
     else:
         if st.session_state.senal is None or st.session_state.estado != 'senal':
             res_analisis = analizar_par(codigo, tipo)
+            st.session_state.df_cache = res_analisis.get('df')
             es_ciclo_4min = (minuto_actual % 4 == 0)
             
             if es_ciclo_4min or res_analisis['confianza'] >= 70:
@@ -458,7 +483,7 @@ if minuto_es_par:
 else:
     if st.session_state.estado != 'operando':
         st.session_state.estado = 'operando'
-        st.session_state.precio_real_entrada = obtener_precio_actual(codigo, tipo)
+        st.session_state.precio_real_entrada = obtener_precio_actual(codigo, tipo, df_actual=st.session_state.df_cache)
     
     señal = st.session_state.senal
     if señal is None or señal.get('señal') == 'ESPERAR':
@@ -483,7 +508,7 @@ else:
     """)
     if st.session_state.precio_real_entrada:
         html_dinamico += textwrap.dedent(f"""
-        <div class="meta-panel">Precio Entrada: <strong>{round(st.session_state.precio_real_entrada, 5)}</strong></div>
+        <div class="meta-panel">Precio Sincronizado: <strong>{round(st.session_state.precio_real_entrada, 5)}</strong></div>
         """)
     html_dinamico += textwrap.dedent(f"""
     <div class="radar-box"><div class="radar-ring {c_radar}"><div class="radar-content"><div class="radar-num {c_val}">{seg_op}</div><small style="font-size:7px;color:#94a3b8;letter-spacing:1px;">EXPIRACIÓN</small></div></div></div>
@@ -493,7 +518,7 @@ else:
     
     if segundo_actual >= 58 and not st.session_state.resultado_guardado:
         if st.session_state.precio_real_entrada and st.session_state.precio_real_entrada > 0:
-            precio_actual = obtener_precio_actual(codigo, tipo)
+            precio_actual = obtener_precio_actual(codigo, tipo, df_actual=st.session_state.df_cache)
             resultado_interno = 'PERDIDA'
             if precio_actual is not None:
                 if (es_call and precio_actual > st.session_state.precio_real_entrada) or (not es_call and precio_actual < st.session_state.precio_real_entrada):
