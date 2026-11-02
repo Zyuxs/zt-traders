@@ -300,7 +300,7 @@ if 'precio_real_entrada' not in st.session_state: st.session_state.precio_real_e
 if 'voz_reproducida' not in st.session_state: st.session_state.voz_reproducida = False
 if 'df_cache' not in st.session_state: st.session_state.df_cache = None
 
-# ESTILOS CSS INSTITUCIONALES AVANZADOS (RADAR MÁS GRANDE + TICKET DE PRECIO EN VIVO)
+# ESTILOS CSS INSTITUCIONALES (RADAR AMPLIADO Y FLUIDO)
 CSS = """
 <style>
 #MainMenu, footer, header {visibility: hidden;}
@@ -317,11 +317,6 @@ body { background: #02040a; color: #f1f5f9; font-family: 'Inter', -apple-system,
 .metric-card { background: rgba(15, 23, 42, 0.85); border: 1px solid rgba(0, 255, 136, 0.25); border-radius: 8px; padding: 5px 2px; text-align: center; box-shadow: 0 2px 10px rgba(0,0,0,0.5); }
 .metric-card small { color: #64748b; font-size: 8px; font-weight: 800; display: block; text-transform: uppercase; }
 .metric-card span { color: #00ff88; font-size: 13px; font-weight: 900; text-shadow: 0 0 8px rgba(0,255,136,0.4); }
-
-/* TICKET DE PRECIO EN VIVO */
-.live-price-box { background: linear-gradient(135deg, #0a192f 0%, #020617 100%); border: 1.5px solid #38bdf8; border-radius: 8px; padding: 6px; text-align: center; box-shadow: 0 0 15px rgba(56,189,248,0.25); margin: 4px 0; }
-.live-price-box small { color: #38bdf8; font-size: 8px; font-weight: 800; text-transform: uppercase; letter-spacing: 1.5px; display: block; }
-.live-price-box span { color: #e2e8f0; font-size: 18px; font-weight: 900; font-family: monospace; text-shadow: 0 0 10px rgba(56,189,248,0.5); }
 
 .clock-display { background: rgba(3, 30, 18, 0.9); border: 1px solid #00ff88; border-radius: 8px; padding: 4px; text-align: center; box-shadow: 0 0 15px rgba(0,255,136,0.2); }
 .clock-display span { color: #00ff88; font-size: 17px; font-weight: 900; text-shadow: 0 0 10px rgba(0,255,136,0.6); font-family: monospace; letter-spacing: 1px; }
@@ -411,17 +406,6 @@ st.markdown(f"""
     <div class="metric-card"><small>Ops</small><span>{ops}</span></div>
     <div class="metric-card"><small>Win</small><span>{ganadas}</span></div>
     <div class="metric-card"><small>ML</small><span>{len(hist)} ops</span></div>
-</div>
-""", unsafe_allow_html=True)
-
-# OBTENER PRECIO ACTUAL EN VIVO PARA MOSTRARLO EN EL TICKET
-precio_en_vivo = obtener_precio_actual(codigo, tipo, df_actual=st.session_state.df_cache)
-precio_str = f"{precio_en_vivo:,.5f}" if precio_en_vivo else "Sincronizando..."
-
-st.markdown(f"""
-<div class="live-price-box">
-    <small>🟢 COTIZACIÓN EN VIVO ({par_nombre})</small>
-    <span>{precio_str}</span>
 </div>
 """, unsafe_allow_html=True)
 
