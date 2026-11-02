@@ -11,7 +11,7 @@ import textwrap
 from datetime import datetime
 from sklearn.ensemble import RandomForestClassifier
 
-st.set_page_config(page_title="ZT TRADERS", layout="centered", page_icon="🎯")
+st.set_page_config(page_title="ZT TRADERS PRO", layout="centered", page_icon="⚡")
 
 ARCHIVO_HISTORIAL = "historial.json"
 ARCHIVO_PATRONES = "patrones.json"
@@ -60,20 +60,20 @@ if device_token and not st.session_state.licencia_activa:
 if not st.session_state.licencia_activa:
     st.markdown("""
     <style>
-    body { background: #000; color: #fff; font-family: Arial, sans-serif; margin: 0; padding: 0; }
-    .login-container { max-width: 320px; margin: 50px auto; padding: 20px; background: linear-gradient(135deg, #0a0a1a, #1a0a2e); border-radius: 12px; border: 2px solid #ffd700; box-shadow: 0 0 30px rgba(255, 215, 0, 0.4); text-align: center; }
-    .login-title { color: #ffd700; font-size: 22px; font-weight: bold; margin-bottom: 5px; letter-spacing: 2px; }
-    .login-subtitle { color: #aaa; font-size: 11px; margin-bottom: 20px; }
+    body { background: #03030c; color: #fff; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; }
+    .login-container { max-width: 340px; margin: 60px auto; padding: 25px; background: rgba(15, 15, 30, 0.85); backdrop-filter: blur(12px); border-radius: 16px; border: 1px solid rgba(255, 215, 0, 0.3); box-shadow: 0 0 40px rgba(0, 0, 0, 0.8), inset 0 0 15px rgba(255, 215, 0, 0.05); text-align: center; }
+    .login-title { color: #ffd700; font-size: 24px; font-weight: 800; margin-bottom: 5px; letter-spacing: 3px; text-shadow: 0 0 10px rgba(255,215,0,0.4); }
+    .login-subtitle { color: #8888aa; font-size: 11px; margin-bottom: 25px; text-transform: uppercase; letter-spacing: 1px; }
     </style>
     """, unsafe_allow_html=True)
     
     st.markdown('<div class="login-container">', unsafe_allow_html=True)
     st.markdown('<div class="login-title">⚡ ZT TRADERS</div>', unsafe_allow_html=True)
-    st.markdown('<div class="login-subtitle">Sistema de Licencia Protegido</div>', unsafe_allow_html=True)
+    st.markdown('<div class="login-subtitle">Terminal de Alta Frecuencia</div>', unsafe_allow_html=True)
     
     with st.form("licencia_form"):
         key_input = st.text_input("License Key", placeholder="Ingresa tu Key", type="password")
-        submit_key = st.form_submit_button("⚡ ACTIVAR", use_container_width=True)
+        submit_key = st.form_submit_button("🚀 ACCEDER AL SISTEMA", use_container_width=True)
         
         if submit_key:
             if key_input:
@@ -101,7 +101,7 @@ if not st.session_state.licencia_activa:
                                     st.query_params["zt_token"] = nuevo_token
                                     st.session_state.licencia_activa = True
                                     st.session_state.usuario_actual = f"Licencia ({key_input[:8]}...)"
-                                    st.success("¡Licencia vinculada a este equipo con éxito!")
+                                    st.success("¡Licencia vinculada con éxito!")
                                     st.rerun()
                                 else:
                                     if device_token == datos['device_id']:
@@ -109,7 +109,7 @@ if not st.session_state.licencia_activa:
                                         st.session_state.usuario_actual = f"Licencia ({key_input[:8]}...)"
                                         st.rerun()
                                     else:
-                                        st.error("❌ Esta Key ya está activada en otro dispositivo.")
+                                        st.error("❌ Key en uso en otro dispositivo.")
                         except:
                             st.error("Error al validar fecha.")
                     else:
@@ -119,7 +119,7 @@ if not st.session_state.licencia_activa:
     st.markdown('</div>', unsafe_allow_html=True)
     st.stop()
 
-# --- FUNCIONALIDADES DE TRADING Y ML AVANZADO ---
+# --- FUNCIONES DE TRADING Y ML ---
 def cargar_patrones():
     if os.path.exists(ARCHIVO_PATRONES):
         try:
@@ -260,7 +260,6 @@ def analizar_par(codigo_par, tipo='crypto'):
         c_close = 'close' if tipo == 'crypto' else 'Close'
         c_open = 'open' if tipo == 'crypto' else 'Open'
         
-        # Indicadores Avanzados (RSI, MACD, Bollinger Bands, EMAs)
         df['RSI_7'] = ta.momentum.RSIIndicator(df[c_close], window=7).rsi()
         macd = ta.trend.MACD(df[c_close])
         df['MACD_diff'] = macd.macd_diff()
@@ -277,9 +276,7 @@ def analizar_par(codigo_par, tipo='crypto'):
         bb_high = float(u1['BB_high'])
         bb_low = float(u1['BB_low'])
         
-        # Posición relativa en Bandas de Bollinger (0 a 1)
         bb_pos = (precio - bb_low) / (bb_high - bb_low) if (bb_high - bb_low) > 0 else 0.5
-        
         vela_verde = precio >= apertura
         razones = []
         
@@ -293,7 +290,7 @@ def analizar_par(codigo_par, tipo='crypto'):
             dirección = 'CALL' if macd_diff >= 0 else 'PUT'
             razones.append("Tendencia MACD")
 
-        confianza_base = 75 if (rsi_7 < 30 or rsi_7 > 70 or bb_pos < 0.1 or bb_pos > 0.9) else 65
+        confianza_base = 78 if (rsi_7 < 30 or rsi_7 > 70 or bb_pos < 0.1 or bb_pos > 0.9) else 68
         
         modelo_ml = entrenar_modelo_ml()
         indicadores = {'rsi': rsi_7, 'macd_diff': macd_diff, 'bb_pos': bb_pos}
@@ -304,13 +301,13 @@ def analizar_par(codigo_par, tipo='crypto'):
                 probabilidad = modelo_ml.predict_proba([[indicadores['rsi'], indicadores['macd_diff'], indicadores['bb_pos'], 1 if dirección == 'CALL' else 0]])
                 confianza_ml = int(probabilidad[0][prediccion[0]] * 100)
                 confianza = int((confianza_base + confianza_ml) / 2)
-                razones.append(f"IA Optimizada ({confianza}%)")
+                razones.append(f"IA Pro ({confianza}%)")
             except:
                 confianza = confianza_base
         else:
             confianza = confianza_base
 
-        return {'señal': dirección, 'confianza': max(40, min(confianza, 98)), 'razon': " | ".join(razones), 'indicadores': indicadores}
+        return {'señal': dirección, 'confianza': max(45, min(confianza, 98)), 'razon': " | ".join(razones), 'indicadores': indicadores}
     except Exception as e:
         return {'señal': 'CALL', 'confianza': 60, 'razon': "Modo seguro activo", 'indicadores': {'rsi': 50, 'macd_diff': 0, 'bb_pos': 0.5}}
 
@@ -332,7 +329,7 @@ def reproducir_voz(mensaje):
     """
     st.markdown(js_code, unsafe_allow_html=True)
 
-# 23 PARES ORIGINALES COMPLETOS
+# 23 PARES ACTIVOS
 PARES = {
     'Bitcoin': {'codigo': 'BTCUSDT', 'tipo': 'crypto'},
     'Ethereum': {'codigo': 'ETHUSDT', 'tipo': 'crypto'},
@@ -368,46 +365,47 @@ if 'minuto_anterior' not in st.session_state: st.session_state.minuto_anterior =
 if 'precio_real_entrada' not in st.session_state: st.session_state.precio_real_entrada = None
 if 'voz_reproducida' not in st.session_state: st.session_state.voz_reproducida = False
 
+# ESTILOS CSS PROFESIONALES DE ALTA GAMA (ESTILO NATIVO MOBILE)
 CSS = """
 <style>
 #MainMenu {visibility: hidden;}
 footer {visibility: hidden;}
 header {visibility: hidden;}
-.block-container { padding-top: 5px !important; padding-bottom: 0px !important; padding-left: 8px !important; padding-right: 8px !important; max-width: 100% !important; }
+.block-container { padding-top: 4px !important; padding-bottom: 0px !important; padding-left: 6px !important; padding-right: 6px !important; max-width: 100% !important; }
 
-body { background: #000; color: #fff; font-family: Arial, sans-serif; margin: 0; padding: 0; }
-.main-container { width: 100%; max-width: 450px; margin: 0 auto; display: flex; flex-direction: column; gap: 4px; }
+body { background-color: #03030c; color: #f0f0f5; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; }
+.main-container { width: 100%; max-width: 440px; margin: 0 auto; display: flex; flex-direction: column; gap: 4px; }
 
-.header { background: linear-gradient(90deg, #1a0a2e, #0a1a2e); padding: 6px; border-radius: 8px; border: 1.5px solid #ffd700; text-align: center; }
-.header h1 { color: #ffd700; margin: 0; font-size: 16px; letter-spacing: 2px; }
-.header p { color: #aaa; margin: 2px 0 0 0; font-size: 9px; }
+.header { background: linear-gradient(135deg, #120b24 0%, #071328 100%); padding: 8px; border-radius: 12px; border: 1px solid rgba(255, 215, 0, 0.4); text-align: center; box-shadow: 0 4px 20px rgba(0,0,0,0.6); }
+.header h1 { color: #ffd700; margin: 0; font-size: 15px; letter-spacing: 2px; font-weight: 800; text-shadow: 0 0 10px rgba(255,215,0,0.3); }
+.header p { color: #8892b0; margin: 2px 0 0 0; font-size: 9px; font-weight: 500; text-transform: uppercase; letter-spacing: 1px; }
 
 .stats-row { display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px; }
-.stat-box { background: linear-gradient(135deg, #0a1a2e, #1a0a2e); border: 1px solid #ffd700; border-radius: 6px; padding: 4px; text-align: center; }
-.stat-box strong { color: #ffd700; font-size: 8px; display: block; margin-bottom: 1px; }
-.stat-box span { color: #00ff88; font-size: 12px; font-weight: bold; }
+.stat-box { background: rgba(13, 20, 38, 0.9); backdrop-filter: blur(10px); border: 1px solid rgba(255, 215, 0, 0.25); border-radius: 8px; padding: 4px; text-align: center; box-shadow: 0 2px 10px rgba(0,0,0,0.4); }
+.stat-box strong { color: #ffd700; font-size: 8px; display: block; margin-bottom: 1px; text-transform: uppercase; letter-spacing: 0.5px; }
+.stat-box span { color: #00ff88; font-size: 12px; font-weight: 700; }
 
-.hora-box { background: linear-gradient(90deg, #0a2a1a, #1a1a2e); border: 2px solid #00ff88; border-radius: 6px; padding: 4px; text-align: center; }
-.hora-box span { color: #00ff88; font-size: 18px; font-weight: bold; text-shadow: 0 0 8px #00ff88; }
+.hora-box { background: rgba(8, 28, 18, 0.85); border: 1px solid #00ff88; border-radius: 8px; padding: 4px; text-align: center; box-shadow: 0 0 12px rgba(0,255,136,0.2); }
+.hora-box span { color: #00ff88; font-size: 17px; font-weight: 700; text-shadow: 0 0 8px rgba(0,255,136,0.6); letter-spacing: 1px; }
 
-.signal-box { padding: 8px; border-radius: 8px; text-align: center; font-size: 22px; font-weight: bold; letter-spacing: 2px; margin: 2px 0; }
-.signal-call { background: linear-gradient(135deg, #00cc00, #00ff00); border: 2px solid #00ff00; color: white; box-shadow: 0 0 15px rgba(0, 255, 0, 0.6); }
-.signal-put { background: linear-gradient(135deg, #cc0000, #ff0000); border: 2px solid #ff0000; color: white; box-shadow: 0 0 15px rgba(255, 0, 0, 0.6); }
-.signal-wait { background: linear-gradient(135deg, #1a1a2e, #0a1a2e); border: 2px solid #ffd700; color: #ffd700; font-size: 14px; padding: 6px; }
+.signal-box { padding: 8px; border-radius: 10px; text-align: center; font-size: 20px; font-weight: 800; letter-spacing: 2px; margin: 2px 0; text-transform: uppercase; }
+.signal-call { background: linear-gradient(135deg, #008822, #00cc33); border: 1.5px solid #00ff66; color: #ffffff; box-shadow: 0 0 20px rgba(0, 255, 102, 0.4); }
+.signal-put { background: linear-gradient(135deg, #aa0000, #dd1111); border: 1.5px solid #ff3333; color: #ffffff; box-shadow: 0 0 20px rgba(255, 51, 51, 0.4); }
+.signal-wait { background: linear-gradient(135deg, #1c1c2e, #12121e); border: 1.5px solid #ffd700; color: #ffd700; font-size: 13px; padding: 6px; box-shadow: 0 0 15px rgba(255, 215, 0, 0.25); }
 
-.radar-container { position: relative; width: 140px; height: 140px; margin: 6px auto; }
-.radar { width: 140px; height: 140px; border-radius: 50%; position: relative; overflow: hidden; border: 3px solid; }
-.radar-green { border-color: #00ff00; background: radial-gradient(circle, #0a2a1a, #000); box-shadow: 0 0 15px rgba(0, 255, 0, 0.5); }
-.radar-red { border-color: #ff0000; background: radial-gradient(circle, #2a0a0a, #000); box-shadow: 0 0 15px rgba(255, 0, 0, 0.5); }
-.radar-yellow { border-color: #ffd700; background: radial-gradient(circle, #2a2a1a, #000); box-shadow: 0 0 15px rgba(255, 215, 0, 0.5); }
+.radar-container { position: relative; width: 135px; height: 135px; margin: 4px auto; }
+.radar { width: 135px; height: 135px; border-radius: 50%; position: relative; overflow: hidden; border: 3px solid; }
+.radar-green { border-color: #00ff66; background: radial-gradient(circle, rgba(0,60,20,0.8) 0%, #03030c 80%); box-shadow: 0 0 25px rgba(0, 255, 102, 0.4); }
+.radar-red { border-color: #ff3333; background: radial-gradient(circle, rgba(60,0,0,0.8) 0%, #03030c 80%); box-shadow: 0 0 25px rgba(255, 51, 51, 0.4); }
+.radar-yellow { border-color: #ffd700; background: radial-gradient(circle, rgba(60,50,0,0.8) 0%, #03030c 80%); box-shadow: 0 0 25px rgba(255, 215, 0, 0.4); }
 .radar-center { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); text-align: center; z-index: 10; }
-.radar-number { font-size: 42px; font-weight: bold; line-height: 1; text-shadow: 0 0 10px currentColor; }
-.radar-number-green { color: #00ff00; }
-.radar-number-red { color: #ff0000; }
-.radar-number-yellow { color: #ffd700; font-size: 15px; }
-.radar-label { color: #fff; font-size: 8px; margin-top: 2px; letter-spacing: 1px; }
+.radar-number { font-size: 40px; font-weight: 800; line-height: 1; text-shadow: 0 0 12px currentColor; }
+.radar-number-green { color: #00ff66; }
+.radar-number-red { color: #ff3333; }
+.radar-number-yellow { color: #ffd700; font-size: 14px; letter-spacing: 1px; }
+.radar-label { color: #a0aec0; font-size: 7px; margin-top: 2px; letter-spacing: 1.5px; text-transform: uppercase; font-weight: 600; }
 
-.info-panel { background: linear-gradient(135deg, #0a1a2e, #1a0a2e); border: 1px solid #00ff88; border-radius: 6px; padding: 5px 8px; font-size: 10px; text-align: center; }
+.info-panel { background: rgba(13, 20, 38, 0.9); backdrop-filter: blur(10px); border: 1px solid rgba(0, 255, 136, 0.4); border-radius: 8px; padding: 5px 8px; font-size: 10px; text-align: center; box-shadow: 0 2px 10px rgba(0,0,0,0.4); }
 .info-panel strong { color: #00ff88; }
 </style>
 """
@@ -415,7 +413,7 @@ st.markdown(CSS, unsafe_allow_html=True)
 
 # CONTENEDOR ESTÁTICO SUPERIOR
 st.markdown('<div class="main-container">', unsafe_allow_html=True)
-st.markdown(f'<div class="header"><h1>⚡ ZT TRADERS</h1><p>User: {st.session_state.usuario_actual} | 23 PARES ACTIVOS</p></div>', unsafe_allow_html=True)
+st.markdown(f'<div class="header"><h1>⚡ ZT TRADERS PRO</h1><p>User: {st.session_state.usuario_actual} | 23 PARES ACTIVOS</p></div>', unsafe_allow_html=True)
 
 es_admin = (st.session_state.usuario_actual == "👑 Admin Master")
 
@@ -452,7 +450,7 @@ st.markdown(f"""
 </div>
 """, unsafe_allow_html=True)
 
-# CONTENEDOR DINÁMICO ÚNICO
+# CONTENEDOR DINÁMICO ÚNICO (Garantiza un solo radar y sincronización exacta)
 pantalla_dinamica = st.empty()
 
 ahora = datetime.now()
@@ -475,8 +473,8 @@ if minuto_es_par:
     if segundo_actual < 55:
         html_dinamico += textwrap.dedent(f"""
         <div class="signal-box signal-wait">📊 ESCANEANDO MERCADO...</div>
-        <div class="info-panel">⏱️ Próxima señal en: <strong>{55 - segundo_actual}s</strong></div>
-        <div class="radar-container"><div class="radar radar-yellow"><div class="radar-center"><div class="radar-number radar-number-yellow">IA</div><div class="radar-label">ACTIVA</div></div></div></div>
+        <div class="info-panel">⏱️ Sincronizando IA en: <strong>{55 - segundo_actual}s</strong></div>
+        <div class="radar-container"><div class="radar radar-yellow"><div class="radar-center"><div class="radar-number radar-number-yellow">IA ACTIVA</div><div class="radar-label">ANALIZANDO</div></div></div></div>
         """)
         pantalla_dinamica.markdown(html_dinamico, unsafe_allow_html=True)
         time_module.sleep(1)
@@ -485,16 +483,13 @@ if minuto_es_par:
         if st.session_state.senal is None or st.session_state.estado != 'senal':
             resultado_analisis = analizar_par(codigo, tipo)
             
-            # REGLA SOLICITADA:
-            # - Si es un bloque de cada 4 minutos (minuto % 4 == 0), se da la señal sí o sí mostrando su confianza.
-            # - Si es un minuto par intermedio (minuto % 4 != 0), se respeta el filtro estricto (ej. confianza >= 72%).
+            # REGLA DE 4 MINUTOS + FILTRO DE CONFIANZA
             es_ciclo_4min = (minuto_actual % 4 == 0)
-            umbral_confianza = 72
+            umbral_confianza = 70
             
             if es_ciclo_4min or resultado_analisis['confianza'] >= umbral_confianza:
                 st.session_state.senal = resultado_analisis
             else:
-                # Si no cumple el filtro en minutos normales, se muestra en espera de alta probabilidad
                 st.session_state.senal = {'señal': 'ESPERAR', 'confianza': resultado_analisis['confianza'], 'razon': "Filtro estricto: Buscando alta probabilidad", 'indicadores': resultado_analisis['indicadores']}
             
             st.session_state.estado = 'senal'
@@ -504,8 +499,8 @@ if minuto_es_par:
         if señal['señal'] == 'ESPERAR':
             html_dinamico += textwrap.dedent(f"""
             <div class="signal-box signal-wait">⏳ ESPERANDO ALTA PROBABILIDAD</div>
-            <div class="info-panel">Confianza actual: <strong>{señal["confianza"]}%</strong> | {señal["razon"]}</div>
-            <div class="radar-container"><div class="radar radar-yellow"><div class="radar-center"><div class="radar-number radar-number-yellow">IA</div><div class="radar-label">FILTRANDO</div></div></div></div>
+            <div class="info-panel">Confianza: <strong>{señal["confianza"]}%</strong> | {señal["razon"]}</div>
+            <div class="radar-container"><div class="radar radar-yellow"><div class="radar-center"><div class="radar-number radar-number-yellow">FILTRANDO</div><div class="radar-label">ESPERA</div></div></div></div>
             """)
             pantalla_dinamica.markdown(html_dinamico, unsafe_allow_html=True)
             time_module.sleep(0.5)
@@ -541,7 +536,6 @@ else:
     
     señal = st.session_state.senal
     if señal is None or señal.get('señal') == 'ESPERAR':
-        # Si estaba esperando, muestra fase neutral en el minuto impar
         html_dinamico += textwrap.dedent(f"""
         <div class="signal-box signal-wait">⏸️ SIN OPERACIÓN EN ESTE CICLO</div>
         <div class="radar-container"><div class="radar radar-yellow"><div class="radar-center"><div class="radar-number radar-number-yellow">--</div><div class="radar-label">ESPERA</div></div></div></div>
@@ -580,7 +574,7 @@ else:
                     resultado_interno = 'GANADA'
                 elif not es_call and precio_actual < st.session_state.precio_real_entrada:
                     resultado_interno = 'GANADA'
-            aprender_en_segundo_plano(señal['señal'], resultado_interno, señal.get('indicadores', {}), st.session_state.precio_real_entrada)
+            aprender_en_segundo_plano(señal['señal'],resultado_interno, señal.get('indicadores', {}), st.session_state.precio_real_entrada)
             st.session_state.pesos = cargar_patrones()
         st.session_state.resultado_guardado = True
     time_module.sleep(0.5)
