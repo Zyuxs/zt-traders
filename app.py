@@ -175,9 +175,7 @@ def obtener_datos_binance(symbol, interval='1m', limit=50):
     except: return None
 
 def obtener_datos_twelvedata(symbol, limit=50):
-    """Consulta la API profesional de Twelve Data para Forex exactamente sincronizada con los brókeres institucionales"""
     try:
-        # Usamos la API key de prueba 'demo' (ideal para EUR/USD, NZD/USD, etc.)
         formatted_symbol = symbol.replace('=X', '').replace('USD', '/USD') if '/' not in symbol else symbol
         if 'EURUSD' in symbol: formatted_symbol = 'EUR/USD'
         elif 'GBPUSD' in symbol: formatted_symbol = 'GBP/USD'
@@ -192,7 +190,7 @@ def obtener_datos_twelvedata(symbol, limit=50):
         
         if 'values' in res:
             df = pd.DataFrame(res['values'])
-            df = df.iloc[::-1].reset_index(drop=True) # Invertir orden cronológico
+            df = df.iloc[::-1].reset_index(drop=True)
             for c in ['open', 'high', 'low', 'close']:
                 df[c] = pd.to_numeric(df[c])
             return df
@@ -302,7 +300,7 @@ if 'precio_real_entrada' not in st.session_state: st.session_state.precio_real_e
 if 'voz_reproducida' not in st.session_state: st.session_state.voz_reproducida = False
 if 'df_cache' not in st.session_state: st.session_state.df_cache = None
 
-# ESTILOS CSS INSTITUCIONALES AVANZADOS
+# ESTILOS CSS INSTITUCIONALES AVANZADOS (RADAR MÁS GRANDE + TICKET DE PRECIO EN VIVO)
 CSS = """
 <style>
 #MainMenu, footer, header {visibility: hidden;}
@@ -320,6 +318,11 @@ body { background: #02040a; color: #f1f5f9; font-family: 'Inter', -apple-system,
 .metric-card small { color: #64748b; font-size: 8px; font-weight: 800; display: block; text-transform: uppercase; }
 .metric-card span { color: #00ff88; font-size: 13px; font-weight: 900; text-shadow: 0 0 8px rgba(0,255,136,0.4); }
 
+/* TICKET DE PRECIO EN VIVO */
+.live-price-box { background: linear-gradient(135deg, #0a192f 0%, #020617 100%); border: 1.5px solid #38bdf8; border-radius: 8px; padding: 6px; text-align: center; box-shadow: 0 0 15px rgba(56,189,248,0.25); margin: 4px 0; }
+.live-price-box small { color: #38bdf8; font-size: 8px; font-weight: 800; text-transform: uppercase; letter-spacing: 1.5px; display: block; }
+.live-price-box span { color: #e2e8f0; font-size: 18px; font-weight: 900; font-family: monospace; text-shadow: 0 0 10px rgba(56,189,248,0.5); }
+
 .clock-display { background: rgba(3, 30, 18, 0.9); border: 1px solid #00ff88; border-radius: 8px; padding: 4px; text-align: center; box-shadow: 0 0 15px rgba(0,255,136,0.2); }
 .clock-display span { color: #00ff88; font-size: 17px; font-weight: 900; text-shadow: 0 0 10px rgba(0,255,136,0.6); font-family: monospace; letter-spacing: 1px; }
 
@@ -328,17 +331,18 @@ body { background: #02040a; color: #f1f5f9; font-family: 'Inter', -apple-system,
 .signal-put { background: linear-gradient(135deg, #991b1b, #dc2626); border: 1.5px solid #f87171; color: #fff; box-shadow: 0 0 25px rgba(248,113,113,0.5); }
 .signal-wait { background: rgba(30, 41, 59, 0.9); border: 1.5px solid #fbbf24; color: #fbbf24; font-size: 13px; }
 
-.radar-box { position: relative; width: 135px; height: 135px; margin: 4px auto; }
-.radar-ring { width: 135px; height: 135px; border-radius: 50%; border: 3px solid; position: relative; }
-.ring-green { border-color: #34d399; background: radial-gradient(circle, rgba(5,150,105,0.3) 0%, #02040a 75%); box-shadow: 0 0 25px rgba(52,211,153,0.4); }
-.ring-red { border-color: #f87171; background: radial-gradient(circle, rgba(220,38,38,0.3) 0%, #02040a 75%); box-shadow: 0 0 25px rgba(248,113,113,0.4); }
-.ring-yellow { border-color: #fbbf24; background: radial-gradient(circle, rgba(251,191,36,0.3) 0%, #02040a 75%); box-shadow: 0 0 25px rgba(251,191,36,0.4); }
+/* CÍRCULO DEL CRONÓMETRO AMPLIADO (165px) */
+.radar-box { position: relative; width: 165px; height: 165px; margin: 8px auto; }
+.radar-ring { width: 165px; height: 165px; border-radius: 50%; border: 3.5px solid; position: relative; }
+.ring-green { border-color: #34d399; background: radial-gradient(circle, rgba(5,150,105,0.35) 0%, #02040a 75%); box-shadow: 0 0 30px rgba(52,211,153,0.5); }
+.ring-red { border-color: #f87171; background: radial-gradient(circle, rgba(220,38,38,0.35) 0%, #02040a 75%); box-shadow: 0 0 30px rgba(248,113,113,0.5); }
+.ring-yellow { border-color: #fbbf24; background: radial-gradient(circle, rgba(251,191,36,0.35) 0%, #02040a 75%); box-shadow: 0 0 30px rgba(251,191,36,0.5); }
 
 .radar-content { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); text-align: center; }
-.radar-num { font-size: 40px; font-weight: 900; line-height: 1; font-family: monospace; }
-.num-green { color: #34d399; text-shadow: 0 0 12px rgba(52,211,153,0.7); }
-.num-red { color: #f87171; text-shadow: 0 0 12px rgba(248,113,113,0.7); }
-.num-yellow { color: #fbbf24; font-size: 14px; letter-spacing: 1px; }
+.radar-num { font-size: 48px; font-weight: 900; line-height: 1; font-family: monospace; }
+.num-green { color: #34d399; text-shadow: 0 0 15px rgba(52,211,153,0.8); }
+.num-red { color: #f87171; text-shadow: 0 0 15px rgba(248,113,113,0.8); }
+.num-yellow { color: #fbbf24; font-size: 16px; letter-spacing: 1px; }
 
 .meta-panel { background: rgba(15, 23, 42, 0.9); border: 1px solid rgba(0, 255, 136, 0.3); border-radius: 6px; padding: 5px; font-size: 10px; text-align: center; }
 </style>
@@ -410,6 +414,17 @@ st.markdown(f"""
 </div>
 """, unsafe_allow_html=True)
 
+# OBTENER PRECIO ACTUAL EN VIVO PARA MOSTRARLO EN EL TICKET
+precio_en_vivo = obtener_precio_actual(codigo, tipo, df_actual=st.session_state.df_cache)
+precio_str = f"{precio_en_vivo:,.5f}" if precio_en_vivo else "Sincronizando..."
+
+st.markdown(f"""
+<div class="live-price-box">
+    <small>🟢 COTIZACIÓN EN VIVO ({par_nombre})</small>
+    <span>{precio_str}</span>
+</div>
+""", unsafe_allow_html=True)
+
 # PANTALLA DINÁMICA DE SEÑALES Y RADAR
 pantalla_dinamica = st.empty()
 
@@ -432,7 +447,7 @@ if minuto_es_par:
         html_dinamico += textwrap.dedent(f"""
         <div class="signal-banner signal-wait">📊 ANALIZANDO TENDENCIA...</div>
         <div class="meta-panel">⏱️ Sincronización IA en: <strong>{55 - segundo_actual}s</strong></div>
-        <div class="radar-box"><div class="radar-ring ring-yellow"><div class="radar-content"><div class="radar-num num-yellow">IA ACTIVA</div><small style="font-size:7px;color:#94a3b8;letter-spacing:1px;">ESCANEO</small></div></div></div>
+        <div class="radar-box"><div class="radar-ring ring-yellow"><div class="radar-content"><div class="radar-num num-yellow">IA ACTIVA</div><small style="font-size:8px;color:#94a3b8;letter-spacing:1px;">ESCANEO</small></div></div></div>
         """)
         pantalla_dinamica.markdown(html_dinamico, unsafe_allow_html=True)
         time_module.sleep(1)
@@ -454,7 +469,7 @@ if minuto_es_par:
             html_dinamico += textwrap.dedent(f"""
             <div class="signal-banner signal-wait">⏳ FILTRANDO RUIDO DE MERCADO</div>
             <div class="meta-panel">Confianza: <strong>{señal["confianza"]}%</strong> | {señal["razon"]}</div>
-            <div class="radar-box"><div class="radar-ring ring-yellow"><div class="radar-content"><div class="radar-num num-yellow">ESPERA</div><small style="font-size:7px;color:#94a3b8;letter-spacing:1px;">BAJA CERTEZA</small></div></div></div>
+            <div class="radar-box"><div class="radar-ring ring-yellow"><div class="radar-content"><div class="radar-num num-yellow">ESPERA</div><small style="font-size:8px;color:#94a3b8;letter-spacing:1px;">BAJA CERTEZA</small></div></div></div>
             """)
             pantalla_dinamica.markdown(html_dinamico, unsafe_allow_html=True)
             time_module.sleep(0.5)
@@ -475,7 +490,7 @@ if minuto_es_par:
         html_dinamico += textwrap.dedent(f"""
         <div class="signal-banner {c_box}">{t_sig}</div>
         <div class="meta-panel">Confianza IA: <strong>{señal["confianza"]:.0f}%</strong> | <strong>{señal["razon"]}</strong></div>
-        <div class="radar-box"><div class="radar-ring {c_radar}"><div class="radar-content"><div class="radar-num {c_val}">{segundos_restantes}</div><small style="font-size:7px;color:#94a3b8;letter-spacing:1px;">SEGUNDOS</small></div></div></div>
+        <div class="radar-box"><div class="radar-ring {c_radar}"><div class="radar-content"><div class="radar-num {c_val}">{segundos_restantes}</div><small style="font-size:8px;color:#94a3b8;letter-spacing:1px;">SEGUNDOS</small></div></div></div>
         """)
         pantalla_dinamica.markdown(html_dinamico, unsafe_allow_html=True)
         time_module.sleep(0.3)
@@ -489,7 +504,7 @@ else:
     if señal is None or señal.get('señal') == 'ESPERAR':
         html_dinamico += textwrap.dedent(f"""
         <div class="signal-banner signal-wait">⏸️ SIN OPERACIÓN EN ESTE CICLO</div>
-        <div class="radar-box"><div class="radar-ring ring-yellow"><div class="radar-content"><div class="radar-num num-yellow">--</div><small style="font-size:7px;color:#94a3b8;letter-spacing:1px;">ESPERA</small></div></div></div>
+        <div class="radar-box"><div class="radar-ring ring-yellow"><div class="radar-content"><div class="radar-num num-yellow">--</div><small style="font-size:8px;color:#94a3b8;letter-spacing:1px;">ESPERA</small></div></div></div>
         """)
         pantalla_dinamica.markdown(html_dinamico, unsafe_allow_html=True)
         time_module.sleep(0.5)
@@ -511,7 +526,7 @@ else:
         <div class="meta-panel">Precio Sincronizado: <strong>{round(st.session_state.precio_real_entrada, 5)}</strong></div>
         """)
     html_dinamico += textwrap.dedent(f"""
-    <div class="radar-box"><div class="radar-ring {c_radar}"><div class="radar-content"><div class="radar-num {c_val}">{seg_op}</div><small style="font-size:7px;color:#94a3b8;letter-spacing:1px;">EXPIRACIÓN</small></div></div></div>
+    <div class="radar-box"><div class="radar-ring {c_radar}"><div class="radar-content"><div class="radar-num {c_val}">{seg_op}</div><small style="font-size:8px;color:#94a3b8;letter-spacing:1px;">EXPIRACIÓN</small></div></div></div>
     """)
     
     pantalla_dinamica.markdown(html_dinamico, unsafe_allow_html=True)
