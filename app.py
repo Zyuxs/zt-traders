@@ -119,7 +119,7 @@ if not st.session_state.licencia_activa:
     st.markdown('</div>', unsafe_allow_html=True)
     st.stop()
 
-# --- FUNCIONALIDADES DE TRADING Y ML ---
+# --- FUNCIONALIDADES DE TRADING Y ML AVANZADO ---
 def cargar_patrones():
     if os.path.exists(ARCHIVO_PATRONES):
         try:
@@ -169,12 +169,13 @@ def entrenar_modelo_ml():
             ind = op.get('indicadores', {})
             features = [
                 ind.get('rsi', 50),
-                ind.get('precio_relativo', 0.5),
+                ind.get('macd_diff', 0),
+                ind.get('bb_pos', 0.5),
                 1 if op['señal'] == 'CALL' else 0
             ]
             X.append(features)
             y.append(1 if op['resultado'] == 'GANADA' else 0)
-        modelo = RandomForestClassifier(n_estimators=30, max_depth=3, random_state=42)
+        modelo = RandomForestClassifier(n_estimators=40, max_depth=4, random_state=42)
         modelo.fit(X, y)
         return modelo
     except:
@@ -198,7 +199,7 @@ def aprender_en_segundo_plano(señal, resultado, indicadores, precio_real_entrad
     guardar_historial(hist)
     guardar_patrones(pesos)
 
-def obtener_datos_binance(symbol, interval='1m', limit=30):
+def obtener_datos_binance(symbol, interval='1m', limit=50):
     try:
         url = f"https://api.binance.com/api/v3/klines"
         params = {'symbol': symbol, 'interval': interval, 'limit': limit}
@@ -249,59 +250,69 @@ def obtener_precio_actual(codigo_par, tipo='crypto'):
 def analizar_par(codigo_par, tipo='crypto'):
     try:
         if tipo == 'crypto':
-            df = obtener_datos_binance(codigo_par, interval='1m', limit=30)
+            df = obtener_datos_binance(codigo_par, interval='1m', limit=50)
         else:
             df = obtener_datos_yahoo(codigo_par, period="1d", interval="1m")
         
-        if df is None or len(df) < 10:
-            return {'señal': 'CALL', 'confianza': 60, 'razon': "Mercado cerrado / Sin datos", 'indicadores': {'rsi': 50, 'precio_relativo': 0.5}}
+        if df is None or len(df) < 20:
+            return {'señal': 'CALL', 'confianza': 60, 'razon': "Datos insuficientes", 'indicadores': {'rsi': 50, 'macd_diff': 0, 'bb_pos': 0.5}}
         
         c_close = 'close' if tipo == 'crypto' else 'Close'
         c_open = 'open' if tipo == 'crypto' else 'Open'
         
+        # Indicadores Avanzados (RSI, MACD, Bollinger Bands, EMAs)
         df['RSI_7'] = ta.momentum.RSIIndicator(df[c_close], window=7).rsi()
-        df['EMA_9'] = ta.trend.EMAIndicator(df[c_close], window=9).ema_indicator()
-        df['EMA_21'] = ta.trend.EMAIndicator(df[c_close], window=21).ema_indicator()
+        macd = ta.trend.MACD(df[c_close])
+        df['MACD_diff'] = macd.macd_diff()
+        
+        bollinger = ta.volatility.BollingerBands(df[c_close], window=20, window_dev=2)
+        df['BB_high'] = bollinger.bollinger_hband()
+        df['BB_low'] = bollinger.bollinger_lband()
         
         u1 = df.iloc[-1]
         precio = float(u1[c_close])
         apertura = float(u1[c_open])
         rsi_7 = float(u1['RSI_7'])
-        ema_9 = float(u1['EMA_9'])
-        ema_21 = float(u1['EMA_21'])
+        macd_diff = float(u1['MACD_diff'])
+        bb_high = float(u1['BB_high'])
+        bb_low = float(u1['BB_low'])
+        
+        # Posición relativa en Bandas de Bollinger (0 a 1)
+        bb_pos = (precio - bb_low) / (bb_high - bb_low) if (bb_high - bb_low) > 0 else 0.5
         
         vela_verde = precio >= apertura
         razones = []
         
-        if (rsi_7 < 45 or ema_9 > ema_21) and vela_verde:
+        if rsi_7 < 45 and macd_diff > 0 and vela_verde:
             dirección = 'CALL'
-            razones.append("Momentum 1M Alcista")
-        elif (rsi_7 > 55 or ema_9 < ema_21) and not vela_verde:
+            razones.append("Rebote Alcista RSI+MACD")
+        elif rsi_7 > 55 and macd_diff < 0 and not vela_verde:
             dirección = 'PUT'
-            razones.append("Momentum 1M Bajista")
+            razones.append("Rebote Bajista RSI+MACD")
         else:
-            dirección = 'CALL' if ema_9 >= ema_21 else 'PUT'
-            razones.append("Tendencia EMA 9/21")
+            dirección = 'CALL' if macd_diff >= 0 else 'PUT'
+            razones.append("Tendencia MACD")
 
-        confianza_base = 75 if (rsi_7 < 35 or rsi_7 > 65) else 65
+        confianza_base = 75 if (rsi_7 < 30 or rsi_7 > 70 or bb_pos < 0.1 or bb_pos > 0.9) else 65
+        
         modelo_ml = entrenar_modelo_ml()
-        indicadores = {'rsi': rsi_7, 'precio_relativo': 1.0 if vela_verde else 0.0}
+        indicadores = {'rsi': rsi_7, 'macd_diff': macd_diff, 'bb_pos': bb_pos}
         
         if modelo_ml is not None:
             try:
-                prediccion = modelo_ml.predict([[indicadores['rsi'], indicadores['precio_relativo'], 1 if dirección == 'CALL' else 0]])
-                probabilidad = modelo_ml.predict_proba([[indicadores['rsi'], indicadores['precio_relativo'], 1 if dirección == 'CALL' else 0]])
+                prediccion = modelo_ml.predict([[indicadores['rsi'], indicadores['macd_diff'], indicadores['bb_pos'], 1 if dirección == 'CALL' else 0]])
+                probabilidad = modelo_ml.predict_proba([[indicadores['rsi'], indicadores['macd_diff'], indicadores['bb_pos'], 1 if dirección == 'CALL' else 0]])
                 confianza_ml = int(probabilidad[0][prediccion[0]] * 100)
                 confianza = int((confianza_base + confianza_ml) / 2)
-                razones.append(f"ML ({confianza}%)")
+                razones.append(f"IA Optimizada ({confianza}%)")
             except:
                 confianza = confianza_base
         else:
             confianza = confianza_base
 
-        return {'señal': dirección, 'confianza': max(50, min(confianza, 98)), 'razon': " | ".join(razones), 'indicadores': indicadores}
+        return {'señal': dirección, 'confianza': max(40, min(confianza, 98)), 'razon': " | ".join(razones), 'indicadores': indicadores}
     except Exception as e:
-        return {'señal': 'CALL', 'confianza': 60, 'razon': "Modo seguro activo", 'indicadores': {'rsi': 50, 'precio_relativo': 0.5}}
+        return {'señal': 'CALL', 'confianza': 60, 'razon': "Modo seguro activo", 'indicadores': {'rsi': 50, 'macd_diff': 0, 'bb_pos': 0.5}}
 
 def reproducir_voz(mensaje):
     mensaje_seguro = mensaje.replace("'", "\\'").replace('"', '\\"')
@@ -441,7 +452,7 @@ st.markdown(f"""
 </div>
 """, unsafe_allow_html=True)
 
-# CONTENEDOR DINÁMICO UNIFICADO (Garantiza un solo radar y evita errores de sintaxis en Markdown)
+# CONTENEDOR DINÁMICO ÚNICO
 pantalla_dinamica = st.empty()
 
 ahora = datetime.now()
@@ -458,7 +469,6 @@ elif st.session_state.minuto_anterior != minuto_actual:
     st.session_state.voz_reproducida = False
     st.session_state.minuto_anterior = minuto_actual
 
-# Construcción limpia de HTML con textwrap.dedent para evitar bloques de código Markdown
 html_dinamico = f'<div class="hora-box"><span>🕐 {hora_actual}</span></div>'
 
 if minuto_es_par:
@@ -473,10 +483,34 @@ if minuto_es_par:
         st.rerun()
     else:
         if st.session_state.senal is None or st.session_state.estado != 'senal':
-            st.session_state.senal = analizar_par(codigo, tipo)
+            resultado_analisis = analizar_par(codigo, tipo)
+            
+            # REGLA SOLICITADA:
+            # - Si es un bloque de cada 4 minutos (minuto % 4 == 0), se da la señal sí o sí mostrando su confianza.
+            # - Si es un minuto par intermedio (minuto % 4 != 0), se respeta el filtro estricto (ej. confianza >= 72%).
+            es_ciclo_4min = (minuto_actual % 4 == 0)
+            umbral_confianza = 72
+            
+            if es_ciclo_4min or resultado_analisis['confianza'] >= umbral_confianza:
+                st.session_state.senal = resultado_analisis
+            else:
+                # Si no cumple el filtro en minutos normales, se muestra en espera de alta probabilidad
+                st.session_state.senal = {'señal': 'ESPERAR', 'confianza': resultado_analisis['confianza'], 'razon': "Filtro estricto: Buscando alta probabilidad", 'indicadores': resultado_analisis['indicadores']}
+            
             st.session_state.estado = 'senal'
         
         señal = st.session_state.senal
+        
+        if señal['señal'] == 'ESPERAR':
+            html_dinamico += textwrap.dedent(f"""
+            <div class="signal-box signal-wait">⏳ ESPERANDO ALTA PROBABILIDAD</div>
+            <div class="info-panel">Confianza actual: <strong>{señal["confianza"]}%</strong> | {señal["razon"]}</div>
+            <div class="radar-container"><div class="radar radar-yellow"><div class="radar-center"><div class="radar-number radar-number-yellow">IA</div><div class="radar-label">FILTRANDO</div></div></div></div>
+            """)
+            pantalla_dinamica.markdown(html_dinamico, unsafe_allow_html=True)
+            time_module.sleep(0.5)
+            st.rerun()
+        
         es_call = señal['señal'] == 'CALL'
         segundos_restantes = 59 - segundo_actual
         
@@ -506,8 +540,15 @@ else:
         st.session_state.precio_real_entrada = obtener_precio_actual(codigo, tipo)
     
     señal = st.session_state.senal
-    if señal is None:
-        señal = {'señal': 'CALL', 'confianza': 60, 'razon': "Esperando"}
+    if señal is None or señal.get('señal') == 'ESPERAR':
+        # Si estaba esperando, muestra fase neutral en el minuto impar
+        html_dinamico += textwrap.dedent(f"""
+        <div class="signal-box signal-wait">⏸️ SIN OPERACIÓN EN ESTE CICLO</div>
+        <div class="radar-container"><div class="radar radar-yellow"><div class="radar-center"><div class="radar-number radar-number-yellow">--</div><div class="radar-label">ESPERA</div></div></div></div>
+        """)
+        pantalla_dinamica.markdown(html_dinamico, unsafe_allow_html=True)
+        time_module.sleep(0.5)
+        st.rerun()
     
     es_call = señal['señal'] == 'CALL'
     segundos_restantes_op = 59 - segundo_actual
