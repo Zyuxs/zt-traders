@@ -196,16 +196,11 @@ def obtener_precio_actual(codigo_par, tipo='crypto', df_actual=None):
     return None
 
 # ==========================================
-# 🔊 SISTEMA DE VOZ ROBUSTO (ARREGLADO)
+# 🔊 SISTEMA DE VOZ (Solo alerta si >= 75%)
 # ==========================================
 def reproducir_voz(mensaje):
-    """Reproduce voz usando components.html (más estable que st.markdown)"""
     m = mensaje.replace("'", "\\'").replace('"', '\\"')
-    html_voz = f"""
-    <!DOCTYPE html>
-    <html>
-    <head><meta charset="utf-8"></head>
-    <body>
+    script = f"""
     <script>
     (function() {{
         if ('speechSynthesis' in window) {{
@@ -219,11 +214,8 @@ def reproducir_voz(mensaje):
         }}
     }})();
     </script>
-    </body>
-    </html>
     """
-    # Usar components.html en lugar de st.markdown (NO se cancela con rerun)
-    components.html(html_voz, height=0, width=0)
+    st.markdown(script, unsafe_allow_html=True)
 
 def analizar_par(codigo_par, tipo='crypto', td_symbol=None):
     try:
@@ -464,9 +456,6 @@ if minuto_es_par:
         time_module.sleep(1)
         st.rerun()
     else:
-        # ==========================================
-        # 🔊 FASE DE SEÑAL - AQUÍ SE ACTIVA LA VOZ
-        # ==========================================
         if st.session_state.senal is None or st.session_state.estado != 'senal':
             res_analisis = analizar_par(codigo, tipo, td_symbol)
             st.session_state.df_cache = res_analisis.get('df')
@@ -477,14 +466,13 @@ if minuto_es_par:
         es_call = señal['señal'] == 'CALL'
         segundos_restantes = 59 - segundo_actual
         
-        # 🔊 REPRODUCIR VOZ (UNA SOLA VEZ POR SEÑAL)
+        # 🔊 REPRODUCIR VOZ SOLO SI CONFIANZA >= 75%
         if not st.session_state.voz_reproducida:
-            tipo_texto = "COMPRA" if es_call else "VENTA"
-            mensaje = f"Atención. Señal de {tipo_texto.lower()}. Confianza {int(señal['confianza'])} por ciento. Entrar ahora."
-            reproducir_voz(mensaje)
+            if señal['confianza'] >= 75:
+                tipo_texto = "COMPRA" if es_call else "VENTA"
+                mensaje = f"Atención. Señal de alta confianza. {tipo_texto}. {int(señal['confianza'])} por ciento. Entrar ahora."
+                reproducir_voz(mensaje)
             st.session_state.voz_reproducida = True
-            # IMPORTANTE: Dar tiempo a la voz para hablar (2.5 segundos)
-            time_module.sleep(2.5)
         
         c_box = "signal-call" if es_call else "signal-put"
         c_radar = "ring-green" if es_call else "ring-red"
