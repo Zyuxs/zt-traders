@@ -440,7 +440,7 @@ st.markdown(f"""
 </div>
 """, unsafe_allow_html=True)
 
-# CONTENEDOR DINÁMICO ÚNICO (Evita acumulación y errores de formato Markdown)
+# CONTENEDOR DINÁMICO ÚNICO (Garantiza un solo radar/cronómetro en pantalla)
 pantalla_dinamica = st.empty()
 
 ahora = datetime.now()
@@ -457,77 +457,90 @@ elif st.session_state.minuto_anterior != minuto_actual:
     st.session_state.voz_reproducida = False
     st.session_state.minuto_anterior = minuto_actual
 
-with pantalla_dinamica.container():
-    st.markdown(f'<div class="hora-box"><span>🕐 {hora_actual}</span></div>', unsafe_allow_html=True)
+html_dinamico = f'<div class="hora-box"><span>🕐 {hora_actual}</span></div>'
 
-    if minuto_es_par:
-        if segundo_actual < 55:
-            st.markdown('<div class="signal-box signal-wait">📊 ESCANEANDO MERCADO...</div>', unsafe_allow_html=True)
-            st.markdown(f'<div class="info-panel">⏱️ Próxima señal en: <strong>{55 - segundo_actual}s</strong></div>', unsafe_allow_html=True)
-            st.markdown('<div class="radar-container"><div class="radar radar-yellow"><div class="radar-center"><div class="radar-number radar-number-yellow">IA</div><div class="radar-label">ACTIVA</div></div></div></div>', unsafe_allow_html=True)
-            time_module.sleep(1)
-            st.rerun()
-        else:
-            if st.session_state.senal is None or st.session_state.estado != 'senal':
-                st.session_state.senal = analizar_par(codigo, tipo)
-                st.session_state.estado = 'senal'
-            
-            señal = st.session_state.senal
-            es_call = señal['señal'] == 'CALL'
-            segundos_restantes = 59 - segundo_actual
-            
-            if not st.session_state.voz_reproducida:
-                if es_call:
-                    reproducir_voz(f"Atención. Señal de compra. Confianza {int(señal['confianza'])} por ciento.")
-                else:
-                    reproducir_voz(f"Atención. Señal de venta. Confianza {int(señal['confianza'])} por ciento.")
-                st.session_state.voz_reproducida = True
-            
-            clase_box = "signal-call" if es_call else "signal-put"
-            clase_radar = "radar-green" if es_call else "radar-red"
-            clase_numero = "radar-number-green" if es_call else "radar-number-red"
-            tipo_signal = "🟢 COMPRA (CALL)" if es_call else "🔴 VENTA (PUT)"
-            
-            st.markdown(f'<div class="signal-box {clase_box}">{tipo_signal}</div>', unsafe_allow_html=True)
-            st.markdown(f'<div class="info-panel">Confianza IA: <strong>{señal["confianza"]:.0f}%</strong> | <strong>{señal["razon"]}</strong></div>', unsafe_allow_html=True)
-            st.markdown(f'<div class="radar-container"><div class="radar {clase_radar}"><div class="radar-center"><div class="radar-number {clase_numero}">{segundos_restantes}</div><div class="radar-label">SEGUNDOS</div></div></div></div>', unsafe_allow_html=True)
-            time_module.sleep(0.3)
-            st.rerun()
+if minuto_es_par:
+    if segundo_actual < 55:
+        html_dinamico += f"""
+        <div class="signal-box signal-wait">📊 ESCANEANDO MERCADO...</div>
+        <div class="info-panel">⏱️ Próxima señal en: <strong>{55 - segundo_actual}s</strong></div>
+        <div class="radar-container"><div class="radar radar-yellow"><div class="radar-center"><div class="radar-number radar-number-yellow">IA</div><div class="radar-label">ACTIVA</div></div></div></div>
+        """
+        pantalla_dinamica.markdown(html_dinamico, unsafe_allow_html=True)
+        time_module.sleep(1)
+        st.rerun()
     else:
-        if st.session_state.estado != 'operando':
-            st.session_state.estado = 'operando'
-            st.session_state.precio_real_entrada = obtener_precio_actual(codigo, tipo)
+        if st.session_state.senal is None or st.session_state.estado != 'senal':
+            st.session_state.senal = analizar_par(codigo, tipo)
+            st.session_state.estado = 'senal'
         
         señal = st.session_state.senal
-        if señal is None:
-            señal = {'señal': 'CALL', 'confianza': 60, 'razon': "Esperando"}
-        
         es_call = señal['señal'] == 'CALL'
-        segundos_restantes_op = 59 - segundo_actual
+        segundos_restantes = 59 - segundo_actual
+        
+        if not st.session_state.voz_reproducida:
+            if es_call:
+                reproducir_voz(f"Atención. Señal de compra. Confianza {int(señal['confianza'])} por ciento.")
+            else:
+                reproducir_voz(f"Atención. Señal de venta. Confianza {int(señal['confianza'])} por ciento.")
+            st.session_state.voz_reproducida = True
         
         clase_box = "signal-call" if es_call else "signal-put"
         clase_radar = "radar-green" if es_call else "radar-red"
         clase_numero = "radar-number-green" if es_call else "radar-number-red"
-        tipo_signal = "🟢 EN CURSO (CALL)" if es_call else "🔴 EN CURSO (PUT)"
+        tipo_signal = "🟢 COMPRA (CALL)" if es_call else "🔴 VENTA (PUT)"
         
-        st.markdown(f'<div class="signal-box {clase_box}">{tipo_signal}</div>', unsafe_allow_html=True)
-        if st.session_state.precio_real_entrada:
-            st.markdown(f'<div class="info-panel">Entrada: <strong>{round(st.session_state.precio_real_entrada, 5)}</strong></div>', unsafe_allow_html=True)
-        st.markdown(f'<div class="radar-container"><div class="radar {clase_radar}"><div class="radar-center"><div class="radar-number {clase_numero}">{segundos_restantes_op}</div><div class="radar-label">EXPIRACIÓN</div></div></div></div>', unsafe_allow_html=True)
-        
-        if segundo_actual >= 58 and not st.session_state.resultado_guardado:
-            if st.session_state.precio_real_entrada and st.session_state.precio_real_entrada > 0:
-                precio_actual = obtener_precio_actual(codigo, tipo)
-                resultado_interno = 'PERDIDA'
-                if precio_actual is not None:
-                    if es_call and precio_actual > st.session_state.precio_real_entrada:
-                        resultado_interno = 'GANADA'
-                    elif not es_call and precio_actual < st.session_state.precio_real_entrada:
-                        resultado_interno = 'GANADA'
-                aprender_en_segundo_plano(señal['señal'], resultado_interno, señal.get('indicadores', {}), st.session_state.precio_real_entrada)
-                st.session_state.pesos = cargar_patrones()
-            st.session_state.resultado_guardado = True
-        time_module.sleep(0.5)
+        html_dinamico += f"""
+        <div class="signal-box {clase_box}">{tipo_signal}</div>
+        <div class="info-panel">Confianza IA: <strong>{señal["confianza"]:.0f}%</strong> | <strong>{señal["razon"]}</strong></div>
+        <div class="radar-container"><div class="radar {clase_radar}"><div class="radar-center"><div class="radar-number {clase_numero}">{segundos_restantes}</div><div class="radar-label">SEGUNDOS</div></div></div></div>
+        """
+        pantalla_dinamica.markdown(html_dinamico, unsafe_allow_html=True)
+        time_module.sleep(0.3)
         st.rerun()
+else:
+    if st.session_state.estado != 'operando':
+        st.session_state.estado = 'operando'
+        st.session_state.precio_real_entrada = obtener_precio_actual(codigo, tipo)
+    
+    señal = st.session_state.senal
+    if señal is None:
+        señal = {'señal': 'CALL', 'confianza': 60, 'razon': "Esperando"}
+    
+    es_call = señal['señal'] == 'CALL'
+    segundos_restantes_op = 59 - segundo_actual
+    
+    clase_box = "signal-call" if es_call else "signal-put"
+    clase_radar = "radar-green" if es_call else "radar-red"
+    clase_numero = "radar-number-green" if es_call else "radar-number-red"
+    tipo_signal = "🟢 EN CURSO (CALL)" if es_call else "🔴 EN CURSO (PUT)"
+    
+    html_dinamico += f"""
+    <div class="signal-box {clase_box}">{tipo_signal}</div>
+    """
+    if st.session_state.precio_real_entrada:
+        html_dinamico += f"""
+        <div class="info-panel">Entrada: <strong>{round(st.session_state.precio_real_entrada, 5)}</strong></div>
+        """
+    html_dinamico += f"""
+    <div class="radar-container"><div class="radar {clase_radar}"><div class="radar-center"><div class="radar-number {clase_numero}">{segundos_restantes_op}</div><div class="radar-label">EXPIRACIÓN</div></div></div></div>
+    """
+    
+    pantalla_dinamica.markdown(html_dinamico, unsafe_allow_html=True)
+    
+    if segundo_actual >= 58 and not st.session_state.resultado_guardado:
+        if st.session_state.precio_real_entrada and st.session_state.precio_real_entrada > 0:
+            precio_actual = obtener_precio_actual(codigo, tipo)
+            resultado_interno = 'PERDIDA'
+            if precio_actual is not None:
+                if es_call and precio_actual > st.session_state.precio_real_entrada:
+                    resultado_interno = 'GANADA'
+                elif not es_call and precio_actual < st.session_state.precio_real_entrada:
+                    resultado_interno = 'GANADA'
+            aprender_en_segundo_plano(señal['señal'], resultado_interno, señal.get('indicadores', {}), st.session_state.precio_real_entrada)
+            st.session_state.pesos = cargar_patrones()
+        st.session_state.resultado_guardado = True
+    time_module.sleep(0.5)
+    st.rerun()
 
 st.markdown('</div>', unsafe_allow_html=True)
