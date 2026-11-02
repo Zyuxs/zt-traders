@@ -196,7 +196,7 @@ def obtener_precio_actual(codigo_par, tipo='crypto', df_actual=None):
     return None
 
 # ==========================================
-# 🔊 SISTEMA DE VOZ (Solo alerta si >= 70%)
+# 🔊 SISTEMA DE VOZ (Alerta si >= 70%)
 # ==========================================
 def reproducir_voz(mensaje):
     m = mensaje.replace("'", "\\'").replace('"', '\\"')
@@ -205,12 +205,14 @@ def reproducir_voz(mensaje):
     (function() {{
         if ('speechSynthesis' in window) {{
             window.speechSynthesis.cancel();
-            const msg = new SpeechSynthesisUtterance('{m}');
-            msg.lang = 'es-ES';
-            msg.rate = 1.0;
-            msg.pitch = 1.1;
-            msg.volume = 1.0;
-            window.speechSynthesis.speak(msg);
+            setTimeout(function() {{
+                const msg = new SpeechSynthesisUtterance('{m}');
+                msg.lang = 'es-ES';
+                msg.rate = 1.0;
+                msg.pitch = 1.1;
+                msg.volume = 1.0;
+                window.speechSynthesis.speak(msg);
+            }}, 100);
         }}
     }})();
     </script>
@@ -303,7 +305,10 @@ def analizar_par(codigo_par, tipo='crypto', td_symbol=None):
                 confianza = int((confianza + prob_ml) / 2)
                 razones.append(f"🧠 IA: {prob_ml}%")
         
-        return {'señal': direccion, 'confianza': max(45, min(confianza, 95)), 'razon': " | ".join(razones), 'indicadores': indicadores, 'df': df_1m}
+        # Asegurar que confianza esté entre 45 y 95
+        confianza = max(45, min(confianza, 95))
+        
+        return {'señal': direccion, 'confianza': confianza, 'razon': " | ".join(razones), 'indicadores': indicadores, 'df': df_1m}
         
     except Exception as e:
         return {'señal': 'CALL', 'confianza': 50, 'razon': "Señal básica", 'indicadores': {}, 'df': None}
@@ -374,6 +379,9 @@ body { background: #02040a; color: #f1f5f9; font-family: 'Inter', -apple-system,
 .num-red { color: #f87171; text-shadow: 0 0 15px rgba(248,113,113,0.8); }
 .num-yellow { color: #fbbf24; font-size: 16px; letter-spacing: 1px; }
 .meta-panel { background: rgba(15, 23, 42, 0.9); border: 1px solid rgba(0, 255, 136, 0.3); border-radius: 6px; padding: 5px; font-size: 10px; text-align: center; }
+.confianza-display { background: linear-gradient(135deg, #1e3a8a, #0f172a); border: 2px solid #3b82f6; border-radius: 8px; padding: 8px; margin: 6px 0; text-align: center; }
+.confianza-display strong { color: #60a5fa; font-size: 14px; }
+.confianza-display span { color: #fff; font-size: 20px; font-weight: 900; text-shadow: 0 0 10px rgba(59, 130, 246, 0.8); }
 .ml-status { background: rgba(15, 23, 42, 0.9); border: 1px solid #a855f7; border-radius: 6px; padding: 5px; font-size: 10px; text-align: center; margin: 4px 0; }
 .ml-status small { color: #a855f7; font-size: 8px; font-weight: 800; display: block; text-transform: uppercase; }
 .ml-status span { color: #d8b4fe; font-size: 12px; font-weight: 900; }
@@ -465,12 +473,13 @@ if minuto_es_par:
         señal = st.session_state.senal
         es_call = señal['señal'] == 'CALL'
         segundos_restantes = 59 - segundo_actual
+        confianza_actual = int(señal['confianza'])
         
         # 🔊 REPRODUCIR VOZ SOLO SI CONFIANZA >= 70%
         if not st.session_state.voz_reproducida:
-            if señal['confianza'] >= 70:
+            if confianza_actual >= 70:
                 tipo_texto = "COMPRA" if es_call else "VENTA"
-                mensaje = f"Atención. Señal de alta confianza. {tipo_texto}. {int(señal['confianza'])} por ciento. Entrar ahora."
+                mensaje = f"Atención. Señal de alta confianza. {tipo_texto}. {confianza_actual} por ciento. Entrar ahora."
                 reproducir_voz(mensaje)
             st.session_state.voz_reproducida = True
         
@@ -479,9 +488,21 @@ if minuto_es_par:
         c_val = "num-green" if es_call else "num-red"
         t_sig = "🟢 COMPRA (CALL)" if es_call else "🔴 VENTA (PUT)"
         
+        # Color del porcentaje según confianza
+        if confianza_actual >= 70:
+            color_confianza = "#00ff88"
+            icono_alerta = "🔊"
+        else:
+            color_confianza = "#fbbf24"
+            icono_alerta = "🔇"
+        
         html_dinamico += textwrap.dedent(f"""
         <div class="signal-banner {c_box}">{t_sig}</div>
-        <div class="meta-panel">Confianza: <strong>{señal["confianza"]:.0f}%</strong> | {señal["razon"]}</div>
+        <div class="confianza-display">
+            <strong>{icono_alerta} CONFIANZA DE LA SEÑAL</strong><br>
+            <span style="color: {color_confianza}; font-size: 28px;">{confianza_actual}%</span>
+        </div>
+        <div class="meta-panel"><strong>Razón:</strong> {señal["razon"]}</div>
         <div class="radar-box"><div class="radar-ring {c_radar}"><div class="radar-content"><div class="radar-num {c_val}">{segundos_restantes}</div><small style="font-size:8px;color:#94a3b8;letter-spacing:1px;">SEGUNDOS</small></div></div></div>
         """)
         pantalla_dinamica.markdown(html_dinamico, unsafe_allow_html=True)
@@ -498,14 +519,26 @@ else:
     
     es_call = señal['señal'] == 'CALL'
     seg_op = 59 - segundo_actual
+    confianza_actual = int(señal['confianza'])
     
     c_box = "signal-call" if es_call else "signal-put"
     c_radar = "ring-green" if es_call else "ring-red"
     c_val = "num-green" if es_call else "num-red"
     t_sig = "🟢 EN CURSO (CALL)" if es_call else "🔴 EN CURSO (PUT)"
     
+    if confianza_actual >= 70:
+        color_confianza = "#00ff88"
+        icono_alerta = "🔊"
+    else:
+        color_confianza = "#fbbf24"
+        icono_alerta = "🔇"
+    
     html_dinamico += textwrap.dedent(f"""
     <div class="signal-banner {c_box}">{t_sig}</div>
+    <div class="confianza-display">
+        <strong>{icono_alerta} CONFIANZA</strong><br>
+        <span style="color: {color_confianza}; font-size: 24px;">{confianza_actual}%</span>
+    </div>
     """)
     if st.session_state.precio_real_entrada:
         html_dinamico += textwrap.dedent(f"""
