@@ -65,7 +65,7 @@ if not st.session_state.licencia_activa:
         key_input = st.text_input("License Key", placeholder="Ingresa tu clave de acceso", type="password")
         submit_key = st.form_submit_button("🚀 CONECTAR TERMINAL", use_container_width=True)
         if submit_key:
-            if key_input == "ADMIN-MASTER-2026":
+            if key_input == "ADMIN-MASTER-2027":
                 st.session_state.licencia_activa = True
                 st.session_state.usuario_actual = "👑 Admin Master"
                 st.query_params["zt_token"] = "admin_master_device"
@@ -124,16 +124,29 @@ def resetear_memoria():
     if os.path.exists(ARCHIVO_PATRONES): os.remove(ARCHIVO_PATRONES)
     st.session_state.pesos = {'total_ops': 0, 'total_ganadas': 0, 'winrate': 0.0}
 
+# ==========================================
+# 🧠 ML CON RESET AUTOMÁTICO SI WINRATE < 40%
+# ==========================================
 def entrenar_modelo_ml():
     try:
         hist = cargar_historial()
-        if len(hist) < 15: return None
+        if len(hist) < 10: return None
+        
+        # AUTO-RESET: Si el winrate es muy bajo, borrar todo
+        ganadas = sum(1 for op in hist if op['resultado'] == 'GANADA')
+        winrate_actual = (ganadas / len(hist)) * 100 if len(hist) > 0 else 0
+        
+        if len(hist) >= 20 and winrate_actual < 40:
+            resetear_memoria()
+            return None
+        
         X, y = [], []
         for op in hist:
             ind = op.get('indicadores', {})
             features = [
                 ind.get('rsi', 50), ind.get('stoch', 50), ind.get('macd_diff', 0),
                 ind.get('bb_pos', 0.5), ind.get('tendencia_5m', 0),
+                ind.get('momentum_1m', 0), ind.get('momentum_3m', 0),
                 1 if ind.get('es_martillo', False) else 0,
                 1 if ind.get('es_estrella_fugaz', False) else 0,
                 1 if ind.get('es_envolvente_alcista', False) else 0,
@@ -142,7 +155,7 @@ def entrenar_modelo_ml():
             ]
             X.append(features)
             y.append(1 if op['resultado'] == 'GANADA' else 0)
-        modelo = RandomForestClassifier(n_estimators=80, max_depth=5, random_state=42, min_samples_split=3)
+        modelo = RandomForestClassifier(n_estimators=100, max_depth=6, random_state=42, min_samples_split=5)
         modelo.fit(X, y)
         return modelo
     except: return None
@@ -153,6 +166,7 @@ def predecir_con_ml(modelo, indicadores, direccion):
             indicadores.get('rsi', 50), indicadores.get('stoch', 50),
             indicadores.get('macd_diff', 0), indicadores.get('bb_pos', 0.5),
             indicadores.get('tendencia_5m', 0),
+            indicadores.get('momentum_1m', 0), indicadores.get('momentum_3m', 0),
             1 if indicadores.get('es_martillo', False) else 0,
             1 if indicadores.get('es_estrella_fugaz', False) else 0,
             1 if indicadores.get('es_envolvente_alcista', False) else 0,
@@ -196,68 +210,15 @@ def obtener_precio_actual(codigo_par, tipo='crypto', df_actual=None):
     return None
 
 # ==========================================
-# 🔊 SISTEMA DE VOZ MEJORADO (Solución definitiva)
+# 🎯 LÓGICA DE FRANCOTIRADOR (Solo con confirmación real)
 # ==========================================
-def reproducir_voz(mensaje):
-    """Reproduce voz usando un iframe grande y visible"""
-    m = mensaje.replace("'", "\\'").replace('"', '\\"')
-    html_voz = f"""
-    <!DOCTYPE html>
-    <html>
-    <head>
-        <meta charset="utf-8">
-        <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    </head>
-    <body style="margin:0;padding:10px;background:#1a1a2e;font-family:Arial;">
-        <div style="color:#00ff88;font-size:14px;font-weight:bold;text-align:center;">
-            🔊 {mensaje}
-        </div>
-        <script>
-        (function() {{
-            if ('speechSynthesis' in window) {{
-                // Cancelar cualquier voz anterior
-                window.speechSynthesis.cancel();
-                
-                // Esperar un poco para que el cancel se procese
-                setTimeout(function() {{
-                    const msg = new SpeechSynthesisUtterance('{m}');
-                    msg.lang = 'es-ES';
-                    msg.rate = 0.9;
-                    msg.pitch = 1.2;
-                    msg.volume = 1.0;
-                    
-                    msg.onstart = function() {{
-                        console.log('Voz iniciada');
-                    }};
-                    
-                    msg.onend = function() {{
-                        console.log('Voz terminada');
-                    }};
-                    
-                    msg.onerror = function(e) {{
-                        console.error('Error de voz:', e);
-                    }};
-                    
-                    window.speechSynthesis.speak(msg);
-                }}, 300);
-            }} else {{
-                console.error('SpeechSynthesis no disponible');
-            }}
-        }})();
-        </script>
-    </body>
-    </html>
-    """
-    # Iframe VISIBLE de 150x80 (no oculto)
-    components.html(html_voz, height=80, width=150)
-
 def analizar_par(codigo_par, tipo='crypto', td_symbol=None):
     try:
         df_1m = obtener_datos_binance(codigo_par, limit=60) if tipo == 'crypto' else obtener_datos_twelvedata(td_symbol, limit=60)
         df_5m = obtener_datos_binance(codigo_par, interval='5m', limit=20) if tipo == 'crypto' else obtener_datos_twelvedata(td_symbol, limit=20)
         
         if df_1m is None or len(df_1m) < 30 or df_5m is None or len(df_5m) < 5: 
-            return {'señal': 'CALL', 'confianza': 50, 'razon': "Sincronizando datos...", 'indicadores': {}, 'df': None}
+            return {'señal': 'ESPERAR', 'confianza': 0, 'razon': "Datos insuficientes", 'indicadores': {}, 'df': None}
         
         c = 'close'
         df_1m['RSI'] = ta.momentum.RSIIndicator(df_1m[c], window=14).rsi()
@@ -268,14 +229,25 @@ def analizar_par(codigo_par, tipo='crypto', td_symbol=None):
         bb = ta.volatility.BollingerBands(df_1m[c], window=20, window_dev=2)
         df_1m['BB_high'] = bb.bollinger_hband()
         df_1m['BB_low'] = bb.bollinger_lband()
+        df_1m['SMA_10'] = df_1m[c].rolling(window=10).mean()
         
         df_5m['SMA_20'] = df_5m[c].rolling(window=20).mean()
         
+        # Calcular momentum (cambio de precio en últimas velas)
+        if len(df_1m) >= 4:
+            momentum_1m = float(df_1m[c].iloc[-1] - df_1m[c].iloc[-2])  # Cambio última vela
+            momentum_3m = float(df_1m[c].iloc[-1] - df_1m[c].iloc[-4])  # Cambio últimas 3 velas
+        else:
+            momentum_1m = 0
+            momentum_3m = 0
+        
         u1 = df_1m.iloc[-1]
         u2 = df_1m.iloc[-2]
+        u3 = df_1m.iloc[-3] if len(df_1m) >= 3 else u2
         
         precio, open_p = float(u1[c]), float(u1['open'])
         open_prev, close_prev = float(u2['open']), float(u2['close'])
+        precio_anterior = float(u2[c])
         
         rsi = float(u1['RSI']) if not pd.isna(u1['RSI']) else 50
         stoch = float(u1['STOCH']) if not pd.isna(u1['STOCH']) else 50
@@ -283,10 +255,12 @@ def analizar_par(codigo_par, tipo='crypto', td_symbol=None):
         macd_sig = float(u1['MACD_signal']) if not pd.isna(u1['MACD_signal']) else 0
         bb_high, bb_low = float(u1['BB_high']), float(u1['BB_low'])
         sma_5m = float(df_5m['SMA_20'].iloc[-1])
+        sma_1m = float(u1['SMA_10'])
         
         bb_pos = (precio - bb_low) / (bb_high - bb_low) if (bb_high - bb_low) > 0 else 0.5
         tendencia_5m = 1 if precio > sma_5m else -1
         
+        # Detectar velas
         cuerpo_actual = abs(precio - open_p)
         mecha_inf = min(open_p, precio) - float(u1['low'])
         mecha_sup = float(u1['high']) - max(open_p, precio)
@@ -296,53 +270,142 @@ def analizar_par(codigo_par, tipo='crypto', td_symbol=None):
         es_envolvente_alcista = (open_prev > close_prev) and (precio > open_prev) and (open_p < close_prev)
         es_envolvente_bajista = (open_prev < close_prev) and (precio < open_prev) and (open_p > close_prev)
         
-        if rsi < 50 or precio <= bb_low or tendencia_5m == 1:
+        # ==========================================
+        # 🎯 NUEVA LÓGICA: Solo operar con CONFIRMACIÓN REAL
+        # ==========================================
+        
+        # Para CALL: Necesitamos ver que el precio ESTÁ SUBIENDO ahora
+        # No basta con RSI bajo, necesitamos momentum positivo
+        
+        call_score = 0
+        put_score = 0
+        
+        # Momentum positivo (precio subiendo en últimas velas)
+        if momentum_1m > 0:
+            call_score += 20
+        elif momentum_1m < 0:
+            put_score += 20
+        
+        if momentum_3m > 0:
+            call_score += 15
+        elif momentum_3m < 0:
+            put_score += 15
+        
+        # Tendencia de 5m
+        if tendencia_5m == 1:
+            call_score += 15
+        else:
+            put_score += 15
+        
+        # RSI en zona de reversión + momentum
+        if rsi < 35 and momentum_1m > 0:  # RSI muy bajo + empezando a subir
+            call_score += 25
+        elif rsi > 65 and momentum_1m < 0:  # RSI muy alto + empezando a bajar
+            put_score += 25
+        
+        # Bandas de Bollinger + momentum
+        if precio <= bb_low and momentum_1m > 0:
+            call_score += 20
+        elif precio >= bb_high and momentum_1m < 0:
+            put_score += 20
+        
+        # MACD cruzando + momentum
+        if macd_diff > macd_sig and momentum_1m > 0:
+            call_score += 15
+        elif macd_diff < macd_sig and momentum_1m < 0:
+            put_score += 15
+        
+        # Velas de reversión
+        if es_martillo and momentum_1m > 0:
+            call_score += 20
+        if es_envolvente_alcista and momentum_1m > 0:
+            call_score += 20
+        if es_estrella_fugaz and momentum_1m < 0:
+            put_score += 20
+        if es_envolvente_bajista and momentum_1m < 0:
+            put_score += 20
+        
+        # Decisión final
+        if call_score > put_score and call_score >= 60:
             direccion = 'CALL'
-        else:
+            confianza = min(call_score, 95)
+        elif put_score > call_score and put_score >= 60:
             direccion = 'PUT'
-        
-        confianza = 50
-        razones = []
-        
-        if direccion == 'CALL':
-            if tendencia_5m == 1: confianza += 10; razones.append("Tendencia 5m+")
-            if rsi < 40: confianza += 15; razones.append("RSI sobreventa")
-            if precio <= bb_low: confianza += 15; razones.append("Banda inferior")
-            if macd_diff > macd_sig: confianza += 10; razones.append("MACD+")
-            if stoch < 30: confianza += 5; razones.append("Stoch bajo")
-            if es_martillo: confianza += 15; razones.append("🔨 Martillo")
-            if es_envolvente_alcista: confianza += 15; razones.append("📈 Envolvente+")
+            confianza = min(put_score, 95)
         else:
-            if tendencia_5m == -1: confianza += 10; razones.append("Tendencia 5m-")
-            if rsi > 60: confianza += 15; razones.append("RSI sobrecompra")
-            if precio >= bb_high: confianza += 15; razones.append("Banda superior")
-            if macd_diff < macd_sig: confianza += 10; razones.append("MACD-")
-            if stoch > 70: confianza += 5; razones.append("Stoch alto")
-            if es_estrella_fugaz: confianza += 15; razones.append("⭐ Estrella Fugaz")
-            if es_envolvente_bajista: confianza += 15; razones.append("📉 Envolvente-")
+            return {'señal': 'ESPERAR', 'confianza': 0, 'razon': "Sin confirmación clara", 'indicadores': {}, 'df': None}
         
-        if not razones: razones.append("Señal básica")
+        razones = []
+        if direccion == 'CALL':
+            if momentum_1m > 0: razones.append("Momentum +")
+            if tendencia_5m == 1: razones.append("Tendencia 5m+")
+            if rsi < 35: razones.append("RSI sobreventa")
+            if precio <= bb_low: razones.append("Banda inferior")
+            if macd_diff > macd_sig: razones.append("MACD+")
+            if es_martillo: razones.append("🔨 Martillo")
+            if es_envolvente_alcista: razones.append("📈 Envolvente+")
+        else:
+            if momentum_1m < 0: razones.append("Momentum -")
+            if tendencia_5m == -1: razones.append("Tendencia 5m-")
+            if rsi > 65: razones.append("RSI sobrecompra")
+            if precio >= bb_high: razones.append("Banda superior")
+            if macd_diff < macd_sig: razones.append("MACD-")
+            if es_estrella_fugaz: razones.append("⭐ Estrella Fugaz")
+            if es_envolvente_bajista: razones.append("📉 Envolvente-")
         
         indicadores = {
             'rsi': rsi, 'stoch': stoch, 'macd_diff': macd_diff, 
             'bb_pos': bb_pos, 'tendencia_5m': tendencia_5m,
+            'momentum_1m': momentum_1m, 'momentum_3m': momentum_3m,
             'es_martillo': es_martillo, 'es_estrella_fugaz': es_estrella_fugaz,
             'es_envolvente_alcista': es_envolvente_alcista, 'es_envolvente_bajista': es_envolvente_bajista
         }
         
+        # ML boost
         modelo_ml = entrenar_modelo_ml()
         if modelo_ml is not None:
             prob_ml = predecir_con_ml(modelo_ml, indicadores, direccion)
-            if prob_ml is not None:
+            if prob_ml is not None and prob_ml > 55:
                 confianza = int((confianza + prob_ml) / 2)
                 razones.append(f"🧠 IA: {prob_ml}%")
         
-        confianza = max(45, min(confianza, 95))
-        
-        return {'señal': direccion, 'confianza': confianza, 'razon': " | ".join(razones), 'indicadores': indicadores, 'df': df_1m}
+        return {'señal': direccion, 'confianza': max(60, min(confianza, 95)), 'razon': " | ".join(razones), 'indicadores': indicadores, 'df': df_1m}
         
     except Exception as e:
-        return {'señal': 'CALL', 'confianza': 50, 'razon': "Señal básica", 'indicadores': {}, 'df': None}
+        return {'señal': 'ESPERAR', 'confianza': 0, 'razon': f"Error: {str(e)[:20]}", 'indicadores': {}, 'df': None}
+
+# ==========================================
+# 🔊 SISTEMA DE VOZ
+# ==========================================
+def reproducir_voz(mensaje):
+    m = mensaje.replace("'", "\\'").replace('"', '\\"')
+    html_voz = f"""
+    <!DOCTYPE html>
+    <html>
+    <head><meta charset="utf-8"></head>
+    <body style="margin:0;padding:10px;background:#1a1a2e;font-family:Arial;">
+        <div style="color:#00ff88;font-size:14px;font-weight:bold;text-align:center;">
+            🔊 {mensaje}
+        </div>
+        <script>
+        (function() {{
+            if ('speechSynthesis' in window) {{
+                window.speechSynthesis.cancel();
+                setTimeout(function() {{
+                    const msg = new SpeechSynthesisUtterance('{m}');
+                    msg.lang = 'es-ES';
+                    msg.rate = 0.9;
+                    msg.pitch = 1.2;
+                    msg.volume = 1.0;
+                    window.speechSynthesis.speak(msg);
+                }}, 300);
+            }}
+        }})();
+        </script>
+    </body>
+    </html>
+    """
+    components.html(html_voz, height=80, width=150)
 
 PARES = {
     'Bitcoin': {'codigo': 'BTCUSDT', 'tipo': 'crypto', 'td': 'BTC/USD'},
@@ -417,25 +480,17 @@ body { background: #02040a; color: #f1f5f9; font-family: 'Inter', -apple-system,
 .ml-status { background: rgba(15, 23, 42, 0.9); border: 1px solid #a855f7; border-radius: 6px; padding: 5px; font-size: 10px; text-align: center; margin: 4px 0; }
 .ml-status small { color: #a855f7; font-size: 8px; font-weight: 800; display: block; text-transform: uppercase; }
 .ml-status span { color: #d8b4fe; font-size: 12px; font-weight: 900; }
-.btn-voz { background: linear-gradient(135deg, #7c3aed, #5b21b6); color: white; border: none; border-radius: 8px; padding: 12px; font-size: 13px; font-weight: 900; cursor: pointer; width: 100%; margin: 4px 0; text-transform: uppercase; letter-spacing: 1px; box-shadow: 0 0 20px rgba(124, 58, 237, 0.5); animation: pulse-btn 2s infinite; }
-@keyframes pulse-btn { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.02); } }
 </style>
 """
 st.markdown(CSS, unsafe_allow_html=True)
 
 st.markdown('<div class="terminal-container">', unsafe_allow_html=True)
-st.markdown(f'<div class="term-header"><div class="term-title">⚡ ZT TRADERS PRO</div><div class="term-sub">OPERADOR: {st.session_state.usuario_actual} | IA + VOZ ACTIVA</div></div>', unsafe_allow_html=True)
+st.markdown(f'<div class="term-header"><div class="term-title">⚡ ZT TRADERS PRO</div><div class="term-sub">OPERADOR: {st.session_state.usuario_actual} | FRANCOTIRADOR v2.0</div></div>', unsafe_allow_html=True)
 
-# ==========================================
-# 🔊 BOTÓN PARA ACTIVAR VOZ (OBLIGATORIO)
-# ==========================================
 if not st.session_state.voz_activada:
-    st.markdown('<div style="background:#7c3aed;padding:10px;border-radius:8px;margin:8px 0;text-align:center;color:white;font-weight:bold;">⚠️ DEBES ACTIVAR LA VOZ PRIMERO</div>', unsafe_allow_html=True)
-    if st.button("🔊 ACTIVAR SISTEMA DE VOZ (TOCAR UNA VEZ)", key="btn_activar_voz", use_container_width=True):
-        reproducir_voz("Sistema de voz activado correctamente. Z T Traders listo para operar.")
+    if st.button("🔊 ACTIVAR VOZ (TOCAR 1 VEZ)", key="btn_activar_voz", use_container_width=True):
+        reproducir_voz("Sistema de voz activado. Z T Traders listo.")
         st.session_state.voz_activada = True
-        st.success("✅ Voz activada. Ahora escucharás las señales de alta confianza.")
-        time_module.sleep(2)
         st.rerun()
 
 es_admin = (st.session_state.usuario_actual == "👑 Admin Master")
@@ -472,16 +527,15 @@ hist = cargar_historial()
 ops, ganadas = st.session_state.pesos['total_ops'], st.session_state.pesos['total_ganadas']
 winrate = round(st.session_state.pesos['winrate'], 1)
 modelo_ml = entrenar_modelo_ml()
-ml_status = "🟢 APRENDIENDO" if modelo_ml else f"🟡 Recopilando ({len(hist)}/15)"
+ml_status = "🟢 APRENDIENDO" if modelo_ml else f"🟡 Recopilando ({len(hist)}/10)"
 
 st.markdown(f"""
 <div class="metrics-grid">
     <div class="metric-card"><small>Winrate</small><span>{winrate}%</span></div>
     <div class="metric-card"><small>Ops</small><span>{ops}</span></div>
     <div class="metric-card"><small>Win</small><span>{ganadas}</span></div>
-    <div class="metric-card"><small>IA</small><span>{len(hist)} ops</span></div>
+    <div class="metric-card"><small>IA</small><span>{ml_status}</span></div>
 </div>
-<div class="ml-status"><small>Estado del Cerebro IA</small><span>{ml_status}</span></div>
 """, unsafe_allow_html=True)
 
 pantalla_dinamica = st.empty()
@@ -502,7 +556,7 @@ html_dinamico = f'<div class="clock-display"><span>🕐 {hora_actual}</span></di
 if minuto_es_par:
     if segundo_actual < 55:
         html_dinamico += textwrap.dedent(f"""
-        <div class="signal-banner signal-wait">📊 ANALIZANDO PRICE ACTION...</div>
+        <div class="signal-banner signal-wait">📊 ANALIZANDO CONFLUENCIA...</div>
         <div class="meta-panel">⏱️ Escaneo en: <strong>{55 - segundo_actual}s</strong></div>
         <div class="radar-box"><div class="radar-ring ring-yellow"><div class="radar-content"><div class="radar-num num-yellow">IA ACTIVA</div><small style="font-size:8px;color:#94a3b8;letter-spacing:1px;">ESCANEO</small></div></div></div>
         """)
@@ -517,15 +571,25 @@ if minuto_es_par:
             st.session_state.estado = 'senal'
         
         señal = st.session_state.senal
+        
+        if señal['señal'] == 'ESPERAR':
+            html_dinamico += textwrap.dedent(f"""
+            <div class="signal-banner signal-wait">⏳ SIN CONFLUENCIA</div>
+            <div class="meta-panel">Esperando confirmación real...</div>
+            <div class="radar-box"><div class="radar-ring ring-yellow"><div class="radar-content"><div class="radar-num num-yellow">ESPERA</div><small style="font-size:8px;color:#94a3b8;letter-spacing:1px;">SIN SEÑAL</small></div></div></div>
+            """)
+            pantalla_dinamica.markdown(html_dinamico, unsafe_allow_html=True)
+            time_module.sleep(0.5)
+            st.rerun()
+        
         es_call = señal['señal'] == 'CALL'
         segundos_restantes = 59 - segundo_actual
         confianza_actual = int(señal['confianza'])
         
-        # 🔊 REPRODUCIR VOZ SOLO SI CONFIANZA >= 70%
         if not st.session_state.voz_reproducida and st.session_state.voz_activada:
             if confianza_actual >= 70:
                 tipo_texto = "COMPRA" if es_call else "VENTA"
-                mensaje = f"Atención. Señal de alta confianza. {tipo_texto}. {confianza_actual} por ciento. Entrar ahora."
+                mensaje = f"Atención. Señal confirmada. {tipo_texto}. {confianza_actual} por ciento. Entrar ahora."
                 reproducir_voz(mensaje)
             st.session_state.voz_reproducida = True
         
@@ -544,10 +608,10 @@ if minuto_es_par:
         html_dinamico += textwrap.dedent(f"""
         <div class="signal-banner {c_box}">{t_sig}</div>
         <div class="confianza-display">
-            <strong>{icono_alerta} CONFIANZA DE LA SEÑAL</strong><br>
+            <strong>{icono_alerta} CONFIANZA CONFIRMADA</strong><br>
             <span style="color: {color_confianza}; font-size: 28px;">{confianza_actual}%</span>
         </div>
-        <div class="meta-panel"><strong>Razón:</strong> {señal["razon"]}</div>
+        <div class="meta-panel"><strong>Confirmación:</strong> {señal["razon"]}</div>
         <div class="radar-box"><div class="radar-ring {c_radar}"><div class="radar-content"><div class="radar-num {c_val}">{segundos_restantes}</div><small style="font-size:8px;color:#94a3b8;letter-spacing:1px;">SEGUNDOS</small></div></div></div>
         """)
         pantalla_dinamica.markdown(html_dinamico, unsafe_allow_html=True)
@@ -559,8 +623,14 @@ else:
         st.session_state.precio_real_entrada = obtener_precio_actual(codigo, tipo, df_actual=st.session_state.df_cache)
     
     señal = st.session_state.senal
-    if señal is None:
-        señal = {'señal': 'CALL', 'confianza': 50, 'razon': "Esperando"}
+    if señal is None or señal.get('señal') == 'ESPERAR':
+        html_dinamico += textwrap.dedent(f"""
+        <div class="signal-banner signal-wait">⏸️ SIN OPERACIÓN</div>
+        <div class="radar-box"><div class="radar-ring ring-yellow"><div class="radar-content"><div class="radar-num num-yellow">--</div><small style="font-size:8px;color:#94a3b8;letter-spacing:1px;">ESPERA</small></div></div></div>
+        """)
+        pantalla_dinamica.markdown(html_dinamico, unsafe_allow_html=True)
+        time_module.sleep(0.5)
+        st.rerun()
     
     es_call = señal['señal'] == 'CALL'
     seg_op = 59 - segundo_actual
@@ -587,7 +657,7 @@ else:
     """)
     if st.session_state.precio_real_entrada:
         html_dinamico += textwrap.dedent(f"""
-        <div class="meta-panel">Precio: <strong>{round(st.session_state.precio_real_entrada, 5)}</strong></div>
+        <div class="meta-panel">Precio Entrada: <strong>{round(st.session_state.precio_real_entrada, 5)}</strong></div>
         """)
     html_dinamico += textwrap.dedent(f"""
     <div class="radar-box"><div class="radar-ring {c_radar}"><div class="radar-content"><div class="radar-num {c_val}">{seg_op}</div><small style="font-size:8px;color:#94a3b8;letter-spacing:1px;">EXPIRACIÓN</small></div></div></div>
