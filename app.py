@@ -17,7 +17,6 @@ from sklearn.ensemble import RandomForestClassifier
 # ==========================================
 st.set_page_config(page_title="ZT TRADERS INSTITUTIONAL PRO", layout="centered", page_icon="⚡")
 
-# NOTA: Es recomendable mover esto a variables de entorno o st.secrets
 TWELVE_DATA_API_KEY = "03f557e7efa24c3889042680d2039aee"
 
 ARCHIVO_HISTORIAL = "historial.json"
@@ -43,7 +42,7 @@ if 'usuario_actual' not in st.session_state: st.session_state.usuario_actual = "
 params = st.query_params
 device_token = params.get("zt_token", None)
 
-# Lógica de Login (Simplificada para mantener el flujo)
+# Lógica de Login
 if device_token and not st.session_state.licencia_activa:
     licencias = cargar_licencias()
     if device_token == "admin_master_device":
@@ -66,10 +65,10 @@ if not st.session_state.licencia_activa:
     .login-title { color: #00ff88; font-size: 24px; font-weight: 900; }
     </style>
     """, unsafe_allow_html=True)
-    st.markdown('<div class="login-card"><div class="login-title">⚡ ZT TRADERS</div><div style="color:#64748b; font-size:10px;">Terminal Institucional Privada</div></div>', unsafe_allow_html=True)
+    st.markdown('<div class="login-card"><div class="login-title"> ZT TRADERS</div><div style="color:#64748b; font-size:10px;">Terminal Institucional Privada</div></div>', unsafe_allow_html=True)
     with st.form("licencia_form"):
         key_input = st.text_input("License Key", type="password")
-        submit_key = st.form_submit_button("🚀 CONECTAR TERMINAL", use_container_width=True)
+        submit_key = st.form_submit_button(" CONECTAR TERMINAL", use_container_width=True)
         if submit_key:
             if key_input == "ADMIN-MASTER-2027":
                 st.session_state.licencia_activa = True
@@ -93,7 +92,7 @@ if not st.session_state.licencia_activa:
                             st.session_state.usuario_actual = f"Licencia ({key_input[:8]}...)"
                             st.rerun()
                     else: st.error("❌ Key expirada o inválida.")
-                else: st.error("❌ Key no encontrada.")
+                else: st.error(" Key no encontrada.")
     st.stop()
 
 # ==========================================
@@ -125,7 +124,7 @@ def resetear_memoria():
     st.session_state.pesos = {'total_ops': 0, 'total_ganadas': 0, 'winrate': 0.0}
 
 # ==========================================
-# 🧠 MODELO DE MACHINE LEARNING (MEJORADO)
+# 🧠 MODELO DE MACHINE LEARNING (OPTIMIZADO)
 # ==========================================
 def entrenar_modelo_ml():
     try:
@@ -135,6 +134,7 @@ def entrenar_modelo_ml():
         ganadas = sum(1 for op in hist if op['resultado'] == 'GANADA')
         winrate_actual = (ganadas / len(hist)) * 100 if len(hist) > 0 else 0
         
+        # AUTO-RESET si el winrate es muy bajo después de 30 operaciones
         if len(hist) >= 30 and winrate_actual < 35:
             resetear_memoria()
             return None
@@ -142,14 +142,13 @@ def entrenar_modelo_ml():
         X, y = [], []
         for op in hist:
             ind = op.get('indicadores', {})
-            # Mejoras en Features: Usar cambios relativos (deltas)
             features = [
                 ind.get('rsi', 50), 
-                ind.get('rsi_change', 0), # NUEVO: Cambio del RSI
+                ind.get('rsi_change', 0),
                 ind.get('stoch', 50),
                 ind.get('macd_diff', 0),
                 ind.get('bb_pos', 0.5),
-                ind.get('vol_conf', 0.5), # NUEVO: Confirmación de volumen
+                ind.get('vol_conf', 0.5),
                 1 if ind.get('es_martillo', False) else 0,
                 1 if ind.get('es_estrella_fugaz', False) else 0,
                 1 if ind.get('es_envolvente_alcista', False) else 0,
@@ -159,7 +158,8 @@ def entrenar_modelo_ml():
             X.append(features)
             y.append(1 if op['resultado'] == 'GANADA' else 0)
         
-        modelo = RandomForestClassifier(n_estimators=150, max_depth=8, random_state=42)
+        # Parámetros optimizados para evitar sobreajuste
+        modelo = RandomForestClassifier(n_estimators=100, max_depth=6, random_state=42, min_samples_split=3)
         modelo.fit(X, y)
         return modelo
     except: return None
@@ -236,8 +236,6 @@ def analizar_par(codigo_par, tipo='crypto', td_symbol=None):
         df_1m['BB_high'] = bb.bollinger_hband()
         df_1m['BB_low'] = bb.bollinger_lband()
         df_1m['SMA_10'] = df_1m[c].rolling(window=10).mean()
-        
-        # ATR para medir volatilidad
         df_1m['ATR'] = ta.volatility.AverageTrueRange(df_1m['high'], df_1m['low'], df_1m[c], window=14).average_true_range()
         
         df_5m['SMA_20'] = df_5m[c].rolling(window=20).mean()
@@ -269,7 +267,6 @@ def analizar_par(codigo_par, tipo='crypto', td_symbol=None):
         
         bb_pos = (precio - bb_low) / (bb_high - bb_low) if (bb_high - bb_low) > 0 else 0.5
         tendencia_5m = 1 if precio > sma_5m else -1
-        # Confirmación de Volumen (Real vs Promedio)
         vol_conf = 1 if vol_actual > vol_ma else 0
 
         cuerpo_actual = abs(precio - open_p)
@@ -329,7 +326,7 @@ def analizar_par(codigo_par, tipo='crypto', td_symbol=None):
             if precio <= bb_low: razones.append("BB")
             if vol_conf == 1: razones.append("Vol+")
             if es_martillo: razones.append("🔨")
-            if es_envolvente_alcista: razones.append("📈")
+            if es_envolvente_alcista: razones.append("")
         else:
             if momentum_1m < 0: razones.append("Mom-")
             if tendencia_5m == -1: razones.append("T5m-")
@@ -384,17 +381,37 @@ def reproducir_voz(mensaje):
     components.html(html_voz, height=80, width=150)
 
 # ==========================================
-# INTERFAZ Y LÓGICA DE EJECUCIÓN
+# TODOS LOS 23 PARES DISPONIBLES
 # ==========================================
 PARES = {
     'Bitcoin': {'codigo': 'BTCUSDT', 'tipo': 'crypto', 'td': 'BTC/USD'},
     'Ethereum': {'codigo': 'ETHUSDT', 'tipo': 'crypto', 'td': 'ETH/USD'},
     'Solana': {'codigo': 'SOLUSDT', 'tipo': 'crypto', 'td': 'SOL/USD'},
+    'Polkadot': {'codigo': 'DOTUSDT', 'tipo': 'crypto', 'td': 'DOT/USD'},
+    'Worldcoin': {'codigo': 'WLDUSDT', 'tipo': 'crypto', 'td': 'WLD/USD'},
+    'Binance Coin': {'codigo': 'BNBUSDT', 'tipo': 'crypto', 'td': 'BNB/USD'},
+    'Cardano': {'codigo': 'ADAUSDT', 'tipo': 'crypto', 'td': 'ADA/USD'},
+    'Ripple': {'codigo': 'XRPUSDT', 'tipo': 'crypto', 'td': 'XRP/USD'},
+    'Dogecoin': {'codigo': 'DOGEUSDT', 'tipo': 'crypto', 'td': 'DOGE/USD'},
+    'Polygon': {'codigo': 'MATICUSDT', 'tipo': 'crypto', 'td': 'MATIC/USD'},
+    'Litecoin': {'codigo': 'LTCUSDT', 'tipo': 'crypto', 'td': 'LTC/USD'},
     'EUR/USD': {'codigo': 'EURUSD=X', 'tipo': 'forex', 'td': 'EUR/USD'},
     'GBP/USD': {'codigo': 'GBPUSD=X', 'tipo': 'forex', 'td': 'GBP/USD'},
-    'USD/JPY': {'codigo': 'USDJPY=X', 'tipo': 'forex', 'td': 'USD/JPY'}
+    'USD/JPY': {'codigo': 'USDJPY=X', 'tipo': 'forex', 'td': 'USD/JPY'},
+    'AUD/USD': {'codigo': 'AUDUSD=X', 'tipo': 'forex', 'td': 'AUD/USD'},
+    'EUR/JPY': {'codigo': 'EURJPY=X', 'tipo': 'forex', 'td': 'EUR/JPY'},
+    'AUD/CAD': {'codigo': 'AUDCAD=X', 'tipo': 'forex', 'td': 'AUD/CAD'},
+    'EUR/GBP': {'codigo': 'EURGBP=X', 'tipo': 'forex', 'td': 'EUR/GBP'},
+    'GBP/JPY': {'codigo': 'GBPJPY=X', 'tipo': 'forex', 'td': 'GBP/JPY'},
+    'NZD/USD': {'codigo': 'NZDUSD=X', 'tipo': 'forex', 'td': 'NZD/USD'},
+    'USD/CAD': {'codigo': 'USDCAD=X', 'tipo': 'forex', 'td': 'USD/CAD'},
+    'USD/CHF': {'codigo': 'USDCHF=X', 'tipo': 'forex', 'td': 'USD/CHF'},
+    'AUD/JPY': {'codigo': 'AUDJPY=X', 'tipo': 'forex', 'td': 'AUD/JPY'}
 }
 
+# ==========================================
+# INTERFAZ Y LÓGICA DE EJECUCIÓN
+# ==========================================
 if 'estado' not in st.session_state: st.session_state.estado = 'analizando'
 if 'par_sel' not in st.session_state: st.session_state.par_sel = 'Bitcoin'
 if 'senal' not in st.session_state: st.session_state.senal = None
@@ -466,7 +483,7 @@ tv_symbol = f"BINANCE:{codigo}" if tipo == 'crypto' else f"FX:{codigo.replace('=
 widget_html = f"""
 <div class="tradingview-widget-container" style="height:190px;width:100%">
   <div class="tradingview-widget-container__widget" style="height:100%;width:100%"></div>
-  <script type="text/javascript" src="https://s3.tradingview.com/external_embedding/embed-widget-advanced-chart.js" async>
+  <script type="text/javascript" src="https://s3.tradingview.com/external-embedding/embed-widget-advanced-chart.js" async>
   {{"width": "100%", "height": "190", "symbol": "{tv_symbol}", "interval": "1", "timezone": "Etc/UTC", "theme": "dark", "style": "1", "locale": "es", "enable_publishing": false, "hide_top_toolbar": true, "hide_legend": true, "save_image": false, "calendar": false, "hide_volume": true, "support_host": "https://www.tradingview.com"}}
   </script>
 </div>
@@ -478,7 +495,7 @@ hist = cargar_historial()
 ops, ganadas = st.session_state.pesos['total_ops'], st.session_state.pesos['total_ganadas']
 winrate = round(st.session_state.pesos['winrate'], 1)
 modelo_ml = entrenar_modelo_ml()
-ml_status = "🟢 APRENDIENDO" if modelo_ml else f"🟡 Recopilando ({len(hist)}/15)"
+ml_status = "🟢 APRENDIENDO" if modelo_ml else f" Recopilando ({len(hist)}/15)"
 
 st.markdown(f"""
 <div class="metrics-grid">
@@ -526,7 +543,7 @@ if minuto_es_par:
         
         if señal['señal'] == 'ESPERAR':
             html_dinamico += textwrap.dedent(f"""
-            <div class="signal-banner signal-wait">⏳ SIN CONFLUENCIA</div>
+            <div class="signal-banner signal-wait"> SIN CONFLUENCIA</div>
             <div class="meta-panel">Esperando confirmación real...</div>
             <div class="radar-box"><div class="radar-ring ring-yellow"><div class="radar-content"><div class="radar-num num-yellow">ESPERA</div><small style="font-size:8px;color:#94a3b8;letter-spacing:1px;">SIN SEÑAL</small></div></div></div>
             """)
@@ -548,7 +565,7 @@ if minuto_es_par:
         c_box = "signal-call" if es_call else "signal-put"
         c_radar = "ring-green" if es_call else "ring-red"
         c_val = "num-green" if es_call else "num-red"
-        t_sig = "🟢 COMPRA (CALL)" if es_call else "🔴 VENTA (PUT)"
+        t_sig = "🟢 COMPRA (CALL)" if es_call else " VENTA (PUT)"
         
         color_confianza = "#00ff88" if confianza_actual >= 70 else "#fbbf24"
         icono_alerta = "🔊" if confianza_actual >= 70 else "🔇"
