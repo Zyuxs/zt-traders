@@ -360,6 +360,7 @@ if 'precio_real_entrada' not in st.session_state: st.session_state.precio_real_e
 if 'voz_reproducida' not in st.session_state: st.session_state.voz_reproducida = False
 if 'df_cache' not in st.session_state: st.session_state.df_cache = None
 if 'voz_activada' not in st.session_state: st.session_state.voz_activada = False
+if 'html_contenido' not in st.session_state: st.session_state.html_contenido = ""
 
 CSS = """
 <style>
@@ -456,9 +457,8 @@ st.markdown(f"""
 """, unsafe_allow_html=True)
 
 # ==========================================
-# 🎯 CICLO DE TIEMPO - UN SOLO CRONÓMETRO
+# 🎯 CICLO DE TIEMPO - SOLUCIÓN DEFINITIVA
 # ==========================================
-pantalla_dinamica = st.empty()
 ahora = datetime.now()
 hora_actual = ahora.strftime('%H:%M:%S')
 minuto_actual, segundo_actual = ahora.minute, ahora.second
@@ -471,24 +471,22 @@ elif st.session_state.minuto_anterior != minuto_actual:
     st.session_state.voz_reproducida = False
     st.session_state.minuto_anterior = minuto_actual
 
-# 🔑 CLAVE: Limpiar pantalla ANTES de renderizar
-pantalla_dinamica.empty()
+# Construir HTML en UNA sola variable
+html_contenido = f'<div class="clock-display"><span>🕐 {hora_actual}</span></div>'
 
-# Construir HTML base (reloj siempre visible)
-html_dinamico = f'<div class="clock-display"><span>🕐 {hora_actual}</span></div>'
-
-# FASE 1: ANÁLISIS (minutos pares, segundos 0-54)
+# FASE 1: ANÁLISIS
 if minuto_es_par and segundo_actual < 55:
-    html_dinamico += textwrap.dedent(f"""
+    html_contenido += textwrap.dedent(f"""
     <div class="signal-banner signal-wait">📊 ANALIZANDO CONFLUENCIA...</div>
     <div class="meta-panel">⏱️ Escaneo en: <strong>{55 - segundo_actual}s</strong></div>
     <div class="radar-box"><div class="radar-ring ring-yellow"><div class="radar-content"><div class="radar-num num-yellow">IA ACTIVA</div><small style="font-size:8px;color:#94a3b8;letter-spacing:1px;">ESCANEO</small></div></div></div>
     """)
-    pantalla_dinamica.markdown(html_dinamico, unsafe_allow_html=True)
+    st.session_state.html_contenido = html_contenido
+    st.markdown(html_contenido, unsafe_allow_html=True)
     time_module.sleep(1)
     st.rerun()
 
-# FASE 2: SEÑAL (minutos pares, segundos 55-59)
+# FASE 2: SEÑAL
 elif minuto_es_par and segundo_actual >= 55:
     if st.session_state.senal is None or st.session_state.estado != 'senal':
         res_analisis = analizar_par(codigo, tipo, td_symbol)
@@ -499,12 +497,13 @@ elif minuto_es_par and segundo_actual >= 55:
     señal = st.session_state.senal
     
     if señal['señal'] == 'ESPERAR':
-        html_dinamico += textwrap.dedent(f"""
+        html_contenido += textwrap.dedent(f"""
         <div class="signal-banner signal-wait">⏳ SIN CONFLUENCIA</div>
         <div class="meta-panel">Esperando confirmación real...</div>
         <div class="radar-box"><div class="radar-ring ring-yellow"><div class="radar-content"><div class="radar-num num-yellow">ESPERA</div><small style="font-size:8px;color:#94a3b8;letter-spacing:1px;">SIN SEÑAL</small></div></div></div>
         """)
-        pantalla_dinamica.markdown(html_dinamico, unsafe_allow_html=True)
+        st.session_state.html_contenido = html_contenido
+        st.markdown(html_contenido, unsafe_allow_html=True)
         time_module.sleep(0.5)
         st.rerun()
     
@@ -527,7 +526,7 @@ elif minuto_es_par and segundo_actual >= 55:
     color_confianza = "#00ff88" if confianza_actual >= 70 else "#fbbf24"
     icono_alerta = "🔊" if confianza_actual >= 70 else "🔇"
     
-    html_dinamico += textwrap.dedent(f"""
+    html_contenido += textwrap.dedent(f"""
     <div class="signal-banner {c_box}">{t_sig}</div>
     <div class="confianza-display">
         <strong>{icono_alerta} CONFIANZA CONFIRMADA</strong><br>
@@ -536,11 +535,12 @@ elif minuto_es_par and segundo_actual >= 55:
     <div class="meta-panel"><strong>Confirmación:</strong> {señal["razon"]}</div>
     <div class="radar-box"><div class="radar-ring {c_radar}"><div class="radar-content"><div class="radar-num {c_val}">{segundos_restantes}</div><small style="font-size:8px;color:#94a3b8;letter-spacing:1px;">SEGUNDOS</small></div></div></div>
     """)
-    pantalla_dinamica.markdown(html_dinamico, unsafe_allow_html=True)
+    st.session_state.html_contenido = html_contenido
+    st.markdown(html_contenido, unsafe_allow_html=True)
     time_module.sleep(0.5)
     st.rerun()
 
-# FASE 3: OPERACIÓN (minutos impares)
+# FASE 3: OPERACIÓN
 else:
     if st.session_state.estado != 'operando':
         st.session_state.estado = 'operando'
@@ -548,11 +548,12 @@ else:
     
     señal = st.session_state.senal
     if señal is None or señal.get('señal') == 'ESPERAR':
-        html_dinamico += textwrap.dedent(f"""
+        html_contenido += textwrap.dedent(f"""
         <div class="signal-banner signal-wait">⏸️ SIN OPERACIÓN</div>
         <div class="radar-box"><div class="radar-ring ring-yellow"><div class="radar-content"><div class="radar-num num-yellow">--</div><small style="font-size:8px;color:#94a3b8;letter-spacing:1px;">ESPERA</small></div></div></div>
         """)
-        pantalla_dinamica.markdown(html_dinamico, unsafe_allow_html=True)
+        st.session_state.html_contenido = html_contenido
+        st.markdown(html_contenido, unsafe_allow_html=True)
         time_module.sleep(0.5)
         st.rerun()
     
@@ -568,7 +569,7 @@ else:
     color_confianza = "#00ff88" if confianza_actual >= 70 else "#fbbf24"
     icono_alerta = "🔊" if confianza_actual >= 70 else "🔇"
     
-    html_dinamico += textwrap.dedent(f"""
+    html_contenido += textwrap.dedent(f"""
     <div class="signal-banner {c_box}">{t_sig}</div>
     <div class="confianza-display">
         <strong>{icono_alerta} CONFIANZA</strong><br>
@@ -576,14 +577,15 @@ else:
     </div>
     """)
     if st.session_state.precio_real_entrada:
-        html_dinamico += textwrap.dedent(f"""
+        html_contenido += textwrap.dedent(f"""
         <div class="meta-panel">Precio Entrada: <strong>{round(st.session_state.precio_real_entrada, 5)}</strong></div>
         """)
-    html_dinamico += textwrap.dedent(f"""
+    html_contenido += textwrap.dedent(f"""
     <div class="radar-box"><div class="radar-ring {c_radar}"><div class="radar-content"><div class="radar-num {c_val}">{seg_op}</div><small style="font-size:8px;color:#94a3b8;letter-spacing:1px;">EXPIRACIÓN</small></div></div></div>
     """)
     
-    pantalla_dinamica.markdown(html_dinamico, unsafe_allow_html=True)
+    st.session_state.html_contenido = html_contenido
+    st.markdown(html_contenido, unsafe_allow_html=True)
     
     if segundo_actual >= 58 and not st.session_state.resultado_guardado:
         if st.session_state.precio_real_entrada and st.session_state.precio_real_entrada > 0:
