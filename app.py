@@ -18,7 +18,7 @@ ARCHIVO_PATRONES = "patrones.json"
 ARCHIVO_LICENCIAS = "licencias.json"
 
 # ==========================================
-# 🔑 SISTEMA DE LICENCIAS (Ambas claves Admin)
+# 🔑 SISTEMA DE LICENCIAS CON AUTO-LOGIN
 # ==========================================
 def cargar_licencias():
     if os.path.exists(ARCHIVO_LICENCIAS):
@@ -32,12 +32,15 @@ def guardar_licencias(licencias):
         with open(ARCHIVO_LICENCIAS, 'w') as f: json.dump(licencias, f, indent=2)
     except: pass
 
+# Inicializar estado
 if 'licencia_activa' not in st.session_state: st.session_state.licencia_activa = False
 if 'usuario_actual' not in st.session_state: st.session_state.usuario_actual = ""
 
+# Leer parámetros de la URL
 params = st.query_params
 device_token = params.get("zt_token", None)
 
+# 🔧 AUTO-LOGIN: Si hay un token en la URL, validar automáticamente
 if device_token and not st.session_state.licencia_activa:
     licencias = cargar_licencias()
     if device_token == "admin_master_device":
@@ -52,6 +55,40 @@ if device_token and not st.session_state.licencia_activa:
                         st.session_state.usuario_actual = f"Licencia ({k[:8]}...)"
                 except: pass
 
+# ==========================================
+# 💾 SCRIPT DE PERSISTENCIA (LOCALSTORAGE)
+# ==========================================
+# Este script guarda el token en el navegador para que no se pierda al cerrar la pestaña
+def inyectar_auto_login():
+    js_persistencia = """
+    <script>
+    (function() {
+        const urlParams = new URLSearchParams(window.location.search);
+        const currentToken = urlParams.get('zt_token');
+        
+        // 1. Si hay un token en la URL, guardarlo en la memoria del navegador
+        if (currentToken) {
+            localStorage.setItem('zt_device_token', currentToken);
+        } 
+        // 2. Si NO hay token en la URL, pero sí en la memoria del navegador, agregarlo a la URL y recargar
+        else {
+            const savedToken = localStorage.getItem('zt_device_token');
+            if (savedToken && savedToken !== 'null' && savedToken !== '') {
+                urlParams.set('zt_token', savedToken);
+                window.location.search = urlParams.toString();
+            }
+        }
+    })();
+    </script>
+    """
+    components.html(js_persistencia, height=1, width=1)
+
+# Ejecutar el script de auto-login al inicio
+inyectar_auto_login()
+
+# ==========================================
+# 🚪 PANTALLA DE LOGIN (Solo si no está activo)
+# ==========================================
 if not st.session_state.licencia_activa:
     st.markdown("""
     <style>
@@ -62,9 +99,11 @@ if not st.session_state.licencia_activa:
     </style>
     """, unsafe_allow_html=True)
     st.markdown('<div class="login-container"><div class="login-title">⚡ ZT TRADERS</div><div class="login-subtitle">Sistema de Acceso Privado</div>', unsafe_allow_html=True)
+    
     with st.form("login_form", clear_on_submit=False):
         key_input = st.text_input("License Key", type="password", placeholder="Ingresa tu clave")
         submit_key = st.form_submit_button("🚀 CONECTAR TERMINAL", use_container_width=True)
+        
         if submit_key:
             if key_input in ["ADMIN-MASTER-2026", "ADMIN-MASTER-2027"]:
                 st.session_state.licencia_activa = True
@@ -76,24 +115,27 @@ if not st.session_state.licencia_activa:
                 if key_input in licencias:
                     datos = licencias[key_input]
                     if datetime.now().date() <= datetime.strptime(datos['vence'], '%Y-%m-%d').date():
-                        if datos['device_id'] is None:
-                            datos['device_id'] = str(uuid.uuid4())
+                        # 🔧 CORRECCIÓN CLAVE: Si la key existe, usamos su device_id y lo forzamos en la URL
+                        current_token = datos.get('device_id')
+                        if not current_token:
+                            current_token = str(uuid.uuid4())
+                            datos['device_id'] = current_token
                             guardar_licencias(licencias)
-                            st.query_params["zt_token"] = datos['device_id']
-                            st.session_state.licencia_activa = True
-                            st.session_state.usuario_actual = f"Licencia ({key_input[:8]}...)"
-                            st.rerun()
-                        elif device_token == datos['device_id']:
-                            st.session_state.licencia_activa = True
-                            st.session_state.usuario_actual = f"Licencia ({key_input[:8]}...)"
-                            st.rerun()
-                    else: st.error("❌ Key expirada.")
-                else: st.error("❌ Key no encontrada.")
+                        
+                        # Forzar el token en la URL para que el auto-login funcione
+                        st.query_params["zt_token"] = current_token
+                        st.session_state.licencia_activa = True
+                        st.session_state.usuario_actual = f"Licencia ({key_input[:8]}...)"
+                        st.rerun()
+                    else:
+                        st.error("❌ Key expirada.")
+                else:
+                    st.error("❌ Key no encontrada.")
     st.markdown('</div>', unsafe_allow_html=True)
     st.stop()
 
 # ==========================================
-# 🧠 CEREBRO ORIGINAL (El que te daba más aciertos)
+# 🧠 CEREBRO ORIGINAL (Equilibrado y Efectivo)
 # ==========================================
 def cargar_patrones():
     if os.path.exists(ARCHIVO_PATRONES):
@@ -130,11 +172,7 @@ def entrenar_modelo_ml():
     X, y = [], []
     for op in hist:
         ind = op.get('indicadores', {})
-        features = [
-            ind.get('rsi', 50),
-            ind.get('precio_relativo', 0.5),
-            1 if op['señal'] == 'CALL' else 0
-        ]
+        features = [ind.get('rsi', 50), ind.get('precio_relativo', 0.5), 1 if op['señal'] == 'CALL' else 0]
         X.append(features)
         y.append(1 if op['resultado'] == 'GANADA' else 0)
     try:
@@ -146,13 +184,7 @@ def entrenar_modelo_ml():
 def aprender_en_segundo_plano(señal, resultado, indicadores, precio_real_entrada):
     hist = cargar_historial()
     pesos = cargar_patrones()
-    registro = {
-        'fecha': datetime.now().strftime('%H:%M:%S'),
-        'señal': señal, 'resultado': resultado,
-        'precio_entrada_real': precio_real_entrada,
-        'indicadores': indicadores
-    }
-    hist.append(registro)
+    hist.append({'fecha': datetime.now().strftime('%H:%M:%S'), 'señal': señal, 'resultado': resultado, 'precio_entrada_real': precio_real_entrada, 'indicadores': indicadores})
     pesos['total_ops'] += 1
     if resultado == 'GANADA': pesos['total_ganadas'] += 1
     pesos['winrate'] = (pesos['total_ganadas'] / pesos['total_ops'] * 100) if pesos['total_ops'] > 0 else 0.0
@@ -195,10 +227,9 @@ def analizar_par(codigo_par, tipo='crypto'):
         df = obtener_datos_yahoo(codigo_par, period="2d", interval="1m")
     
     if df is None or len(df) < 20:
-        return {'señal': 'CALL', 'confianza': 65, 'razon': "Análisis base por defecto", 'indicadores': {'rsi': 50, 'precio_relativo': 0.5}}
+        return {'señal': 'CALL', 'confianza': 65, 'razon': "Análisis base", 'indicadores': {'rsi': 50, 'precio_relativo': 0.5}}
     
     c_close = 'close' if tipo == 'crypto' else 'Close'
-    
     try:
         df['RSI'] = ta.momentum.RSIIndicator(df[c_close], window=14).rsi()
         bb = ta.volatility.BollingerBands(df[c_close], window=20, window_dev=2)
@@ -211,21 +242,19 @@ def analizar_par(codigo_par, tipo='crypto'):
         bb_high = float(u1['BB_High'])
         bb_low = float(u1['BB_Low'])
         
-        # Lógica principal equilibrada: SIEMPRE emite señal, alterna naturalmente
         if rsi <= 50 or precio <= bb_low:
             dirección = 'CALL'
             razones = []
             if rsi < 45: razones.append("RSI Bajo")
             if precio <= bb_low: razones.append("Toque Banda Inferior")
-            if not razones: razones.append("Tendencia Alcista Corta")
+            if not razones: razones.append("Tendencia Alcista")
         else:
             dirección = 'PUT'
             razones = []
             if rsi > 55: razones.append("RSI Alto")
             if precio >= bb_high: razones.append("Toque Banda Superior")
-            if not razones: razones.append("Tendencia Bajista Corta")
+            if not razones: razones.append("Tendencia Bajista")
 
-        # Ajuste adaptativo con Machine Learning
         confianza_base = 70
         modelo_ml = entrenar_modelo_ml()
         indicadores = {'rsi': rsi, 'precio_relativo': (precio - bb_low) / (bb_high - bb_low + 1e-9)}
@@ -235,7 +264,7 @@ def analizar_par(codigo_par, tipo='crypto'):
             probabilidad = modelo_ml.predict_proba([[indicadores['rsi'], indicadores['precio_relativo'], 1 if dirección == 'CALL' else 0]])
             confianza_ml = int(probabilidad[0][prediccion[0]] * 100)
             confianza = int((confianza_base + confianza_ml) / 2)
-            razones.append(f"ML Ajustado ({confianza}%)")
+            razones.append(f"ML ({confianza}%)")
         else:
             confianza = confianza_base
 
@@ -243,9 +272,6 @@ def analizar_par(codigo_par, tipo='crypto'):
     except:
         return {'señal': 'CALL', 'confianza': 60, 'razon': "Señal de continuidad", 'indicadores': {'rsi': 50, 'precio_relativo': 0.5}}
 
-# ==========================================
-# 🔊 SISTEMA DE VOZ (Solo >= 75%)
-# ==========================================
 def reproducir_voz(mensaje):
     mensaje_seguro = mensaje.replace("'", "\\'").replace('"', '\\"')
     js_code = f"""
@@ -255,9 +281,7 @@ def reproducir_voz(mensaje):
             window.speechSynthesis.cancel();
             setTimeout(function() {{
                 const msg = new SpeechSynthesisUtterance('{mensaje_seguro}');
-                msg.lang = 'es-ES';
-                msg.rate = 1.0;
-                msg.volume = 1.0;
+                msg.lang = 'es-ES'; msg.rate = 1.0; msg.volume = 1.0;
                 window.speechSynthesis.speak(msg);
             }}, 300);
         }}
@@ -294,7 +318,7 @@ if 'precio_real_entrada' not in st.session_state: st.session_state.precio_real_e
 if 'voz_reproducida' not in st.session_state: st.session_state.voz_reproducida = False
 
 # ==========================================
-# 🎨 INTERFAZ VISUAL MEJORADA
+# 🎨 INTERFAZ VISUAL
 # ==========================================
 CSS = """
 <style>
@@ -302,24 +326,19 @@ CSS = """
 .block-container { padding-top: 5px !important; padding-bottom: 0px !important; padding-left: 8px !important; padding-right: 8px !important; max-width: 100% !important; }
 body { background: #000; color: #fff; font-family: Arial, sans-serif; margin: 0; padding: 0; }
 .main-container { width: 100%; max-width: 450px; margin: 0 auto; display: flex; flex-direction: column; gap: 6px; }
-
 .header { background: linear-gradient(90deg, #1a0a2e, #0a1a2e); padding: 8px; border-radius: 8px; border: 1.5px solid #ffd700; text-align: center; }
 .header h1 { color: #ffd700; margin: 0; font-size: 18px; letter-spacing: 2px; }
 .header p { color: #aaa; margin: 2px 0 0 0; font-size: 10px; }
-
 .stats-row { display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px; }
 .stat-box { background: linear-gradient(135deg, #0a1a2e, #1a0a2e); border: 1px solid #ffd700; border-radius: 6px; padding: 6px; text-align: center; }
 .stat-box strong { color: #ffd700; font-size: 9px; display: block; margin-bottom: 2px; }
 .stat-box span { color: #00ff88; font-size: 14px; font-weight: bold; }
-
 .hora-box { background: linear-gradient(90deg, #0a2a1a, #1a1a2e); border: 2px solid #00ff88; border-radius: 6px; padding: 6px; text-align: center; }
 .hora-box span { color: #00ff88; font-size: 20px; font-weight: bold; text-shadow: 0 0 8px #00ff88; }
-
 .signal-box { padding: 10px; border-radius: 8px; text-align: center; font-size: 24px; font-weight: bold; letter-spacing: 2px; margin: 4px 0; }
 .signal-call { background: linear-gradient(135deg, #00cc00, #00ff00); border: 2px solid #00ff00; color: white; box-shadow: 0 0 20px rgba(0, 255, 0, 0.6); }
 .signal-put { background: linear-gradient(135deg, #cc0000, #ff0000); border: 2px solid #ff0000; color: white; box-shadow: 0 0 20px rgba(255, 0, 0, 0.6); }
 .signal-wait { background: linear-gradient(135deg, #1a1a2e, #0a1a2e); border: 2px solid #ffd700; color: #ffd700; font-size: 16px; padding: 8px; }
-
 .radar-container { position: relative; width: 150px; height: 150px; margin: 8px auto; }
 .radar { width: 150px; height: 150px; border-radius: 50%; position: relative; overflow: hidden; border: 3px solid; }
 .radar-green { border-color: #00ff00; background: radial-gradient(circle, #0a2a1a, #000); box-shadow: 0 0 20px rgba(0, 255, 0, 0.5); }
@@ -331,7 +350,6 @@ body { background: #000; color: #fff; font-family: Arial, sans-serif; margin: 0;
 .radar-number-red { color: #ff0000; }
 .radar-number-yellow { color: #ffd700; font-size: 16px; }
 .radar-label { color: #fff; font-size: 9px; margin-top: 3px; letter-spacing: 1px; }
-
 .info-panel { background: linear-gradient(135deg, #0a1a2e, #1a0a2e); border: 1px solid #00ff88; border-radius: 6px; padding: 6px 10px; font-size: 11px; text-align: center; }
 .info-panel strong { color: #00ff88; }
 </style>
@@ -356,7 +374,6 @@ codigo_info = PARES[par_nombre]
 codigo = codigo_info['codigo']
 tipo = codigo_info['tipo']
 
-# Gráfico de TradingView
 tv_symbol = f"BINANCE:{codigo}" if tipo == 'crypto' else f"FX:{codigo.replace('=X', '')}"
 widget_html = f"""
 <div class="tradingview-widget-container" style="height:180px;width:100%;margin-bottom:6px;">
@@ -397,9 +414,6 @@ elif st.session_state.minuto_anterior != minuto_actual:
     st.session_state.voz_reproducida = False
     st.session_state.minuto_anterior = minuto_actual
 
-# ==========================================
-# ⏱️ CICLO DE 2 MINUTOS
-# ==========================================
 if minuto_es_par:
     if segundo_actual < 55:
         st.markdown('<div class="signal-box signal-wait">📊 ESCANEANDO MERCADO...</div>', unsafe_allow_html=True)
@@ -417,7 +431,6 @@ if minuto_es_par:
         segundos_restantes = 59 - segundo_actual
         confianza_actual = int(señal['confianza'])
         
-        # 🔊 VOZ SOLO SI CONFIANZA >= 75%
         if not st.session_state.voz_reproducida:
             if confianza_actual >= 75:
                 tipo_texto = "COMPRA" if es_call else "VENTA"
