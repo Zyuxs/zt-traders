@@ -192,7 +192,7 @@ def obtener_precio_actual(codigo_par, tipo='crypto', df_actual=None):
     return None
 
 # ==========================================
-# 🎯 ANÁLISIS: TENDENCIA 5m DECIDE LA DIRECCIÓN
+# 🎯 ANÁLISIS CORREGIDO: CALL Y PUT COMPITEN EN PUNTOS
 # ==========================================
 def analizar_par(codigo_par, tipo='crypto', td_symbol=None):
     try:
@@ -200,6 +200,7 @@ def analizar_par(codigo_par, tipo='crypto', td_symbol=None):
         df_5m = obtener_datos_binance(codigo_par, interval='5m', limit=20) if tipo == 'crypto' else obtener_datos_twelvedata(td_symbol, limit=20)
         if df_1m is None or len(df_1m) < 30 or df_5m is None or len(df_5m) < 5:
             return {'señal': 'CALL', 'confianza': 50, 'razon': "Sincronizando...", 'indicadores': {}, 'df': None}
+        
         c = 'close'
         df_1m['RSI'] = ta.momentum.RSIIndicator(df_1m[c], window=14).rsi()
         df_1m['STOCH'] = ta.momentum.StochasticOscillator(df_1m['high'], df_1m['low'], df_1m[c]).stoch()
@@ -210,93 +211,177 @@ def analizar_par(codigo_par, tipo='crypto', td_symbol=None):
         df_1m['BB_high'] = bb.bollinger_hband()
         df_1m['BB_low'] = bb.bollinger_lband()
         df_1m['SMA_10'] = df_1m[c].rolling(window=10).mean()
+        df_1m['SMA_20'] = df_1m[c].rolling(window=20).mean()
         df_5m['SMA_20'] = df_5m[c].rolling(window=20).mean()
-        if len(df_1m) >= 4:
-            momentum_1m = float(df_1m[c].iloc[-1] - df_1m[c].iloc[-2])
-            momentum_3m = float(df_1m[c].iloc[-1] - df_1m[c].iloc[-4])
-            vol_ma = df_1m['volume'].rolling(window=10).mean().iloc[-1]
-            vol_actual = df_1m['volume'].iloc[-1]
+        
+        # 🔑 MOMENTUM de velas CERRADAS (no la actual)
+        if len(df_1m) >= 5:
+            # Usar las últimas 3 velas CERRADAS (iloc[-2], [-3], [-4])
+            cierre_1 = float(df_1m[c].iloc[-2])  # Última cerrada
+            cierre_2 = float(df_1m[c].iloc[-3])  # Anterior
+            cierre_3 = float(df_1m[c].iloc[-4])
+            cierre_4 = float(df_1m[c].iloc[-5])
+            
+            momentum_corto = cierre_1 - cierre_2  # Última vela cerrada
+            momentum_medio = cierre_1 - cierre_3  # Últimas 2 velas
+            momentum_largo = cierre_1 - cierre_4  # Últimas 3 velas
+            velas_rojas = sum(1 for i in [-2, -3, -4] if float(df_1m[c].iloc[i]) < float(df_1m['open'].iloc[i]))
+            velas_verdes = 3 - velas_rojas
         else:
-            momentum_1m = momentum_3m = 0
-            vol_ma = 1
-            vol_actual = 1
-        u1 = df_1m.iloc[-1]
-        u2 = df_1m.iloc[-2]
-        precio, open_p = float(u1[c]), float(u1['open'])
-        open_prev, close_prev = float(u2['open']), float(u2['close'])
+            momentum_corto = momentum_medio = momentum_largo = 0
+            velas_rojas = velas_verdes = 0
+        
+        vol_ma = df_1m['volume'].rolling(window=10).mean().iloc[-2] if len(df_1m) > 10 else 1
+        vol_actual = float(df_1m['volume'].iloc[-2])
+        
+        u1 = df_1m.iloc[-2]  # Última vela CERRADA
+        u2 = df_1m.iloc[-3]
+        
+        precio = float(u1[c])
+        open_p = float(u1['open'])
+        open_prev = float(u2['open'])
+        close_prev = float(u2['close'])
+        
         rsi = float(u1['RSI']) if not pd.isna(u1['RSI']) else 50
-        rsi_change = rsi - (df_1m['RSI'].iloc[-2] if not pd.isna(df_1m['RSI'].iloc[-2]) else rsi)
+        rsi_anterior = float(df_1m['RSI'].iloc[-3]) if not pd.isna(df_1m['RSI'].iloc[-3]) else rsi
+        rsi_change = rsi - rsi_anterior
         stoch = float(u1['STOCH']) if not pd.isna(u1['STOCH']) else 50
         macd_diff = float(u1['MACD_diff']) if not pd.isna(u1['MACD_diff']) else 0
         macd_sig = float(u1['MACD_signal']) if not pd.isna(u1['MACD_signal']) else 0
-        bb_high, bb_low = float(u1['BB_high']), float(u1['BB_low'])
+        bb_high = float(u1['BB_high'])
+        bb_low = float(u1['BB_low'])
         sma_5m = float(df_5m['SMA_20'].iloc[-1])
-        sma_1m = float(u1['SMA_10'])
+        sma_10 = float(u1['SMA_10'])
+        sma_20 = float(u1['SMA_20'])
+        
         bb_pos = (precio - bb_low) / (bb_high - bb_low) if (bb_high - bb_low) > 0 else 0.5
-        tendencia_5m = 1 if precio > sma_5m else -1
         vol_conf = 1 if vol_actual > vol_ma else 0
-        cuerpo_actual = abs(precio - open_p)
+        
+        # Detectar velas
+        cuerpo = abs(precio - open_p)
         mecha_inf = min(open_p, precio) - float(u1['low'])
         mecha_sup = float(u1['high']) - max(open_p, precio)
-        es_martillo = (mecha_inf > cuerpo_actual * 2) and (cuerpo_actual > 0) and (precio > open_p)
-        es_estrella_fugaz = (mecha_sup > cuerpo_actual * 2) and (cuerpo_actual > 0) and (precio < open_p)
+        es_martillo = (mecha_inf > cuerpo * 2) and (cuerpo > 0) and (precio > open_p)
+        es_estrella_fugaz = (mecha_sup > cuerpo * 2) and (cuerpo > 0) and (precio < open_p)
         es_envolvente_alcista = (open_prev > close_prev) and (precio > open_prev) and (open_p < close_prev)
         es_envolvente_bajista = (open_prev < close_prev) and (precio < open_prev) and (open_p > close_prev)
         
-        # 🔑 TENDENCIA 5m DECIDE LA DIRECCIÓN BASE (sin sesgo)
-        if tendencia_5m == 1:
+        # ==========================================
+        # 🎯 SISTEMA DE PUNTUACIÓN: CALL vs PUT
+        # ==========================================
+        call_score = 0
+        put_score = 0
+        razones_call = []
+        razones_put = []
+        
+        # 1. MOMENTUM (peso alto: 25 puntos)
+        if momentum_corto > 0:
+            call_score += 25
+            razones_call.append("Mom+")
+        elif momentum_corto < 0:
+            put_score += 25
+            razones_put.append("Mom-")
+        
+        # 2. Tendencia de últimas 3 velas (peso: 20 puntos)
+        if velas_verdes >= 2:
+            call_score += 20
+            razones_call.append(f"{velas_verdes}V+")
+        elif velas_rojas >= 2:
+            put_score += 20
+            razones_put.append(f"{velas_rojas}V-")
+        
+        # 3. Tendencia 5m (peso: 15 puntos)
+        if precio > sma_5m:
+            call_score += 15
+            razones_call.append("T5m+")
+        else:
+            put_score += 15
+            razones_put.append("T5m-")
+        
+        # 4. RSI (peso: 15 puntos)
+        if rsi < 35:
+            call_score += 15  # Sobreventa → rebote alcista
+            razones_call.append("RSI<35")
+        elif rsi > 65:
+            put_score += 15   # Sobrecompra → corrección bajista
+            razones_put.append("RSI>65")
+        elif rsi < 50:
+            call_score += 5
+        else:
+            put_score += 5
+        
+        # 5. Bandas de Bollinger (peso: 15 puntos)
+        if precio <= bb_low:
+            call_score += 15  # Toca banda inferior → rebote
+            razones_call.append("BBinf")
+        elif precio >= bb_high:
+            put_score += 15   # Toca banda superior → rechazo
+            razones_put.append("BBsup")
+        
+        # 6. MACD (peso: 10 puntos)
+        if macd_diff > macd_sig:
+            call_score += 10
+            razones_call.append("MACD+")
+        elif macd_diff < macd_sig:
+            put_score += 10
+            razones_put.append("MACD-")
+        
+        # 7. Velas de reversión (peso: 15 puntos)
+        if es_martillo:
+            call_score += 15
+            razones_call.append("🔨")
+        if es_estrella_fugaz:
+            put_score += 15
+            razones_put.append("⭐")
+        if es_envolvente_alcista:
+            call_score += 15
+            razones_call.append("📈")
+        if es_envolvente_bajista:
+            put_score += 15
+            razones_put.append("📉")
+        
+        # 8. Volumen (bonus: 5 puntos)
+        if vol_conf == 1:
+            if call_score > put_score:
+                call_score += 5
+                razones_call.append("Vol+")
+            else:
+                put_score += 5
+                razones_put.append("Vol+")
+        
+        # ==========================================
+        # 🎯 DECISIÓN FINAL: Gana el que tenga más puntos
+        # ==========================================
+        if call_score > put_score:
             direccion = 'CALL'
-        else:
+            confianza_base = call_score
+            razones = razones_call
+        elif put_score > call_score:
             direccion = 'PUT'
-        
-        # Calcular confianza según confirmaciones
-        confianza = 50  # Base
-        razones = []
-        
-        if direccion == 'CALL':
-            # Confirmaciones que AUMENTAN confianza para CALL
-            if momentum_1m > 0: confianza += 10; razones.append("Mom+")
-            if momentum_3m > 0: confianza += 5
-            if rsi < 45: confianza += 10; razones.append("RSI bajo")
-            if precio <= bb_low: confianza += 15; razones.append("BB inf")
-            if macd_diff > macd_sig: confianza += 10; razones.append("MACD+")
-            if stoch < 40: confianza += 5
-            if es_martillo: confianza += 10; razones.append("🔨")
-            if es_envolvente_alcista: confianza += 10; razones.append("📈")
-            if vol_conf == 1: confianza += 5; razones.append("Vol+")
-            
-            # Factores que REDUCEN confianza para CALL
-            if rsi > 60: confianza -= 15
-            if precio >= bb_high: confianza -= 15
-            if macd_diff < macd_sig: confianza -= 10
-            if es_estrella_fugaz: confianza -= 10
+            confianza_base = put_score
+            razones = razones_put
         else:
-            # Confirmaciones que AUMENTAN confianza para PUT
-            if momentum_1m < 0: confianza += 10; razones.append("Mom-")
-            if momentum_3m < 0: confianza += 5
-            if rsi > 55: confianza += 10; razones.append("RSI alto")
-            if precio >= bb_high: confianza += 15; razones.append("BB sup")
-            if macd_diff < macd_sig: confianza += 10; razones.append("MACD-")
-            if stoch > 60: confianza += 5
-            if es_estrella_fugaz: confianza += 10; razones.append("⭐")
-            if es_envolvente_bajista: confianza += 10; razones.append("📉")
-            if vol_conf == 1: confianza += 5; razones.append("Vol+")
-            
-            # Factores que REDUCEN confianza para PUT
-            if rsi < 40: confianza -= 15
-            if precio <= bb_low: confianza -= 15
-            if macd_diff > macd_sig: confianza -= 10
-            if es_martillo: confianza -= 10
+            # Empate: usar momentum medio como desempate
+            if momentum_medio >= 0:
+                direccion = 'CALL'
+                confianza_base = call_score
+                razones = razones_call
+            else:
+                direccion = 'PUT'
+                confianza_base = put_score
+                razones = razones_put
         
-        if not razones: razones.append("Tendencia 5m")
+        # Normalizar confianza entre 45 y 95
+        confianza = max(45, min(confianza_base, 95))
         
-        # Limitar confianza entre 45 y 95
-        confianza = max(45, min(confianza, 95))
+        if not razones:
+            razones.append("Neutral")
         
         indicadores = {
             'rsi': rsi, 'rsi_change': rsi_change, 'stoch': stoch,
-            'macd_diff': macd_diff, 'bb_pos': bb_pos, 'tendencia_5m': tendencia_5m,
-            'momentum_1m': momentum_1m, 'momentum_3m': momentum_3m,
+            'macd_diff': macd_diff, 'bb_pos': bb_pos,
+            'tendencia_5m': 1 if precio > sma_5m else -1,
+            'momentum_1m': momentum_corto, 'momentum_3m': momentum_medio,
             'vol_conf': vol_conf, 'es_martillo': es_martillo,
             'es_estrella_fugaz': es_estrella_fugaz,
             'es_envolvente_alcista': es_envolvente_alcista, 'es_envolvente_bajista': es_envolvente_bajista
@@ -308,14 +393,14 @@ def analizar_par(codigo_par, tipo='crypto', td_symbol=None):
             prob_ml = predecir_con_ml(modelo_ml, indicadores, direccion)
             if prob_ml is not None and prob_ml > 50:
                 confianza = int((confianza + prob_ml) / 2)
-                razones.append(f"🧠 IA: {prob_ml}%")
+                razones.append(f"🧠{prob_ml}%")
         
         return {'señal': direccion, 'confianza': confianza, 'razon': " | ".join(razones), 'indicadores': indicadores, 'df': df_1m}
     except Exception as e:
-        return {'señal': 'CALL', 'confianza': 50, 'razon': "Señal básica", 'indicadores': {}, 'df': None}
+        return {'señal': 'CALL', 'confianza': 50, 'razon': "Error", 'indicadores': {}, 'df': None}
 
 # ==========================================
-# 🔊 VOZ (sin components.html para evitar duplicación)
+# 🔊 VOZ
 # ==========================================
 def reproducir_voz(mensaje):
     m = mensaje.replace("'", "\\'").replace('"', '\\"')
@@ -415,7 +500,7 @@ body { background: #02040a; color: #f1f5f9; font-family: 'Inter', sans-serif; }
 st.markdown(CSS, unsafe_allow_html=True)
 
 st.markdown('<div class="terminal-container">', unsafe_allow_html=True)
-st.markdown(f'<div class="term-header"><div class="term-title">⚡ ZT TRADERS PRO</div><div class="term-sub">OPERADOR: {st.session_state.usuario_actual} | FRANCOTIRADOR v3.0</div></div>', unsafe_allow_html=True)
+st.markdown(f'<div class="term-header"><div class="term-title">⚡ ZT TRADERS PRO</div><div class="term-sub">OPERADOR: {st.session_state.usuario_actual} | v4.0 SIN SESGO</div></div>', unsafe_allow_html=True)
 
 if not st.session_state.voz_activada:
     if st.button("🔊 ACTIVAR VOZ", key="btn_activar_voz", use_container_width=True):
@@ -469,7 +554,7 @@ st.markdown(f"""
 """, unsafe_allow_html=True)
 
 # ==========================================
-# 🎯 CICLO: SIEMPRE UNA SEÑAL CADA 2 MIN
+# 🎯 CICLO DE 2 MINUTOS
 # ==========================================
 ahora = datetime.now()
 hora_actual = ahora.strftime('%H:%M:%S')
