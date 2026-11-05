@@ -192,7 +192,7 @@ def obtener_precio_actual(codigo_par, tipo='crypto', df_actual=None):
     return None
 
 # ==========================================
-# 🎯 ANÁLISIS: SIEMPRE DA SEÑAL (CALL o PUT)
+# 🎯 ANÁLISIS: TENDENCIA 5m DECIDE LA DIRECCIÓN
 # ==========================================
 def analizar_par(codigo_par, tipo='crypto', td_symbol=None):
     try:
@@ -243,55 +243,55 @@ def analizar_par(codigo_par, tipo='crypto', td_symbol=None):
         es_envolvente_alcista = (open_prev > close_prev) and (precio > open_prev) and (open_p < close_prev)
         es_envolvente_bajista = (open_prev < close_prev) and (precio < open_prev) and (open_p > close_prev)
         
-        # SIEMPRE decide una dirección (CALL o PUT)
-        call_score = 0
-        put_score = 0
-        if momentum_1m > 0: call_score += 20
-        elif momentum_1m < 0: put_score += 20
-        if momentum_3m > 0: call_score += 15
-        elif momentum_3m < 0: put_score += 15
-        if tendencia_5m == 1: call_score += 15
-        else: put_score += 15
-        if rsi < 35 and momentum_1m > 0: call_score += 25
-        elif rsi > 65 and momentum_1m < 0: put_score += 25
-        if precio <= bb_low and momentum_1m > 0: call_score += 20
-        elif precio >= bb_high and momentum_1m < 0: put_score += 20
-        if macd_diff > macd_sig and momentum_1m > 0: call_score += 15
-        elif macd_diff < macd_sig and momentum_1m < 0: put_score += 15
-        if es_martillo and momentum_1m > 0: call_score += 20
-        if es_envolvente_alcista and momentum_1m > 0: call_score += 20
-        if es_estrella_fugaz and momentum_1m < 0: put_score += 20
-        if es_envolvente_bajista and momentum_1m < 0: put_score += 20
-        if vol_conf == 0:
-            call_score *= 0.8
-            put_score *= 0.8
-        
-        # Siempre elegir la dirección con más puntos (mínimo 45% confianza)
-        if call_score >= put_score:
+        # 🔑 TENDENCIA 5m DECIDE LA DIRECCIÓN BASE (sin sesgo)
+        if tendencia_5m == 1:
             direccion = 'CALL'
-            confianza = max(45, min(call_score, 95))
         else:
             direccion = 'PUT'
-            confianza = max(45, min(put_score, 95))
         
+        # Calcular confianza según confirmaciones
+        confianza = 50  # Base
         razones = []
+        
         if direccion == 'CALL':
-            if momentum_1m > 0: razones.append("Mom+")
-            if tendencia_5m == 1: razones.append("T5m+")
-            if rsi < 35: razones.append("RSI")
-            if precio <= bb_low: razones.append("BB")
-            if vol_conf == 1: razones.append("Vol+")
-            if es_martillo: razones.append("🔨")
-            if es_envolvente_alcista: razones.append("📈")
+            # Confirmaciones que AUMENTAN confianza para CALL
+            if momentum_1m > 0: confianza += 10; razones.append("Mom+")
+            if momentum_3m > 0: confianza += 5
+            if rsi < 45: confianza += 10; razones.append("RSI bajo")
+            if precio <= bb_low: confianza += 15; razones.append("BB inf")
+            if macd_diff > macd_sig: confianza += 10; razones.append("MACD+")
+            if stoch < 40: confianza += 5
+            if es_martillo: confianza += 10; razones.append("🔨")
+            if es_envolvente_alcista: confianza += 10; razones.append("📈")
+            if vol_conf == 1: confianza += 5; razones.append("Vol+")
+            
+            # Factores que REDUCEN confianza para CALL
+            if rsi > 60: confianza -= 15
+            if precio >= bb_high: confianza -= 15
+            if macd_diff < macd_sig: confianza -= 10
+            if es_estrella_fugaz: confianza -= 10
         else:
-            if momentum_1m < 0: razones.append("Mom-")
-            if tendencia_5m == -1: razones.append("T5m-")
-            if rsi > 65: razones.append("RSI")
-            if precio >= bb_high: razones.append("BB")
-            if vol_conf == 1: razones.append("Vol+")
-            if es_estrella_fugaz: razones.append("⭐")
-            if es_envolvente_bajista: razones.append("📉")
-        if not razones: razones.append("Tendencia")
+            # Confirmaciones que AUMENTAN confianza para PUT
+            if momentum_1m < 0: confianza += 10; razones.append("Mom-")
+            if momentum_3m < 0: confianza += 5
+            if rsi > 55: confianza += 10; razones.append("RSI alto")
+            if precio >= bb_high: confianza += 15; razones.append("BB sup")
+            if macd_diff < macd_sig: confianza += 10; razones.append("MACD-")
+            if stoch > 60: confianza += 5
+            if es_estrella_fugaz: confianza += 10; razones.append("⭐")
+            if es_envolvente_bajista: confianza += 10; razones.append("📉")
+            if vol_conf == 1: confianza += 5; razones.append("Vol+")
+            
+            # Factores que REDUCEN confianza para PUT
+            if rsi < 40: confianza -= 15
+            if precio <= bb_low: confianza -= 15
+            if macd_diff > macd_sig: confianza -= 10
+            if es_martillo: confianza -= 10
+        
+        if not razones: razones.append("Tendencia 5m")
+        
+        # Limitar confianza entre 45 y 95
+        confianza = max(45, min(confianza, 95))
         
         indicadores = {
             'rsi': rsi, 'rsi_change': rsi_change, 'stoch': stoch,
@@ -301,18 +301,21 @@ def analizar_par(codigo_par, tipo='crypto', td_symbol=None):
             'es_estrella_fugaz': es_estrella_fugaz,
             'es_envolvente_alcista': es_envolvente_alcista, 'es_envolvente_bajista': es_envolvente_bajista
         }
+        
+        # ML boost
         modelo_ml = entrenar_modelo_ml()
         if modelo_ml is not None:
             prob_ml = predecir_con_ml(modelo_ml, indicadores, direccion)
             if prob_ml is not None and prob_ml > 50:
                 confianza = int((confianza + prob_ml) / 2)
                 razones.append(f"🧠 IA: {prob_ml}%")
-        return {'señal': direccion, 'confianza': max(45, min(confianza, 95)), 'razon': " | ".join(razones), 'indicadores': indicadores, 'df': df_1m}
+        
+        return {'señal': direccion, 'confianza': confianza, 'razon': " | ".join(razones), 'indicadores': indicadores, 'df': df_1m}
     except Exception as e:
         return {'señal': 'CALL', 'confianza': 50, 'razon': "Señal básica", 'indicadores': {}, 'df': None}
 
 # ==========================================
-# 🔊 VOZ (NO usa components.html para evitar duplicación)
+# 🔊 VOZ (sin components.html para evitar duplicación)
 # ==========================================
 def reproducir_voz(mensaje):
     m = mensaje.replace("'", "\\'").replace('"', '\\"')
@@ -412,7 +415,7 @@ body { background: #02040a; color: #f1f5f9; font-family: 'Inter', sans-serif; }
 st.markdown(CSS, unsafe_allow_html=True)
 
 st.markdown('<div class="terminal-container">', unsafe_allow_html=True)
-st.markdown(f'<div class="term-header"><div class="term-title">⚡ ZT TRADERS PRO</div><div class="term-sub">OPERADOR: {st.session_state.usuario_actual} | FRANCOTIRADOR v2.2</div></div>', unsafe_allow_html=True)
+st.markdown(f'<div class="term-header"><div class="term-title">⚡ ZT TRADERS PRO</div><div class="term-sub">OPERADOR: {st.session_state.usuario_actual} | FRANCOTIRADOR v3.0</div></div>', unsafe_allow_html=True)
 
 if not st.session_state.voz_activada:
     if st.button("🔊 ACTIVAR VOZ", key="btn_activar_voz", use_container_width=True):
@@ -480,14 +483,10 @@ elif st.session_state.minuto_anterior != minuto_actual:
     st.session_state.voz_reproducida = False
     st.session_state.minuto_anterior = minuto_actual
 
-# UN SOLO contenedor dinámico
 contenedor = st.empty()
-
-# Construir HTML en UNA variable
 html_final = f'<div class="clock-display"><span>🕐 {hora_actual}</span></div>'
 
 if minuto_es_par and segundo_actual < 55:
-    # FASE 1: Análisis
     html_final += textwrap.dedent(f"""
     <div class="signal-banner signal-wait">📊 ANALIZANDO CONFLUENCIA...</div>
     <div class="meta-panel">⏱️ Escaneo en: <strong>{55 - segundo_actual}s</strong></div>
@@ -498,7 +497,6 @@ if minuto_es_par and segundo_actual < 55:
     st.rerun()
 
 elif minuto_es_par and segundo_actual >= 55:
-    # FASE 2: Señal (SIEMPRE da CALL o PUT)
     if st.session_state.senal is None or st.session_state.estado != 'senal':
         st.session_state.senal = analizar_par(codigo, tipo, td_symbol)
         st.session_state.df_cache = st.session_state.senal.get('df')
@@ -509,7 +507,6 @@ elif minuto_es_par and segundo_actual >= 55:
     segundos_restantes = 59 - segundo_actual
     confianza_actual = int(señal['confianza'])
     
-    # VOZ solo si >= 75%
     if not st.session_state.voz_reproducida and st.session_state.voz_activada:
         if confianza_actual >= 75:
             tipo_texto = "COMPRA" if es_call else "VENTA"
@@ -540,7 +537,6 @@ elif minuto_es_par and segundo_actual >= 55:
     st.rerun()
 
 else:
-    # FASE 3: Operación en curso
     if st.session_state.estado != 'operando':
         st.session_state.estado = 'operando'
         st.session_state.precio_real_entrada = obtener_precio_actual(codigo, tipo, df_actual=st.session_state.df_cache)
