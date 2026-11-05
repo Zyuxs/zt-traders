@@ -65,7 +65,8 @@ if not st.session_state.licencia_activa:
         key_input = st.text_input("License Key", type="password")
         submit_key = st.form_submit_button("🚀 CONECTAR TERMINAL", use_container_width=True)
         if submit_key:
-            if key_input == "ADMIN-MASTER-2027":
+            # ✅ ACEPTA AMBAS CLAVES ADMIN
+            if key_input in ["ADMIN-MASTER-2026", "ADMIN-MASTER-2027"]:
                 st.session_state.licencia_activa = True
                 st.session_state.usuario_actual = "👑 Admin Master"
                 st.query_params["zt_token"] = "admin_master_device"
@@ -191,16 +192,12 @@ def obtener_precio_actual(codigo_par, tipo='crypto', df_actual=None):
         except: pass
     return None
 
-# ==========================================
-# 🎯 ANÁLISIS CORREGIDO: CALL Y PUT COMPITEN EN PUNTOS
-# ==========================================
 def analizar_par(codigo_par, tipo='crypto', td_symbol=None):
     try:
         df_1m = obtener_datos_binance(codigo_par, limit=60) if tipo == 'crypto' else obtener_datos_twelvedata(td_symbol, limit=60)
         df_5m = obtener_datos_binance(codigo_par, interval='5m', limit=20) if tipo == 'crypto' else obtener_datos_twelvedata(td_symbol, limit=20)
         if df_1m is None or len(df_1m) < 30 or df_5m is None or len(df_5m) < 5:
             return {'señal': 'CALL', 'confianza': 50, 'razon': "Sincronizando...", 'indicadores': {}, 'df': None}
-        
         c = 'close'
         df_1m['RSI'] = ta.momentum.RSIIndicator(df_1m[c], window=14).rsi()
         df_1m['STOCH'] = ta.momentum.StochasticOscillator(df_1m['high'], df_1m['low'], df_1m[c]).stoch()
@@ -213,35 +210,27 @@ def analizar_par(codigo_par, tipo='crypto', td_symbol=None):
         df_1m['SMA_10'] = df_1m[c].rolling(window=10).mean()
         df_1m['SMA_20'] = df_1m[c].rolling(window=20).mean()
         df_5m['SMA_20'] = df_5m[c].rolling(window=20).mean()
-        
-        # 🔑 MOMENTUM de velas CERRADAS (no la actual)
         if len(df_1m) >= 5:
-            # Usar las últimas 3 velas CERRADAS (iloc[-2], [-3], [-4])
-            cierre_1 = float(df_1m[c].iloc[-2])  # Última cerrada
-            cierre_2 = float(df_1m[c].iloc[-3])  # Anterior
+            cierre_1 = float(df_1m[c].iloc[-2])
+            cierre_2 = float(df_1m[c].iloc[-3])
             cierre_3 = float(df_1m[c].iloc[-4])
             cierre_4 = float(df_1m[c].iloc[-5])
-            
-            momentum_corto = cierre_1 - cierre_2  # Última vela cerrada
-            momentum_medio = cierre_1 - cierre_3  # Últimas 2 velas
-            momentum_largo = cierre_1 - cierre_4  # Últimas 3 velas
+            momentum_corto = cierre_1 - cierre_2
+            momentum_medio = cierre_1 - cierre_3
+            momentum_largo = cierre_1 - cierre_4
             velas_rojas = sum(1 for i in [-2, -3, -4] if float(df_1m[c].iloc[i]) < float(df_1m['open'].iloc[i]))
             velas_verdes = 3 - velas_rojas
         else:
             momentum_corto = momentum_medio = momentum_largo = 0
             velas_rojas = velas_verdes = 0
-        
         vol_ma = df_1m['volume'].rolling(window=10).mean().iloc[-2] if len(df_1m) > 10 else 1
         vol_actual = float(df_1m['volume'].iloc[-2])
-        
-        u1 = df_1m.iloc[-2]  # Última vela CERRADA
+        u1 = df_1m.iloc[-2]
         u2 = df_1m.iloc[-3]
-        
         precio = float(u1[c])
         open_p = float(u1['open'])
         open_prev = float(u2['open'])
         close_prev = float(u2['close'])
-        
         rsi = float(u1['RSI']) if not pd.isna(u1['RSI']) else 50
         rsi_anterior = float(df_1m['RSI'].iloc[-3]) if not pd.isna(df_1m['RSI'].iloc[-3]) else rsi
         rsi_change = rsi - rsi_anterior
@@ -253,11 +242,8 @@ def analizar_par(codigo_par, tipo='crypto', td_symbol=None):
         sma_5m = float(df_5m['SMA_20'].iloc[-1])
         sma_10 = float(u1['SMA_10'])
         sma_20 = float(u1['SMA_20'])
-        
         bb_pos = (precio - bb_low) / (bb_high - bb_low) if (bb_high - bb_low) > 0 else 0.5
         vol_conf = 1 if vol_actual > vol_ma else 0
-        
-        # Detectar velas
         cuerpo = abs(precio - open_p)
         mecha_inf = min(open_p, precio) - float(u1['low'])
         mecha_sup = float(u1['high']) - max(open_p, precio)
@@ -265,68 +251,50 @@ def analizar_par(codigo_par, tipo='crypto', td_symbol=None):
         es_estrella_fugaz = (mecha_sup > cuerpo * 2) and (cuerpo > 0) and (precio < open_p)
         es_envolvente_alcista = (open_prev > close_prev) and (precio > open_prev) and (open_p < close_prev)
         es_envolvente_bajista = (open_prev < close_prev) and (precio < open_prev) and (open_p > close_prev)
-        
-        # ==========================================
-        # 🎯 SISTEMA DE PUNTUACIÓN: CALL vs PUT
-        # ==========================================
         call_score = 0
         put_score = 0
         razones_call = []
         razones_put = []
-        
-        # 1. MOMENTUM (peso alto: 25 puntos)
         if momentum_corto > 0:
             call_score += 25
             razones_call.append("Mom+")
         elif momentum_corto < 0:
             put_score += 25
             razones_put.append("Mom-")
-        
-        # 2. Tendencia de últimas 3 velas (peso: 20 puntos)
         if velas_verdes >= 2:
             call_score += 20
             razones_call.append(f"{velas_verdes}V+")
         elif velas_rojas >= 2:
             put_score += 20
             razones_put.append(f"{velas_rojas}V-")
-        
-        # 3. Tendencia 5m (peso: 15 puntos)
         if precio > sma_5m:
             call_score += 15
             razones_call.append("T5m+")
         else:
             put_score += 15
             razones_put.append("T5m-")
-        
-        # 4. RSI (peso: 15 puntos)
         if rsi < 35:
-            call_score += 15  # Sobreventa → rebote alcista
+            call_score += 15
             razones_call.append("RSI<35")
         elif rsi > 65:
-            put_score += 15   # Sobrecompra → corrección bajista
+            put_score += 15
             razones_put.append("RSI>65")
         elif rsi < 50:
             call_score += 5
         else:
             put_score += 5
-        
-        # 5. Bandas de Bollinger (peso: 15 puntos)
         if precio <= bb_low:
-            call_score += 15  # Toca banda inferior → rebote
+            call_score += 15
             razones_call.append("BBinf")
         elif precio >= bb_high:
-            put_score += 15   # Toca banda superior → rechazo
+            put_score += 15
             razones_put.append("BBsup")
-        
-        # 6. MACD (peso: 10 puntos)
         if macd_diff > macd_sig:
             call_score += 10
             razones_call.append("MACD+")
         elif macd_diff < macd_sig:
             put_score += 10
             razones_put.append("MACD-")
-        
-        # 7. Velas de reversión (peso: 15 puntos)
         if es_martillo:
             call_score += 15
             razones_call.append("🔨")
@@ -339,8 +307,6 @@ def analizar_par(codigo_par, tipo='crypto', td_symbol=None):
         if es_envolvente_bajista:
             put_score += 15
             razones_put.append("📉")
-        
-        # 8. Volumen (bonus: 5 puntos)
         if vol_conf == 1:
             if call_score > put_score:
                 call_score += 5
@@ -348,10 +314,6 @@ def analizar_par(codigo_par, tipo='crypto', td_symbol=None):
             else:
                 put_score += 5
                 razones_put.append("Vol+")
-        
-        # ==========================================
-        # 🎯 DECISIÓN FINAL: Gana el que tenga más puntos
-        # ==========================================
         if call_score > put_score:
             direccion = 'CALL'
             confianza_base = call_score
@@ -361,7 +323,6 @@ def analizar_par(codigo_par, tipo='crypto', td_symbol=None):
             confianza_base = put_score
             razones = razones_put
         else:
-            # Empate: usar momentum medio como desempate
             if momentum_medio >= 0:
                 direccion = 'CALL'
                 confianza_base = call_score
@@ -370,13 +331,9 @@ def analizar_par(codigo_par, tipo='crypto', td_symbol=None):
                 direccion = 'PUT'
                 confianza_base = put_score
                 razones = razones_put
-        
-        # Normalizar confianza entre 45 y 95
         confianza = max(45, min(confianza_base, 95))
-        
         if not razones:
             razones.append("Neutral")
-        
         indicadores = {
             'rsi': rsi, 'rsi_change': rsi_change, 'stoch': stoch,
             'macd_diff': macd_diff, 'bb_pos': bb_pos,
@@ -386,22 +343,16 @@ def analizar_par(codigo_par, tipo='crypto', td_symbol=None):
             'es_estrella_fugaz': es_estrella_fugaz,
             'es_envolvente_alcista': es_envolvente_alcista, 'es_envolvente_bajista': es_envolvente_bajista
         }
-        
-        # ML boost
         modelo_ml = entrenar_modelo_ml()
         if modelo_ml is not None:
             prob_ml = predecir_con_ml(modelo_ml, indicadores, direccion)
             if prob_ml is not None and prob_ml > 50:
                 confianza = int((confianza + prob_ml) / 2)
                 razones.append(f"🧠{prob_ml}%")
-        
         return {'señal': direccion, 'confianza': confianza, 'razon': " | ".join(razones), 'indicadores': indicadores, 'df': df_1m}
     except Exception as e:
         return {'señal': 'CALL', 'confianza': 50, 'razon': "Error", 'indicadores': {}, 'df': None}
 
-# ==========================================
-# 🔊 VOZ
-# ==========================================
 def reproducir_voz(mensaje):
     m = mensaje.replace("'", "\\'").replace('"', '\\"')
     script = f"""
@@ -553,9 +504,6 @@ st.markdown(f"""
 </div>
 """, unsafe_allow_html=True)
 
-# ==========================================
-# 🎯 CICLO DE 2 MINUTOS
-# ==========================================
 ahora = datetime.now()
 hora_actual = ahora.strftime('%H:%M:%S')
 minuto_actual, segundo_actual = ahora.minute, ahora.second
@@ -586,28 +534,23 @@ elif minuto_es_par and segundo_actual >= 55:
         st.session_state.senal = analizar_par(codigo, tipo, td_symbol)
         st.session_state.df_cache = st.session_state.senal.get('df')
         st.session_state.estado = 'senal'
-    
     señal = st.session_state.senal
     es_call = señal['señal'] == 'CALL'
     segundos_restantes = 59 - segundo_actual
     confianza_actual = int(señal['confianza'])
-    
     if not st.session_state.voz_reproducida and st.session_state.voz_activada:
         if confianza_actual >= 75:
             tipo_texto = "COMPRA" if es_call else "VENTA"
             mensaje = f"Atención. Señal de alta confianza. {tipo_texto}. {confianza_actual} por ciento. Entrar ahora."
             reproducir_voz(mensaje)
         st.session_state.voz_reproducida = True
-    
     c_box = "signal-call" if es_call else "signal-put"
     c_radar = "ring-green" if es_call else "ring-red"
     c_val = "num-green" if es_call else "num-red"
     t_sig = "🟢 COMPRA (CALL)" if es_call else "🔴 VENTA (PUT)"
-    
     color_confianza = "#00ff88" if confianza_actual >= 75 else "#fbbf24"
     icono_alerta = "🔊" if confianza_actual >= 75 else "🔇"
     etiqueta_confianza = "ALTA CONFIANZA" if confianza_actual >= 75 else "CONFIANZA"
-    
     html_final += textwrap.dedent(f"""
     <div class="signal-banner {c_box}">{t_sig}</div>
     <div class="confianza-display">
@@ -625,23 +568,18 @@ else:
     if st.session_state.estado != 'operando':
         st.session_state.estado = 'operando'
         st.session_state.precio_real_entrada = obtener_precio_actual(codigo, tipo, df_actual=st.session_state.df_cache)
-    
     señal = st.session_state.senal
     if señal is None:
         señal = {'señal': 'CALL', 'confianza': 50, 'razon': "Esperando", 'indicadores': {}}
-    
     es_call = señal['señal'] == 'CALL'
     seg_op = 59 - segundo_actual
     confianza_actual = int(señal['confianza'])
-    
     c_box = "signal-call" if es_call else "signal-put"
     c_radar = "ring-green" if es_call else "ring-red"
     c_val = "num-green" if es_call else "num-red"
     t_sig = "🟢 EN CURSO (CALL)" if es_call else "🔴 EN CURSO (PUT)"
-    
     color_confianza = "#00ff88" if confianza_actual >= 75 else "#fbbf24"
     icono_alerta = "🔊" if confianza_actual >= 75 else "🔇"
-    
     html_final += textwrap.dedent(f"""
     <div class="signal-banner {c_box}">{t_sig}</div>
     <div class="confianza-display">
@@ -656,9 +594,7 @@ else:
     html_final += textwrap.dedent(f"""
     <div class="radar-box"><div class="radar-ring {c_radar}"><div class="radar-content"><div class="radar-num {c_val}">{seg_op}</div><small style="font-size:8px;color:#94a3b8;letter-spacing:1px;">EXPIRACIÓN</small></div></div></div>
     """)
-    
     contenedor.markdown(html_final, unsafe_allow_html=True)
-    
     if segundo_actual >= 58 and not st.session_state.resultado_guardado:
         if st.session_state.precio_real_entrada and st.session_state.precio_real_entrada > 0:
             precio_actual = obtener_precio_actual(codigo, tipo, df_actual=st.session_state.df_cache)
@@ -676,7 +612,6 @@ else:
             with open(ARCHIVO_PATRONES, 'w') as f: json.dump(pesos, f, indent=2)
             st.session_state.pesos = pesos
         st.session_state.resultado_guardado = True
-    
     time_module.sleep(0.5)
     st.rerun()
 
