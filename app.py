@@ -18,7 +18,7 @@ ARCHIVO_PATRONES = "patrones.json"
 ARCHIVO_LICENCIAS = "licencias.json"
 
 # ==========================================
-# 🔑 SISTEMA DE LICENCIAS CON AUTO-LOGIN
+# 🔑 SISTEMA DE LICENCIAS INTELIGENTE
 # ==========================================
 def cargar_licencias():
     if os.path.exists(ARCHIVO_LICENCIAS):
@@ -32,15 +32,12 @@ def guardar_licencias(licencias):
         with open(ARCHIVO_LICENCIAS, 'w') as f: json.dump(licencias, f, indent=2)
     except: pass
 
-# Inicializar estado
 if 'licencia_activa' not in st.session_state: st.session_state.licencia_activa = False
 if 'usuario_actual' not in st.session_state: st.session_state.usuario_actual = ""
 
-# Leer parámetros de la URL
 params = st.query_params
 device_token = params.get("zt_token", None)
 
-# 🔧 AUTO-LOGIN: Si hay un token en la URL, validar automáticamente
 if device_token and not st.session_state.licencia_activa:
     licencias = cargar_licencias()
     if device_token == "admin_master_device":
@@ -55,40 +52,6 @@ if device_token and not st.session_state.licencia_activa:
                         st.session_state.usuario_actual = f"Licencia ({k[:8]}...)"
                 except: pass
 
-# ==========================================
-# 💾 SCRIPT DE PERSISTENCIA (LOCALSTORAGE)
-# ==========================================
-# Este script guarda el token en el navegador para que no se pierda al cerrar la pestaña
-def inyectar_auto_login():
-    js_persistencia = """
-    <script>
-    (function() {
-        const urlParams = new URLSearchParams(window.location.search);
-        const currentToken = urlParams.get('zt_token');
-        
-        // 1. Si hay un token en la URL, guardarlo en la memoria del navegador
-        if (currentToken) {
-            localStorage.setItem('zt_device_token', currentToken);
-        } 
-        // 2. Si NO hay token en la URL, pero sí en la memoria del navegador, agregarlo a la URL y recargar
-        else {
-            const savedToken = localStorage.getItem('zt_device_token');
-            if (savedToken && savedToken !== 'null' && savedToken !== '') {
-                urlParams.set('zt_token', savedToken);
-                window.location.search = urlParams.toString();
-            }
-        }
-    })();
-    </script>
-    """
-    components.html(js_persistencia, height=1, width=1)
-
-# Ejecutar el script de auto-login al inicio
-inyectar_auto_login()
-
-# ==========================================
-# 🚪 PANTALLA DE LOGIN (Solo si no está activo)
-# ==========================================
 if not st.session_state.licencia_activa:
     st.markdown("""
     <style>
@@ -109,28 +72,37 @@ if not st.session_state.licencia_activa:
                 st.session_state.licencia_activa = True
                 st.session_state.usuario_actual = "👑 Admin Master"
                 st.query_params["zt_token"] = "admin_master_device"
+                st.success("¡Acceso Admin Concedido!")
+                st.rerun()
+            
+            licencias = cargar_licencias()
+            if key_input in licencias:
+                datos = licencias[key_input]
+                try:
+                    fecha_venc = datetime.strptime(datos['vence'], '%Y-%m-%d').date()
+                    if datetime.now().date() > fecha_venc:
+                        st.error(f"❌ Key expirada el {datos['vence']}.")
+                        st.stop()
+                except:
+                    st.error("❌ Error al validar la fecha.")
+                    st.stop()
+                
+                if datos.get('device_id') is None:
+                    nuevo_token = str(uuid.uuid4())
+                    datos['device_id'] = nuevo_token
+                    licencias[key_input] = datos
+                    guardar_licencias(licencias)
+                    st.query_params["zt_token"] = nuevo_token
+                else:
+                    st.query_params["zt_token"] = datos['device_id']
+                
+                st.session_state.licencia_activa = True
+                st.session_state.usuario_actual = f"Licencia ({key_input[:8]}...)"
+                st.success("✅ Acceso concedido. Dispositivo reconocido.")
                 st.rerun()
             else:
-                licencias = cargar_licencias()
-                if key_input in licencias:
-                    datos = licencias[key_input]
-                    if datetime.now().date() <= datetime.strptime(datos['vence'], '%Y-%m-%d').date():
-                        # 🔧 CORRECCIÓN CLAVE: Si la key existe, usamos su device_id y lo forzamos en la URL
-                        current_token = datos.get('device_id')
-                        if not current_token:
-                            current_token = str(uuid.uuid4())
-                            datos['device_id'] = current_token
-                            guardar_licencias(licencias)
-                        
-                        # Forzar el token en la URL para que el auto-login funcione
-                        st.query_params["zt_token"] = current_token
-                        st.session_state.licencia_activa = True
-                        st.session_state.usuario_actual = f"Licencia ({key_input[:8]}...)"
-                        st.rerun()
-                    else:
-                        st.error("❌ Key expirada.")
-                else:
-                    st.error("❌ Key no encontrada.")
+                st.error("❌ Key no encontrada o inválida.")
+    
     st.markdown('</div>', unsafe_allow_html=True)
     st.stop()
 
@@ -184,7 +156,8 @@ def entrenar_modelo_ml():
 def aprender_en_segundo_plano(señal, resultado, indicadores, precio_real_entrada):
     hist = cargar_historial()
     pesos = cargar_patrones()
-    hist.append({'fecha': datetime.now().strftime('%H:%M:%S'), 'señal': señal, 'resultado': resultado, 'precio_entrada_real': precio_real_entrada, 'indicadores': indicadores})
+    registro = {'fecha': datetime.now().strftime('%H:%M:%S'), 'señal': señal, 'resultado': resultado, 'precio_entrada_real': precio_real_entrada, 'indicadores': indicadores}
+    hist.append(registro)
     pesos['total_ops'] += 1
     if resultado == 'GANADA': pesos['total_ganadas'] += 1
     pesos['winrate'] = (pesos['total_ganadas'] / pesos['total_ops'] * 100) if pesos['total_ops'] > 0 else 0.0
@@ -221,13 +194,11 @@ def obtener_precio_actual(codigo_par, tipo='crypto'):
         except: return None
 
 def analizar_par(codigo_par, tipo='crypto'):
-    if tipo == 'crypto':
-        df = obtener_datos_binance(codigo_par, interval='1m', limit=50)
-    else:
-        df = obtener_datos_yahoo(codigo_par, period="2d", interval="1m")
+    if tipo == 'crypto': df = obtener_datos_binance(codigo_par, interval='1m', limit=50)
+    else: df = obtener_datos_yahoo(codigo_par, period="2d", interval="1m")
     
     if df is None or len(df) < 20:
-        return {'señal': 'CALL', 'confianza': 65, 'razon': "Análisis base", 'indicadores': {'rsi': 50, 'precio_relativo': 0.5}}
+        return {'señal': 'CALL', 'confianza': 65, 'razon': "Análisis base por defecto", 'indicadores': {'rsi': 50, 'precio_relativo': 0.5}}
     
     c_close = 'close' if tipo == 'crypto' else 'Close'
     try:
@@ -247,13 +218,13 @@ def analizar_par(codigo_par, tipo='crypto'):
             razones = []
             if rsi < 45: razones.append("RSI Bajo")
             if precio <= bb_low: razones.append("Toque Banda Inferior")
-            if not razones: razones.append("Tendencia Alcista")
+            if not razones: razones.append("Tendencia Alcista Corta")
         else:
             dirección = 'PUT'
             razones = []
             if rsi > 55: razones.append("RSI Alto")
             if precio >= bb_high: razones.append("Toque Banda Superior")
-            if not razones: razones.append("Tendencia Bajista")
+            if not razones: razones.append("Tendencia Bajista Corta")
 
         confianza_base = 70
         modelo_ml = entrenar_modelo_ml()
@@ -264,7 +235,7 @@ def analizar_par(codigo_par, tipo='crypto'):
             probabilidad = modelo_ml.predict_proba([[indicadores['rsi'], indicadores['precio_relativo'], 1 if dirección == 'CALL' else 0]])
             confianza_ml = int(probabilidad[0][prediccion[0]] * 100)
             confianza = int((confianza_base + confianza_ml) / 2)
-            razones.append(f"ML ({confianza}%)")
+            razones.append(f"ML Ajustado ({confianza}%)")
         else:
             confianza = confianza_base
 
@@ -290,9 +261,6 @@ def reproducir_voz(mensaje):
     """
     st.markdown(js_code, unsafe_allow_html=True)
 
-# ==========================================
-# 📊 23 PARES ORIGINALES
-# ==========================================
 PARES = {
     'EUR/USD': {'codigo': 'EURUSD=X', 'tipo': 'forex'}, 'GBP/USD': {'codigo': 'GBPUSD=X', 'tipo': 'forex'},
     'USD/JPY': {'codigo': 'USDJPY=X', 'tipo': 'forex'}, 'AUD/USD': {'codigo': 'AUDUSD=X', 'tipo': 'forex'},
@@ -318,13 +286,17 @@ if 'precio_real_entrada' not in st.session_state: st.session_state.precio_real_e
 if 'voz_reproducida' not in st.session_state: st.session_state.voz_reproducida = False
 
 # ==========================================
-# 🎨 INTERFAZ VISUAL
+# 🎨 INTERFAZ + ANTI-DESCONEXIÓN
 # ==========================================
 CSS = """
 <style>
 #MainMenu, footer, header {visibility: hidden;}
 .block-container { padding-top: 5px !important; padding-bottom: 0px !important; padding-left: 8px !important; padding-right: 8px !important; max-width: 100% !important; }
 body { background: #000; color: #fff; font-family: Arial, sans-serif; margin: 0; padding: 0; }
+
+/* Ocultar el banner feo de "Reconnecting" de Streamlit */
+[data-testid="stStatusWidget"] { display: none !important; }
+
 .main-container { width: 100%; max-width: 450px; margin: 0 auto; display: flex; flex-direction: column; gap: 6px; }
 .header { background: linear-gradient(90deg, #1a0a2e, #0a1a2e); padding: 8px; border-radius: 8px; border: 1.5px solid #ffd700; text-align: center; }
 .header h1 { color: #ffd700; margin: 0; font-size: 18px; letter-spacing: 2px; }
@@ -355,6 +327,26 @@ body { background: #000; color: #fff; font-family: Arial, sans-serif; margin: 0;
 </style>
 """
 st.markdown(CSS, unsafe_allow_html=True)
+
+# ==========================================
+# 🔌 SCRIPT ANTI-DESCONEXIÓN INTELIGENTE
+# ==========================================
+st.markdown("""
+<script>
+(function() {
+    // Intenta hacer clic en "Rerun" o "Reconnect" si aparece el banner de Streamlit
+    setInterval(function() {
+        const buttons = document.querySelectorAll('button');
+        buttons.forEach(btn => {
+            if (btn.textContent.includes('Rerun') || btn.textContent.includes('Reconnect') || btn.textContent.includes('Reconectar')) {
+                console.log('🔄 Reconexión automática activada...');
+                btn.click();
+            }
+        });
+    }, 3000);
+})();
+</script>
+""", unsafe_allow_html=True)
 
 st.markdown('<div class="main-container">', unsafe_allow_html=True)
 st.markdown(f'<div class="header"><h1>⚡ ZT TRADERS PRO</h1><p>User: {st.session_state.usuario_actual} | IA AUTO-APRENDIZAJE</p></div>', unsafe_allow_html=True)
@@ -453,8 +445,7 @@ else:
         st.session_state.precio_real_entrada = obtener_precio_actual(codigo, tipo)
     
     señal = st.session_state.senal
-    if señal is None:
-        señal = {'señal': 'CALL', 'confianza': 60, 'razon': "Esperando"}
+    if señal is None: señal = {'señal': 'CALL', 'confianza': 60, 'razon': "Esperando"}
     
     es_call = señal['señal'] == 'CALL'
     segundos_restantes_op = 59 - segundo_actual
