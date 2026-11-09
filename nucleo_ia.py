@@ -456,6 +456,14 @@ def entrenar_modelo_vivo(historial):
     from sklearn.metrics import brier_score_loss
 
     ops = ops_validas_para_vivo(historial)
+    # ETIQUETAS LIMPIAS (v3.8): las operaciones juzgadas con precios
+    # sincronizados (Twelve Data en forex, Binance en crypto) valen mas
+    # que las juzgadas con el precio retrasado de Yahoo. Cuando hay
+    # suficientes operaciones limpias, el cerebro entrena SOLO con esas.
+    limpias = [h for h in ops if h.get("fuente_datos") in ("Twelve Data", "Binance")]
+    usando_limpias = len(limpias) >= MIN_OPS_MODELO_VIVO
+    if usando_limpias:
+        ops = limpias
     if len(ops) < MIN_OPS_MODELO_VIVO:
         return None
     X = np.nan_to_num(np.array([_extender_vivo(h["features"][:len(FEATURES_BASE)],
@@ -481,6 +489,8 @@ def entrenar_modelo_vivo(historial):
     metricas = {
         "fecha_entrenamiento": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC"),
         "ejemplos_entrenamiento": int(len(ops)),
+        "etiquetas_limpias": bool(usando_limpias),
+        "ops_etiqueta_limpia": int(len(limpias)),
         "winrate_prueba_%": round(float(y_te.mean()) * 100, 1),
         "precision_filtro_0.55_%": round(float(y_te[con_filtro].mean()) * 100, 1) if con_filtro.sum() else 0.0,
         "cobertura_filtro_0.55_%": round(float(con_filtro.mean()) * 100, 1),
