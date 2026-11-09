@@ -23,6 +23,9 @@
 #     trabaja en UTC; antes el reloj mostrado no era tu hora local).
 # 10) Si la ventana de cierre (seg 57-59) se pierde por una llamada lenta,
 #     la operacion se cierra al iniciar el siguiente ciclo, no se pierde.
+# 11) v2.1: el HTML de la zona dinamica se limpia de indentacion antes de
+#     mostrarse (limpiar_html). Sin eso, Markdown lo trataba como bloque de
+#     codigo y la caja de la señal se veia como texto crudo <div>...</div>.
 # ============================================================
 import streamlit as st
 import streamlit.components.v1 as components
@@ -536,6 +539,23 @@ components.html(widget_html, height=185)
 
 # ---------------- Helpers de la zona dinamica ----------------
 
+def limpiar_html(html):
+    """Quita la indentacion de cada linea de un bloque HTML.
+
+    Sin esto, Markdown interpreta las lineas HTML con varios espacios al
+    inicio como un BLOQUE DE CODIGO y las muestra como texto crudo
+    (ese es el error de la captura: el <div> de la señal se veia sin pintar).
+    """
+    return "\n".join(linea.strip() for linea in str(html).strip().splitlines())
+
+class ContenedorLimpio:
+    """Envuelve st.empty() para limpiar siempre el HTML antes de mostrarlo."""
+    def __init__(self, contenedor):
+        self._contenedor = contenedor
+
+    def markdown(self, html, **kwargs):
+        self._contenedor.markdown(limpiar_html(html), **kwargs)
+
 def barra_confianza_html(confianza_actual, titulo):
     if confianza_actual >= 75:
         clase_barra, icono = "confianza-alta", "🔊"
@@ -597,7 +617,7 @@ def zona_dinamica(codigo_f, tipo_f):
     """, unsafe_allow_html=True)
     st.markdown(f'<div class="hora-box"><span>🕐 {hora_actual}</span></div>', unsafe_allow_html=True)
 
-    contenedor = st.empty()
+    contenedor = ContenedorLimpio(st.empty())
 
     # FASE 1: ESCANEO (minutos pares, segundos 0-54)
     if minuto_es_par and segundo_actual < 55:
