@@ -278,8 +278,17 @@ if "pesos" not in st.session_state:
     st.session_state.pesos = {**PATRONES_BASE, **leer_json(ARCHIVO_PATRONES, {})}
 
 def resetear_memoria():
-    for archivo in (ARCHIVO_HISTORIAL, ARCHIVO_PATRONES):
+    # Red de seguridad (v3.8.1): antes de borrar, deja una copia automatica
+    # (historial_respaldo_auto.json / patrones_respaldo_auto.json) para que
+    # un Reset accidental se pueda deshacer desde el panel de Respaldo.
+    import shutil
+    for archivo, copia in ((ARCHIVO_HISTORIAL, "historial_respaldo_auto.json"),
+                           (ARCHIVO_PATRONES, "patrones_respaldo_auto.json")):
         if os.path.exists(archivo):
+            try:
+                shutil.copy(archivo, copia)
+            except Exception:
+                pass
             os.remove(archivo)
     st.session_state.hist_cache = []
     st.session_state.pesos = dict(PATRONES_BASE)
@@ -827,16 +836,28 @@ st.markdown(CSS, unsafe_allow_html=True)
 # ---------------- Parte estatica (ya NO se recarga cada segundo) ----------------
 
 st.markdown('<div class="main-container">', unsafe_allow_html=True)
-st.markdown(f'<div class="header"><span class="badge-version">v3.8</span><h1>⚡ ZT TRADERS PRO</h1><p>User: {st.session_state.usuario_actual} · IA AUTO-APRENDIZAJE</p></div>', unsafe_allow_html=True)
+st.markdown(f'<div class="header"><span class="badge-version">v3.9</span><h1>⚡ ZT TRADERS PRO</h1><p>User: {st.session_state.usuario_actual} · IA AUTO-APRENDIZAJE</p></div>', unsafe_allow_html=True)
 
 col1, col2 = st.columns([3, 1])
 with col1:
     par_nombre = st.selectbox("", list(PARES.keys()), index=list(PARES.keys()).index(st.session_state.par_sel), label_visibility="collapsed")
 with col2:
     if st.button("🗑️ Reset", key="reset_btn", use_container_width=True):
-        resetear_memoria()
-        reiniciar_ciclo()
-        st.rerun()
+        st.session_state.confirmar_reset = True
+    if st.session_state.get("confirmar_reset"):
+        st.warning("⚠️ El Reset borra el historial de aprendizaje y los contadores. "
+                   "Quedará una copia automática de seguridad, pero el aprendizaje vuelve a cero.")
+        _cc1, _cc2 = st.columns(2)
+        with _cc1:
+            if st.button("✅ Sí, borrar todo", key="reset_confirmar", use_container_width=True):
+                st.session_state.confirmar_reset = False
+                resetear_memoria()
+                reiniciar_ciclo()
+                st.rerun()
+        with _cc2:
+            if st.button("❌ Cancelar", key="reset_cancelar", use_container_width=True):
+                st.session_state.confirmar_reset = False
+                st.rerun()
 
 if par_nombre != st.session_state.par_sel:
     st.session_state.par_sel = par_nombre
@@ -926,6 +947,14 @@ if st.session_state.usuario_actual.startswith("👑"):
                             _por_reg[_rn] = (_a + 1, _b + (1 if _h.get("resultado") == "GANADA" else 0))
                     for _rn, (_n, _g) in _por_reg.items():
                         _lineas.append(f"Régimen {_rn}: {_g}/{_n} ganadas ({_g / _n * 100:.0f}%)")
+                    _aut = nucleo_ia.autopsia_perdidas(_hist)
+                    if _aut:
+                        _tot_perd = sum(_aut.values())
+                        _lineas.append("Autopsia de pérdidas (causa probable): " +
+                                       "; ".join(f"{c}: {n} de {_tot_perd}" for c, n in _aut.items()))
+                    _pos_d = nucleo_ia.postura_sesion(_hist)
+                    _lineas.append(f"Postura de la sesión según resultados recientes: {_pos_d[0]} "
+                                   f"(acierto {_pos_d[1]}% en las últimas {_pos_d[2]} operaciones)")
                 with st.spinner("La IA está leyendo tu historial..."):
                     _informe = razonamiento_ia.analizar_historial("\n".join(_lineas))
                 if _informe:
@@ -952,6 +981,14 @@ if st.session_state.usuario_actual.startswith("👑"):
         else:
             st.caption("Todavía no hay modelo en vivo (se crea solo al llegar a 60 operaciones reales).")
         st.caption(f"Operaciones en el historial ahora: {len(_hist_respaldo)}.")
+        if os.path.exists("historial_respaldo_auto.json"):
+            with open("historial_respaldo_auto.json", "r", encoding="utf-8") as _f:
+                st.download_button("🛟 Descargar copia automática pre-Reset (historial)",
+                                   data=_f.read(),
+                                   file_name="historial_respaldo_auto.json",
+                                   mime="application/json", use_container_width=True)
+            st.caption("Esa copia se guardó sola justo antes del último Reset. Para deshacerlo: "
+                       "renómbrala como historial.json, súbela junto a los archivos de la app y reinicia la app.")
 elif _info_modelo:
     st.caption(f"🧠 IA v3 activa — modelo entrenado el {_info_modelo['metricas']['fecha_entrenamiento']}")
 
@@ -1004,6 +1041,25 @@ with st.expander("📈 Aprendizaje en vivo — así va aprendiendo la app"):
         st.caption(f"🎯 Operaciones con etiqueta limpia (juzgadas con precio sincronizado de Twelve Data o Binance): "
                    f"{_limpias} de {_n_val}. Al llegar a {nucleo_ia.MIN_OPS_MODELO_VIVO} limpias, el cerebro entrenará solo con esas "
                    f"y dejará fuera las que se juzgaron con el precio retrasado de Yahoo.")
+        _postura, _post_wr, _post_n = nucleo_ia.postura_sesion(_hist)
+        if _postura == "REDUCIR":
+            st.warning(f"🧭 Postura de la sesión: **REDUCIR** — el acierto reciente es {_post_wr}% en las últimas {_post_n} operaciones. "
+                       f"La recomendación del entrenador de exposición: opera solo señales de Nivel Alta o descansa el par un rato.")
+        elif _postura == "NEUTRA":
+            st.info(f"🧭 Postura de la sesión: **NEUTRA** — acierto reciente {_post_wr}% en las últimas {_post_n} operaciones. Sé selectivo: prioriza Nivel Alta y Media.")
+        elif _postura == "PLENA":
+            st.success(f"🧭 Postura de la sesión: **PLENA** — acierto reciente {_post_wr}% en las últimas {_post_n} operaciones. El sistema viene rindiendo; mantén la disciplina igual.")
+        _autopsia = nucleo_ia.autopsia_perdidas(_hist)
+        _n_perdidas = sum(_autopsia.values())
+        if _n_perdidas:
+            st.caption("🔬 Autopsia de pérdidas — de qué están muriendo las operaciones:")
+            if _n_perdidas >= 10:
+                _filas_aut = [{"causa probable": c, "pérdidas": n,
+                               "%": round(n / _n_perdidas * 100, 1)} for c, n in _autopsia.items()]
+            else:
+                _filas_aut = [{"causa probable": c, "pérdidas": n,
+                               "%": "muestra chica"} for c, n in _autopsia.items()]
+            st.dataframe(pd.DataFrame(_filas_aut), use_container_width=True, hide_index=True)
         _c1, _c2 = st.columns(2)
         with _c1:
             st.caption("Acierto por par")
@@ -1128,10 +1184,12 @@ def zona_dinamica(codigo_f, tipo_f):
                 try:
                     pre = analizar_par(codigo_f, tipo_f)
                     if pre.get('señal') in ('CALL', 'PUT'):
+                        _postura_txt = nucleo_ia.postura_sesion(st.session_state.hist_cache)
                         op = razonamiento_ia.segunda_opinion({
                             'par': codigo_f, 'tipo': tipo_f, 'direccion': pre['señal'],
                             'confianza': pre['confianza'], 'nivel': pre.get('nivel') or '-',
                             'razon': pre['razon'], 'regimen': '',
+                            'postura': f"{_postura_txt[0]} (acierto reciente: {_postura_txt[1]}% en {_postura_txt[2]} ops)",
                             'advertencias': pre.get('advertencias') or []})
                         if op:
                             op['direccion'] = pre['señal']
@@ -1149,7 +1207,9 @@ def zona_dinamica(codigo_f, tipo_f):
                     dfc, _fuente_clima = obtener_datos_forex(codigo_f)
                 if dfc is not None and len(dfc) > 61:
                     var = (float(dfc['close'].iloc[-1]) / float(dfc['close'].iloc[-61]) - 1) * 100
-                    txt = razonamiento_ia.clima_sesion(codigo_f, tipo_f, round(var, 2), "segun el analisis del ciclo")
+                    _pos = nucleo_ia.postura_sesion(st.session_state.hist_cache)
+                    txt = razonamiento_ia.clima_sesion(codigo_f, tipo_f, round(var, 2),
+                        f"segun el analisis del ciclo; postura de la sesión: {_pos[0]} (acierto reciente {_pos[1]}% en {_pos[2]} operaciones)")
                     if txt:
                         st.session_state.clima_ia = txt
             except Exception:
