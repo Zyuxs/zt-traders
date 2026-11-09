@@ -507,11 +507,28 @@ def _td_request(codigo_yahoo, outputsize):
     except Exception:
         return None
 
-@st.cache_data(ttl=45, show_spinner=False)
+@st.cache_data(ttl=100, show_spinner=False)
 def _serie_twelvedata(codigo_yahoo, outputsize=120):
+    # ttl 100s (v3.9.1): el analisis corre en los segundos 40 y 55 de cada
+    # ciclo de 2 min; con 45s se pagaban ~2 creditos por ciclo y el plan
+    # Basic (800/dia) se agotaba a mitad del dia, cayendo a Yahoo.
     return _td_request(codigo_yahoo, outputsize)
 
-@st.cache_data(ttl=10, show_spinner=False)
+@st.cache_data(ttl=300, show_spinner=False)
+def _uso_twelvedata():
+    """Creditos Twelve Data consumidos hoy (para vigilar el plan Basic)."""
+    key = _twelvedata_key()
+    if not key:
+        return None
+    try:
+        r = requests.get("https://api.twelvedata.com/api_usage",
+                         params={"apikey": key}, timeout=10)
+        d = r.json()
+        return (d.get("current_day_usage"), d.get("daily_limit"))
+    except Exception:
+        return None
+
+@st.cache_data(ttl=25, show_spinner=False)
 def _precio_twelvedata(codigo_yahoo):
     df = _td_request(codigo_yahoo, 1)
     if df is not None and len(df):
@@ -836,7 +853,7 @@ st.markdown(CSS, unsafe_allow_html=True)
 # ---------------- Parte estatica (ya NO se recarga cada segundo) ----------------
 
 st.markdown('<div class="main-container">', unsafe_allow_html=True)
-st.markdown(f'<div class="header"><span class="badge-version">v3.9</span><h1>⚡ ZT TRADERS PRO</h1><p>User: {st.session_state.usuario_actual} · IA AUTO-APRENDIZAJE</p></div>', unsafe_allow_html=True)
+st.markdown(f'<div class="header"><span class="badge-version">v3.9.1</span><h1>⚡ ZT TRADERS PRO</h1><p>User: {st.session_state.usuario_actual} · IA AUTO-APRENDIZAJE</p></div>', unsafe_allow_html=True)
 
 col1, col2 = st.columns([3, 1])
 with col1:
@@ -981,6 +998,10 @@ if st.session_state.usuario_actual.startswith("👑"):
         else:
             st.caption("Todavía no hay modelo en vivo (se crea solo al llegar a 60 operaciones reales).")
         st.caption(f"Operaciones en el historial ahora: {len(_hist_respaldo)}.")
+        _uso_td = _uso_twelvedata()
+        if _uso_td and _uso_td[0] is not None:
+            st.caption(f"📊 Créditos Twelve Data usados hoy: {_uso_td[0]} de {_uso_td[1]}. "
+                       f"Si se acaban, la app cae a Yahoo (precio retrasado) hasta el día siguiente.")
         if os.path.exists("historial_respaldo_auto.json"):
             with open("historial_respaldo_auto.json", "r", encoding="utf-8") as _f:
                 st.download_button("🛟 Descargar copia automática pre-Reset (historial)",
@@ -1024,6 +1045,10 @@ with st.expander("📈 Aprendizaje en vivo — así va aprendiendo la app"):
         _ganadas = sum(1 for _h in _validas if _h["resultado"] == "GANADA")
         st.caption(f"Operaciones reales registradas: {_n_val} · Acierto global: {round(_ganadas / _n_val * 100, 1)}% "
                    f"(con payout 86% en IQ Option necesitas más del 53,8% para ganar dinero).")
+        _n_empates = sum(1 for _h in _hist if _h.get("resultado") == "EMPATE")
+        if _n_empates:
+            st.caption(f"↔️ Empates (el precio de cierre fue igual al de entrada; en IQ Option te devuelven el monto): "
+                       f"{_n_empates}. No cuentan como pérdida ni entran al aprendizaje del cerebro.")
         if _n_val >= 20:
             _espejo = round((_n_val - _ganadas) / _n_val * 100, 1)
             st.caption(f"🔁 Señal espejo: operando TODO al revés de lo que dijo la app, el acierto habría sido {_espejo}%. "
@@ -1130,9 +1155,18 @@ def cerrar_operacion(codigo_op, tipo_op):
     precio_actual = obtener_precio_actual(codigo_op, tipo_op)
     resultado = 'PERDIDA'
     if precio_actual is not None:
-        es_call = señal['señal'] == 'CALL'
-        if (es_call and precio_actual > entrada) or (not es_call and precio_actual < entrada):
-            resultado = 'GANADA'
+        # EMPATE (v3.9.1): si el cierre es IGUAL a la entrada, en IQ Option
+        # te devuelven el monto: no es perdida. Contarlo como PERDIDA
+        # envenenaba las estadisticas y el entrenamiento, sobre todo en
+        # rangos (precio casi inmovil) y con los precios escalonados de
+        # Yahoo. El empate no entra al aprendizaje (ops_validas lo excluye).
+        _dec = 3 if "JPY" in str(codigo_op) else 5
+        if round(float(precio_actual), _dec) == round(float(entrada), _dec):
+            resultado = 'EMPATE'
+        else:
+            es_call = señal['señal'] == 'CALL'
+            if (es_call and precio_actual > entrada) or (not es_call and precio_actual < entrada):
+                resultado = 'GANADA'
     aprender(señal['señal'], resultado, señal.get('indicadores', {}), entrada, señal.get('features'),
              par=codigo_op, tipo=tipo_op, nivel=señal.get('nivel'), confianza=señal.get('confianza'),
              fuente=señal.get('fuente'))
