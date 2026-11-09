@@ -41,7 +41,26 @@ FEATURES_BASE = [
     "cuerpo",           # (cierre-apertura)/(max-min) de la vela, -1..1
     "rango_rel",        # (max-min)/precio*100
     "hora",             # hora UTC 0-23
+    # --- v3.2: conocimiento de trader profesional (accion del precio) ---
+    "mecha_sup",        # mecha superior / rango (rechazo desde arriba)
+    "mecha_inf",        # mecha inferior / rango (rechazo desde abajo)
+    "envolvente",       # +1 envolvente alcista, -1 bajista, 0 ninguna
+    "pin_bar",          # +1 pin bar alcista, -1 bajista, 0 ninguna
+    "inside_bar",       # 1 si la vela quedo dentro de la anterior
+    "dist_resistencia", # distancia al maximo de 20 velas, en ATR (tope 10)
+    "dist_soporte",     # distancia al minimo de 20 velas, en ATR (tope 10)
+    "ruptura",          # +1 rompe maximo previo, -1 rompe minimo previo, 0 no
+    "posicion_rango",   # posicion del precio en su rango de 20 velas (0..1)
+    "regimen_cod",      # 0 rango, 1 tendencia alcista, 2 tendencia bajista, 3 volatil
 ]
+
+REGIMENES = {0: "Rango", 1: "Tendencia alcista", 2: "Tendencia bajista", 3: "Volátil"}
+
+def nombre_regimen(cod):
+    try:
+        return REGIMENES[int(round(float(cod)))]
+    except Exception:
+        return "Sin régimen"
 FEATURES_COMPLETAS = FEATURES_BASE + ["es_call"]
 
 # ---------------- Indicadores / variables ----------------
@@ -95,6 +114,43 @@ def agregar_indicadores(df):
     df["cuerpo"] = ((close - df["open"]) / rango_vela).clip(-1, 1)
     df["rango_rel"] = rango_vela / close * 100
     df["hora"] = _horas(df)
+
+    # --- v3.2: accion del precio, niveles y regimen ---
+    apertura = df["open"]
+    max_cuerpo = np.maximum(apertura, close)
+    min_cuerpo = np.minimum(apertura, close)
+    cuerpo_ratio = (close - apertura).abs() / rango_vela
+    df["mecha_sup"] = ((high - max_cuerpo) / rango_vela).clip(0, 1)
+    df["mecha_inf"] = ((min_cuerpo - low) / rango_vela).clip(0, 1)
+
+    prev_o = apertura.shift(1)
+    prev_c = close.shift(1)
+    env_alcista = (close > apertura) & (prev_c < prev_o) & (close >= prev_o) & (apertura <= prev_c)
+    env_bajista = (close < apertura) & (prev_c > prev_o) & (close <= prev_o) & (apertura >= prev_c)
+    df["envolvente"] = np.where(env_alcista, 1.0, np.where(env_bajista, -1.0, 0.0))
+    pin_alcista = (df["mecha_inf"] >= 0.6) & (cuerpo_ratio <= 0.35)
+    pin_bajista = (df["mecha_sup"] >= 0.6) & (cuerpo_ratio <= 0.35)
+    df["pin_bar"] = np.where(pin_alcista, 1.0, np.where(pin_bajista, -1.0, 0.0))
+    df["inside_bar"] = ((high <= high.shift(1)) & (low >= low.shift(1))).astype(float)
+
+    max_prev = high.shift(1).rolling(20).max()
+    min_prev = low.shift(1).rolling(20).min()
+    atr_seguro = df["_atr"].replace(0, np.nan)
+    df["dist_resistencia"] = ((max_prev - close) / atr_seguro).clip(0, 10)
+    df["dist_soporte"] = ((close - min_prev) / atr_seguro).clip(0, 10)
+    df["ruptura"] = np.where(close > max_prev, 1.0, np.where(close < min_prev, -1.0, 0.0))
+    rango_20 = (high.rolling(20).max() - low.rolling(20).min()).replace(0, np.nan)
+    df["posicion_rango"] = ((close - low.rolling(20).min()) / rango_20).clip(0, 1)
+
+    atr_q80 = df["atr_rel"].rolling(100, min_periods=50).quantile(0.8)
+    es_volatil = df["atr_rel"] >= atr_q80
+    df["regimen_cod"] = np.select(
+        [es_volatil,
+         (df["_adx"] >= 25) & (df["ema_gap"] > 0),
+         (df["_adx"] >= 25) & (df["ema_gap"] < 0)],
+        [3.0, 1.0, 2.0],
+        default=0.0,
+    )
     return df
 
 def fila_features(df_ind, pos):
@@ -137,6 +193,56 @@ def direccion_por_puntaje(rsi, precio, bb_low, bb_high, sma, sma_prev):
         direccion = "CALL" if rsi < 50 else "PUT"
         razones.append("Sin ventaja clara")
     return direccion, score, razones
+
+def evaluar_confluencia(f, direccion):
+    """Regla de confluencia del trader profesional.
+
+    f = dict de variables de la vela (por nombre). Devuelve
+    (confirmaciones, bloqueos, detalles): la señal solo deberia emitirse si
+    hay >= 2 confirmaciones y ningun bloqueo duro.
+    """
+    signo = 1 if direccion == "CALL" else -1
+    confirmaciones = 0
+    bloqueos = []
+    detalles = []
+
+    # 1) Tendencia (EMAs alineadas)
+    if f.get("ema_gap", 0) * signo > 0 and f.get("dist_ema50", 0) * signo > 0:
+        confirmaciones += 1
+        detalles.append("Tendencia a favor")
+    elif f.get("adx", 0) >= 30 and f.get("dist_ema50", 0) * signo < 0:
+        bloqueos.append(f"contra tendencia fuerte (ADX {int(f.get('adx', 0))})")
+
+    # 2) Nivel de soporte / resistencia cercano
+    d_res = f.get("dist_resistencia", 99)
+    d_sop = f.get("dist_soporte", 99)
+    if direccion == "CALL":
+        if d_sop <= 1.2 and d_res >= 1.5:
+            confirmaciones += 1
+            detalles.append("Cerca de soporte con espacio arriba")
+        if d_res < 0.4:
+            bloqueos.append("precio pegado a resistencia")
+    else:
+        if d_res <= 1.2 and d_sop >= 1.5:
+            confirmaciones += 1
+            detalles.append("Cerca de resistencia con espacio abajo")
+        if d_sop < 0.4:
+            bloqueos.append("precio pegado a soporte")
+
+    # 3) Patron de vela (envolvente o pin bar)
+    patron = f.get("envolvente", 0) or f.get("pin_bar", 0)
+    if patron * signo > 0:
+        confirmaciones += 1
+        detalles.append("Patrón de vela a favor")
+    elif patron * signo < 0:
+        detalles.append("Patrón de vela en contra")
+
+    # 4) Impulso o ruptura en la direccion
+    if f.get("roc_3", 0) * signo > 0 or f.get("ruptura", 0) * signo > 0:
+        confirmaciones += 1
+        detalles.append("Impulso a favor")
+
+    return confirmaciones, bloqueos, detalles
 
 # ---------------- Dataset de backtesting ----------------
 
@@ -230,9 +336,11 @@ def entrenar_modelo(X, y, grupos, tiempos):
     # Evaluacion por decision en el tramo de prueba
     idx_test = np.where(m_te)[0]
     posicion = {int(fila): k for k, fila in enumerate(idx_test)}
+    idx_regimen = FEATURES_BASE.index("regimen_cod")
     decisiones = {}
     for i in idx_test:
-        decisiones.setdefault(grupos[i], {})["call" if X[i][-1] == 1 else "put"] = (prob_test[posicion[int(i)]], y[i])
+        entrada_dec = decisiones.setdefault(grupos[i], {"regimen": X[i][idx_regimen]})
+        entrada_dec["call" if X[i][-1] == 1 else "put"] = (prob_test[posicion[int(i)]], y[i])
     por_umbral = []
     total_dec = len(decisiones)
     for umbral in (0.55, 0.60, 0.62, 0.65, 0.70):
@@ -254,12 +362,34 @@ def entrenar_modelo(X, y, grupos, tiempos):
             "cobertura_%": round(emitidas / total_dec * 100, 1) if total_dec else 0.0,
         })
 
+    # Precision por regimen al umbral de trabajo (0.62): el "diario" del cerebro
+    por_regimen = []
+    for cod, nombre in REGIMENES.items():
+        subset = {g: d for g, d in decisiones.items() if int(round(float(d.get("regimen", -1)))) == cod}
+        emitidas = ganadas = 0
+        for d in subset.values():
+            if "call" not in d or "put" not in d:
+                continue
+            p_call, y_call = d["call"]
+            p_put, _ = d["put"]
+            if max(p_call, p_put) < UMBRAL_CONFIANZA_ML:
+                continue
+            emitidas += 1
+            ganadas += y_call if p_call >= p_put else 1 - y_call
+        por_regimen.append({
+            "regimen": nombre,
+            "decisiones": int(len(subset)),
+            "emitidas_0.62": int(emitidas),
+            "precision_%": round(ganadas / emitidas * 100, 1) if emitidas else 0.0,
+        })
+
     metricas = {
         "fecha_entrenamiento": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC"),
         "ejemplos_entrenamiento": int(m_tr.sum()),
         "decisiones_prueba": int(total_dec),
         "brier": round(brier, 4),
         "por_umbral": por_umbral,
+        "por_regimen": por_regimen,
     }
     return {"modelo": modelo, "features": FEATURES_COMPLETAS, "metricas": metricas}
 
