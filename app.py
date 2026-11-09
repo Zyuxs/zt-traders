@@ -118,7 +118,8 @@ import json
 import os
 import time
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
+import html as _html
 from zoneinfo import ZoneInfo
 
 import nucleo_ia
@@ -861,7 +862,7 @@ st.markdown(CSS, unsafe_allow_html=True)
 # ---------------- Parte estatica (ya NO se recarga cada segundo) ----------------
 
 st.markdown('<div class="main-container">', unsafe_allow_html=True)
-st.markdown(f'<div class="header"><span class="badge-version">v3.10</span><h1>⚡ ZT TRADERS PRO</h1><p>User: {st.session_state.usuario_actual} · IA AUTO-APRENDIZAJE</p></div>', unsafe_allow_html=True)
+st.markdown(f'<div class="header"><span class="badge-version">v3.10.1</span><h1>⚡ ZT TRADERS PRO</h1><p>User: {st.session_state.usuario_actual} · IA AUTO-APRENDIZAJE</p></div>', unsafe_allow_html=True)
 if st.query_params.get("zt_token"):
     st.caption("✅ Este dispositivo está activado: guarda ESTA página en Favoritos o en la pantalla de inicio "
                "(con la dirección completa, tal como está arriba) y la próxima vez entrarás directo, sin escribir la clave.")
@@ -870,22 +871,26 @@ col1, col2 = st.columns([3, 1])
 with col1:
     par_nombre = st.selectbox("", list(PARES.keys()), index=list(PARES.keys()).index(st.session_state.par_sel), label_visibility="collapsed")
 with col2:
-    if st.button("🗑️ Reset", key="reset_btn", use_container_width=True):
-        st.session_state.confirmar_reset = True
-    if st.session_state.get("confirmar_reset"):
-        st.warning("⚠️ El Reset borra el historial de aprendizaje y los contadores. "
-                   "Quedará una copia automática de seguridad, pero el aprendizaje vuelve a cero.")
-        _cc1, _cc2 = st.columns(2)
-        with _cc1:
-            if st.button("✅ Sí, borrar todo", key="reset_confirmar", use_container_width=True):
-                st.session_state.confirmar_reset = False
-                resetear_memoria()
-                reiniciar_ciclo()
-                st.rerun()
-        with _cc2:
-            if st.button("❌ Cancelar", key="reset_cancelar", use_container_width=True):
-                st.session_state.confirmar_reset = False
-                st.rerun()
+    # v3.10.1 (seguridad): el Reset borra el aprendizaje COMPARTIDO de todos
+    # los usuarios; antes lo veia cualquier cliente con licencia. Ahora es
+    # solo para el Admin Master.
+    if st.session_state.usuario_actual.startswith("👑"):
+        if st.button("🗑️ Reset", key="reset_btn", use_container_width=True):
+            st.session_state.confirmar_reset = True
+        if st.session_state.get("confirmar_reset"):
+            st.warning("⚠️ El Reset borra el historial de aprendizaje y los contadores. "
+                       "Quedará una copia automática de seguridad, pero el aprendizaje vuelve a cero.")
+            _cc1, _cc2 = st.columns(2)
+            with _cc1:
+                if st.button("✅ Sí, borrar todo", key="reset_confirmar", use_container_width=True):
+                    st.session_state.confirmar_reset = False
+                    resetear_memoria()
+                    reiniciar_ciclo()
+                    st.rerun()
+            with _cc2:
+                if st.button("❌ Cancelar", key="reset_cancelar", use_container_width=True):
+                    st.session_state.confirmar_reset = False
+                    st.rerun()
 
 if par_nombre != st.session_state.par_sel:
     st.session_state.par_sel = par_nombre
@@ -1026,6 +1031,38 @@ if st.session_state.usuario_actual.startswith("👑"):
                                    mime="application/json", use_container_width=True)
             st.caption("Esa copia se guardó sola justo antes del último Reset. Para deshacerlo: "
                        "renómbrala como historial.json, súbela junto a los archivos de la app y reinicia la app.")
+    with st.expander("🔐 Seguridad y licencias — crear claves y revocar accesos"):
+        st.caption("Las claves generadas aqui son aleatorias (imposibles de adivinar por patron) y la licencia "
+                   "empieza a contar desde hoy. Si el enlace personal de un cliente se filtra (una captura, un "
+                   "reenvio), revoca su dispositivo: ese enlace muere y el cliente vuelve a entrar con su clave.")
+        _dias_lic = st.slider("Días de vigencia de la nueva licencia", 7, 365, 30)
+        if st.button("🎫 Generar licencia nueva", use_container_width=True):
+            import secrets as _secrets
+            _alf = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"
+            _nueva = "ZT-" + "-".join("".join(_secrets.choice(_alf) for _ in range(6)) for _ in range(3))
+            _lics = cargar_licencias()
+            _vence = (ahora_local().date() + timedelta(days=int(_dias_lic))).strftime("%Y-%m-%d")
+            _lics[_nueva] = {"vence": _vence, "device_id": None}
+            guardar_licencias(_lics)
+            st.session_state.ultima_licencia = (_nueva, _vence)
+        if st.session_state.get("ultima_licencia"):
+            _k, _v = st.session_state.ultima_licencia
+            st.success(f"Licencia creada — vence el {_v}. Copiala ahora y enviasela a tu cliente:")
+            st.code(_k)
+        _lics2 = cargar_licencias()
+        _con_dev = [(_k, _v) for _k, _v in _lics2.items() if _v.get("device_id")]
+        if _con_dev:
+            st.markdown("**Dispositivos con acceso guardado (enlace personal activo):**")
+            for _k, _v in _con_dev:
+                _c1, _c2 = st.columns([3, 1])
+                _c1.caption(f"🔑 {_k[:12]}... · vence {_v.get('vence')}")
+                if _c2.button("Revocar", key=f"rev_{_k[:16]}"):
+                    _v["device_id"] = None
+                    _lics2[_k] = _v
+                    guardar_licencias(_lics2)
+                    st.rerun()
+        else:
+            st.caption("Ninguna licencia tiene dispositivo vinculado todavia.")
 elif _info_modelo:
     st.caption(f"🧠 IA v3 activa — modelo entrenado el {_info_modelo['metricas']['fecha_entrenamiento']}")
 
@@ -1158,7 +1195,7 @@ def nivel_html_de(señal):
         html += f'<div class="info-panel">⚠️ {adv}</div>'
     op = señal.get('opinion_ia')
     if op:
-        html += f'<div class="info-panel">🧠 IA ({op["veredicto"]}): {op["motivo"]}</div>'
+        html += f'<div class="info-panel">🧠 IA ({op["veredicto"]}): {_html.escape(str(op["motivo"]))}</div>'
     return html
 
 def cerrar_operacion(codigo_op, tipo_op):
@@ -1265,7 +1302,7 @@ def zona_dinamica(codigo_f, tipo_f):
             except Exception:
                 pass
 
-        clima_html = f'<div class="info-panel">🧠 Clima IA: {st.session_state.clima_ia}</div>' if st.session_state.clima_ia else ''
+        clima_html = f'<div class="info-panel">🧠 Clima IA: {_html.escape(str(st.session_state.clima_ia))}</div>' if st.session_state.clima_ia else ''
         contenedor.markdown(f"""
         <div class="signal-box signal-wait">📊 ESCANEANDO MERCADO...</div>
         {clima_html}
