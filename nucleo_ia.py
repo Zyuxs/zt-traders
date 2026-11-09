@@ -480,6 +480,101 @@ def postura_sesion(historial, ventana=20):
         return ("NEUTRA", round(acierto, 1), len(ops))
     return ("REDUCIR", round(acierto, 1), len(ops))
 
+def _gatillo_rechazo(fv, es_call):
+    """Gatillo de rechazo en velas japonesas: pin bar, envolvente o mecha
+    larga contra el movimiento (el precio intento seguir y fue rechazado
+    en el nivel). Es la confirmacion clasica de que el extremo se agoto;
+    sin el, entrar en rango es entrar a mitad del ruido."""
+    if es_call:
+        return (fv.get("pin_bar", 0) == 1 or fv.get("envolvente", 0) == 1
+                or float(fv.get("mecha_inf", 0)) >= 0.5)
+    return (fv.get("pin_bar", 0) == -1 or fv.get("envolvente", 0) == -1
+            or float(fv.get("mecha_sup", 0)) >= 0.5)
+
+def lecciones_aprendidas(historial):
+    """LECCIONES DE LA EXPERIENCIA (v3.12): convierte la autopsia de
+    perdidas en reglas correctivas ACTIVAS, como el diario de un trader
+    profesional que revisa sus perdidas y se escribe reglas. Cada leccion
+    nace de una causa dominante con muestra suficiente (20+ perdidas) y
+    declara su evidencia y su efecto. Devuelve [{id, titulo, evidencia,
+    efecto, castigadas?}]."""
+    aut = autopsia_perdidas(historial)
+    total_perd = sum(aut.values())
+    lecciones = []
+    if total_perd >= 20:
+        n_rango = aut.get("En rango, sin confirmación", 0)
+        if n_rango / total_perd >= 0.40:
+            lecciones.append({
+                "id": "RANGO_SIN_GATILLO",
+                "titulo": "En rango sin gatillo de rechazo, no confiar",
+                "evidencia": f"{n_rango} de {total_perd} pérdidas fueron en rango sin confirmación",
+                "efecto": "En régimen de rango, si la vela no muestra rechazo (pin bar, envolvente o mecha larga a favor), el nivel de la señal baja un escalón."})
+        n_vol = aut.get("En volatilidad extrema", 0)
+        if n_vol / total_perd >= 0.25:
+            lecciones.append({
+                "id": "VOLATILIDAD",
+                "titulo": "En volatilidad extrema, vara más alta",
+                "evidencia": f"{n_vol} de {total_perd} pérdidas fueron en volatilidad extrema",
+                "efecto": "En régimen volátil el nivel de la señal baja un escalón."})
+        n_contra = aut.get("Contra la tendencia del régimen", 0)
+        if n_contra / total_perd >= 0.20:
+            lecciones.append({
+                "id": "CONTRA_TENDENCIA",
+                "titulo": "Contra la tendencia se pierde: castigo extra",
+                "evidencia": f"{n_contra} de {total_perd} pérdidas fueron contra la tendencia del régimen",
+                "efecto": "Las señales contra la tendencia del régimen bajan un escalón de nivel adicional."})
+    por_pd = {}
+    for h in ops_validas_para_vivo(historial):
+        clave = (h.get("par"), h.get("señal"))
+        n, g = por_pd.get(clave, (0, 0))
+        por_pd[clave] = (n + 1, g + (1 if h["resultado"] == "GANADA" else 0))
+    castigadas = []
+    for (par, direc), (n, g) in por_pd.items():
+        if par and direc in ("CALL", "PUT") and n >= 15 and g / n * 100 <= 35:
+            castigadas.append(f"{par} {direc} ({g}/{n} = {g / n * 100:.0f}%)")
+    if castigadas:
+        lecciones.append({
+            "id": "DIRECCION_CASTIGADA",
+            "titulo": "Direcciones castigadas por la experiencia",
+            "evidencia": "Acierto de 35% o menos con 15+ operaciones en: " + "; ".join(castigadas),
+            "efecto": "En esos pares y direcciones el nivel baja un escalón hasta que el acierto se recupere.",
+            "castigadas": castigadas})
+    return lecciones
+
+def aplicar_lecciones(nivel, fv, direccion, par, lecciones):
+    """Aplica las lecciones activas al NIVEL de una señal nueva. fv es el
+    dict de variables por nombre. Devuelve (nivel_ajustado, [motivos]).
+    La señal NUNCA se bloquea ni cambia de direccion (regla de Jose):
+    solo se gradua con la honestidad de la experiencia, como un trader
+    que ya perdio en ese mismo contexto y dejo de confiar a ciegas."""
+    if not lecciones or nivel not in ("Baja", "Media", "Alta"):
+        return nivel, []
+    orden = ["Baja", "Media", "Alta"]
+    idx = orden.index(nivel)
+    motivos = []
+    es_call = direccion == "CALL"
+    regimen = int(fv.get("regimen_cod", 0))
+    ids = {l["id"] for l in lecciones}
+
+    def _baja(motivo):
+        nonlocal idx
+        if idx > 0:
+            idx -= 1
+            motivos.append(motivo)
+
+    if "RANGO_SIN_GATILLO" in ids and regimen == 0 and not _gatillo_rechazo(fv, es_call):
+        _baja("rango sin gatillo de rechazo (pin bar/envolvente/mecha)")
+    if "VOLATILIDAD" in ids and regimen == 3:
+        _baja("régimen volátil castigado por las pérdidas")
+    if "CONTRA_TENDENCIA" in ids and ((regimen == 1 and not es_call) or (regimen == 2 and es_call)):
+        _baja("contra la tendencia del régimen")
+    for l in lecciones:
+        if l["id"] == "DIRECCION_CASTIGADA" and any(
+                c.startswith(f"{par} {direccion} ") or c.startswith(f"{par} {direccion}(")
+                for c in l.get("castigadas", [])):
+            _baja(f"{par} {direccion} castigado por sus resultados")
+    return orden[idx], motivos
+
 def entrenar_modelo_vivo(historial):
     """Cerebro EN VIVO: aprende de las operaciones reales de la app.
 
