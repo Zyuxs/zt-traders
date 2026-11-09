@@ -56,6 +56,17 @@
 #     bloqueos duros (pegado al nivel contrario o contra tendencia fuerte).
 # 20) El entrenamiento ahora tambien mide precision por REGIMEN, para saber
 #     en que tipo de mercado gana o pierde el cerebro (su "diario").
+# --- Correccion v3.3 (feedback de Jose: una noche entera sin señales) ---
+# 21) SEÑAL SIEMPRE: en cada ciclo de 2 minutos el cerebro emite CALL o PUT
+#     (la direccion mas probable). Los filtros de la v3.2 APILADOS (62% +
+#     confluencia >= 2 + sin bloqueos + puntaje >= 3) dejaban pasar casi
+#     nada: las probabilidades calibradas de 1 minuto rara vez llegan a 62%.
+# 22) La calidad ahora se GRADUA, no se bloquea: cada señal trae NIVEL
+#     (Alta / Media / Baja) y advertencias. La confluencia y los bloqueos
+#     suben o bajan el nivel y se muestran como avisos, no como veto.
+# 23) ESPERA queda SOLO para cuando no hay datos utilizables (insuficientes
+#     o desactualizados): sin datos no hay analisis posible.
+#     No hay que reentrenar: las variables y el modelo no cambian.
 # ============================================================
 import streamlit as st
 import streamlit.components.v1 as components
@@ -343,18 +354,20 @@ def _edad_ultimo_dato_seg(df):
 
 def analizar_par(codigo_par, tipo="crypto"):
     espera = {"señal": "ESPERA", "confianza": 0, "razon": "Datos insuficientes",
-              "indicadores": {"rsi": 50, "precio_relativo": 0.5}, "features": None}
+              "indicadores": {"rsi": 50, "precio_relativo": 0.5}, "features": None,
+              "nivel": "", "advertencias": []}
     df = obtener_datos_binance(codigo_par, interval="1m", limit=120) if tipo == "crypto" else obtener_datos_yahoo(codigo_par)
     if df is None or len(df) < 60:
         return espera
 
-    # Candado de frescura: con datos viejos no se opera (ej. forex el fin de semana)
+    # Unico ESPERA que queda: datos viejos = no hay mercado que analizar
     edad = _edad_ultimo_dato_seg(df)
     limite_edad = 180 if tipo == "crypto" else 420
     if edad is not None and edad > limite_edad:
         return {"señal": "ESPERA", "confianza": 0,
                 "razon": f"Datos desactualizados ({int(edad // 60)} min) — mercado cerrado o proveedor atrasado",
-                "indicadores": {"rsi": 50, "precio_relativo": 0.5}, "features": None}
+                "indicadores": {"rsi": 50, "precio_relativo": 0.5}, "features": None,
+                "nivel": "", "advertencias": []}
 
     try:
         d = nucleo_ia.agregar_indicadores(df)
@@ -377,7 +390,7 @@ def analizar_par(codigo_par, tipo="crypto"):
         regimen_nombre = nucleo_ia.nombre_regimen(fv.get("regimen_cod", 0))
         indicadores = {"rsi": rsi, "precio_relativo": float(fila["precio_relativo"])}
 
-        # CON MODELO (solo crypto): el modelo compara CALL vs PUT y ELIGE la direccion
+        # CON MODELO (solo crypto): elige direccion por probabilidad, SIEMPRE emite
         info_modelo = modelo_v3_info() if tipo == "crypto" else None
         p_call = nucleo_ia.prob_ganada(info_modelo, vector_base, True) if info_modelo else None
         p_put = nucleo_ia.prob_ganada(info_modelo, vector_base, False) if info_modelo else None
@@ -386,46 +399,50 @@ def analizar_par(codigo_par, tipo="crypto"):
             direccion = "CALL" if es_call else "PUT"
             p = max(p_call, p_put)
             confianza = int(round(p * 100))
-            if p < nucleo_ia.UMBRAL_CONFIANZA_ML:
-                return {"señal": "ESPERA", "confianza": confianza,
-                        "razon": f"Filtro IA: SUBE {int(round(p_call * 100))}% / BAJA {int(round(p_put * 100))}% — ninguna supera el {int(nucleo_ia.UMBRAL_CONFIANZA_ML * 100)}%",
-                        "indicadores": indicadores, "features": None}
             conf, bloqueos, detalles = nucleo_ia.evaluar_confluencia(fv, direccion)
+            advertencias = []
             if bloqueos:
-                return {"señal": "ESPERA", "confianza": confianza,
-                        "razon": f"Confluencia: bloqueo por {bloqueos[0]} (régimen {regimen_nombre})",
-                        "indicadores": indicadores, "features": None}
+                advertencias += [f"Bloqueo: {b}" for b in bloqueos]
             if conf < 2:
-                return {"señal": "ESPERA", "confianza": confianza,
-                        "razon": f"Confluencia insuficiente ({conf}/2) en régimen {regimen_nombre}",
-                        "indicadores": indicadores, "features": None}
+                advertencias.append(f"Confluencia baja ({conf}/2)")
+            if p >= 0.58 and conf >= 2 and not bloqueos:
+                nivel = "Alta"
+            elif p >= 0.54:
+                nivel = "Media"
+            else:
+                nivel = "Baja"
+            if p < 0.538:
+                advertencias.append("Prob. bajo el equilibrio de IQ Option (53,8% con payout 86%)")
             if direccion != direccion_puntaje:
                 razones.append(f"La IA elige {direccion} (el puntaje decía {direccion_puntaje})")
             razones.append(f"IA: SUBE {int(round(p_call * 100))}% vs BAJA {int(round(p_put * 100))}%")
-            razones.append(f"Régimen: {regimen_nombre} · Confluencia {conf}✓")
+            razones.append(f"Régimen: {regimen_nombre} · Confluencia {conf}✓ · Nivel {nivel}")
             return {"señal": direccion, "confianza": confianza, "razon": " | ".join(razones),
-                    "indicadores": indicadores, "features": vector_base + [1 if es_call else 0]}
+                    "indicadores": indicadores, "features": vector_base + [1 if es_call else 0],
+                    "nivel": nivel, "advertencias": advertencias}
 
-        # SIN MODELO: direccion por puntaje tecnico, con filtro de fuerza
-        if abs(score) < nucleo_ia.UMBRAL_SCORE_MIN:
-            return {"señal": "ESPERA", "confianza": 0,
-                    "razon": f"Filtro técnico: puntaje {score} sin ventaja suficiente",
-                    "indicadores": indicadores, "features": None}
-        conf, bloqueos, detalles = nucleo_ia.evaluar_confluencia(fv, direccion_puntaje)
+        # SIN MODELO: direccion por puntaje (desempate por tendencia), SIEMPRE emite
+        direccion = direccion_puntaje
+        conf, bloqueos, detalles = nucleo_ia.evaluar_confluencia(fv, direccion)
+        confianza = 50 + min(30, abs(score) * 6) + min(6, conf * 2) - (6 if bloqueos else 0)
+        confianza = max(50, min(int(confianza), 90))
+        advertencias = []
         if bloqueos:
-            return {"señal": "ESPERA", "confianza": 0,
-                    "razon": f"Confluencia: bloqueo por {bloqueos[0]} (régimen {regimen_nombre})",
-                    "indicadores": indicadores, "features": None}
+            advertencias += [f"Bloqueo: {b}" for b in bloqueos]
         if conf < 2:
-            return {"señal": "ESPERA", "confianza": 0,
-                    "razon": f"Confluencia insuficiente ({conf}/2) en régimen {regimen_nombre}",
-                    "indicadores": indicadores, "features": None}
-        confianza = 55 + min(30, abs(score) * 6)
-        razones.append(f"Régimen: {regimen_nombre} · Confluencia {conf}✓")
+            advertencias.append(f"Confluencia baja ({conf}/2)")
+        if confianza >= 70 and conf >= 2 and not bloqueos:
+            nivel = "Alta"
+        elif confianza >= 58:
+            nivel = "Media"
+        else:
+            nivel = "Baja"
+        razones.append(f"Régimen: {regimen_nombre} · Confluencia {conf}✓ · Nivel {nivel}")
         razones.append("Sin modelo IA" + (" (forex)" if tipo != "crypto" else " entrenado"))
-        return {"señal": direccion_puntaje, "confianza": max(50, min(int(confianza), 95)),
+        return {"señal": direccion, "confianza": confianza,
                 "razon": " | ".join(razones), "indicadores": indicadores,
-                "features": vector_base + [1 if direccion_puntaje == "CALL" else 0]}
+                "features": vector_base + [1 if direccion == "CALL" else 0],
+                "nivel": nivel, "advertencias": advertencias}
     except Exception:
         return espera
 
@@ -640,6 +657,16 @@ def barra_confianza_html(confianza_actual, titulo):
     </div>
     """
 
+def nivel_html_de(señal):
+    nivel = señal.get('nivel') or ''
+    if not nivel:
+        return ""
+    emoji = {"Alta": "🟢", "Media": "🟡", "Baja": "🔴"}.get(nivel, "⚪")
+    html = f'<div class="info-panel">{emoji} Nivel de la señal: <strong>{nivel}</strong></div>'
+    for adv in (señal.get('advertencias') or []):
+        html += f'<div class="info-panel">⚠️ {adv}</div>'
+    return html
+
 def cerrar_operacion(codigo_op, tipo_op):
     """Evalua la operacion abierta con el precio actual y la registra una sola vez."""
     señal = st.session_state.senal
@@ -710,9 +737,9 @@ def zona_dinamica(codigo_f, tipo_f):
 
         señal = st.session_state.senal or {'señal': 'ESPERA', 'confianza': 0, 'razon': 'Sin datos'}
         if señal['señal'] == 'ESPERA':
-            contenedor.markdown("""
-            <div class="signal-box signal-wait">⏸️ SIN SEÑAL — DATOS INSUFICIENTES</div>
-            <div class="info-panel">Este ciclo <strong>no se opera ni se registra</strong>. Antes se inventaba un CALL al 65%.</div>
+            contenedor.markdown(f"""
+            <div class="signal-box signal-wait">⏸️ SIN SEÑAL ESTE CICLO</div>
+            <div class="info-panel">Motivo: <strong>{señal["razon"]}</strong></div>
             """, unsafe_allow_html=True)
             return
 
@@ -722,12 +749,12 @@ def zona_dinamica(codigo_f, tipo_f):
 
         voz_html = ""
         if not st.session_state.voz_reproducida:
-            if confianza_actual >= 75:
+            if señal.get('nivel') == 'Alta':
                 tipo_texto = "COMPRA" if es_call else "VENTA"
-                reproducir_voz(f"Atención. Señal de alta confianza. {tipo_texto}. {confianza_actual} por ciento. Entrar ahora.")
-                voz_html = f'<div class="voz-indicator">🔊 VOZ ACTIVADA - {confianza_actual}%</div>'
+                reproducir_voz(f"Atención. Señal de nivel alto. {tipo_texto}. {confianza_actual} por ciento. Entrar ahora.")
+                voz_html = f'<div class="voz-indicator">🔊 VOZ ACTIVADA - Nivel Alta {confianza_actual}%</div>'
             else:
-                voz_html = f'<div class="voz-indicator">🔇 Confianza {confianza_actual}% - Voz silenciada (mínimo 75%)</div>'
+                voz_html = f'<div class="voz-indicator">🔇 Nivel {señal.get("nivel", "-")} {confianza_actual}% - Voz solo en nivel Alta</div>'
             st.session_state.voz_reproducida = True
 
         clase_box = "signal-call" if es_call else "signal-put"
@@ -737,6 +764,7 @@ def zona_dinamica(codigo_f, tipo_f):
         contenedor.markdown(
             voz_html
             + barra_confianza_html(confianza_actual, "NIVEL DE CONFIANZA DE LA SEÑAL")
+            + nivel_html_de(señal)
             + f"""
             <div class="signal-box {clase_box}">{tipo_signal}</div>
             <div class="info-panel">Razón: <strong>{señal["razon"]}</strong></div>
@@ -776,6 +804,7 @@ def zona_dinamica(codigo_f, tipo_f):
 
     contenedor.markdown(
         barra_confianza_html(confianza_actual, "CONFIANZA DE LA OPERACIÓN EN CURSO")
+        + nivel_html_de(señal)
         + f"""
         <div class="signal-box {clase_box}">{tipo_signal}</div>
         {entrada_html}
