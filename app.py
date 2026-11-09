@@ -221,9 +221,11 @@ if device_token and not st.session_state.licencia_activa:
 if not st.session_state.licencia_activa:
     st.markdown("""
     <style>
-    body { background: #000; color: #fff; font-family: Arial, sans-serif; }
-    .login-container { max-width: 320px; margin: 60px auto; padding: 25px; background: linear-gradient(135deg, #0a0a1a, #1a0a2e); border-radius: 12px; border: 2px solid #ffd700; text-align: center; }
-    .login-title { color: #ffd700; font-size: 24px; font-weight: bold; }
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;700;900&display=swap');
+    body { background: #04060d; color: #eef2ff; font-family: 'Inter', Arial, sans-serif; }
+    .stApp { background: radial-gradient(900px 500px at 50% 0%, #12224a 0%, #04060d 70%) !important; }
+    .login-container { max-width: 330px; margin: 70px auto; padding: 30px 25px; background: linear-gradient(160deg, rgba(255,255,255,0.07), rgba(255,255,255,0.02)); border-radius: 20px; border: 1px solid rgba(140,170,255,0.30); text-align: center; box-shadow: 0 18px 44px rgba(0,0,0,0.5); }
+    .login-title { font-size: 25px; font-weight: 900; letter-spacing: 3px; background: linear-gradient(90deg, #7dd3fc, #a5b4fc, #f0abfc); -webkit-background-clip: text; background-clip: text; color: transparent; }
     </style>
     """, unsafe_allow_html=True)
     st.markdown('<div class="login-container"><div class="login-title">⚡ ZT TRADERS</div><div style="color:#aaa; font-size:11px;">Sistema de Acceso Privado</div>', unsafe_allow_html=True)
@@ -667,13 +669,19 @@ def _ia_bool(nombre, defecto=False):
     return str(v).strip().lower() in ("1", "true", "si", "sí", "yes", "on")
 
 def ia_configurar_desde_secrets():
-    razonamiento_ia.configurar(
-        proveedor=_secret("ia_proveedor", "IA_PROVEEDOR") or "gemini",
-        api_key=_secret("ia_api_key", "IA_API_KEY") or "",
-        modelo=_secret("ia_modelo", "IA_MODELO"),
-        base_url=_secret("ia_base_url", "IA_BASE_URL"),
-    )
-    return razonamiento_ia.disponible()
+    # Blindado (v3.7.1): si el modulo razonamiento_ia.py no es el correcto o
+    # falla por lo que sea, la capa IA se apaga en silencio y la app sigue
+    # dando señales con normalidad. Nunca debe tumbar la zona dinamica.
+    try:
+        razonamiento_ia.configurar(
+            proveedor=_secret("ia_proveedor", "IA_PROVEEDOR") or "gemini",
+            api_key=_secret("ia_api_key", "IA_API_KEY") or "",
+            modelo=_secret("ia_modelo", "IA_MODELO"),
+            base_url=_secret("ia_base_url", "IA_BASE_URL"),
+        )
+        return razonamiento_ia.disponible()
+    except Exception:
+        return False
 
 def ia_opinion_activa():
     return _ia_bool("ia_segunda_opinion") and ia_configurar_desde_secrets()
@@ -749,44 +757,54 @@ def reiniciar_ciclo():
 
 CSS = """
 <style>
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800;900&display=swap');
 #MainMenu, footer, header {visibility: hidden;}
-.block-container { padding-top: 5px !important; padding-bottom: 0px !important; padding-left: 8px !important; padding-right: 8px !important; max-width: 100% !important; }
-body { background: #000; color: #fff; font-family: Arial, sans-serif; }
-.main-container { width: 100%; max-width: 450px; margin: 0 auto; display: flex; flex-direction: column; gap: 6px; }
-.header { background: linear-gradient(90deg, #1a0a2e, #0a1a2e); padding: 8px; border-radius: 8px; border: 1.5px solid #ffd700; text-align: center; }
-.header h1 { color: #ffd700; margin: 0; font-size: 18px; letter-spacing: 2px; }
-.header p { color: #aaa; margin: 2px 0 0 0; font-size: 10px; }
-.stats-row { display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px; }
-.stat-box { background: linear-gradient(135deg, #0a1a2e, #1a0a2e); border: 1px solid #ffd700; border-radius: 6px; padding: 6px; text-align: center; }
-.stat-box strong { color: #ffd700; font-size: 9px; display: block; margin-bottom: 2px; }
-.stat-box span { color: #00ff88; font-size: 14px; font-weight: bold; }
-.hora-box { background: linear-gradient(90deg, #0a2a1a, #1a1a2e); border: 2px solid #00ff88; border-radius: 6px; padding: 6px; text-align: center; }
-.hora-box span { color: #00ff88; font-size: 20px; font-weight: bold; text-shadow: 0 0 8px #00ff88; }
-.signal-box { padding: 10px; border-radius: 8px; text-align: center; font-size: 24px; font-weight: bold; letter-spacing: 2px; margin: 4px 0; }
-.signal-call { background: linear-gradient(135deg, #00cc00, #00ff00); border: 2px solid #00ff00; color: white; box-shadow: 0 0 20px rgba(0, 255, 0, 0.6); }
-.signal-put { background: linear-gradient(135deg, #cc0000, #ff0000); border: 2px solid #ff0000; color: white; box-shadow: 0 0 20px rgba(255, 0, 0, 0.6); }
-.signal-wait { background: linear-gradient(135deg, #1a1a2e, #0a1a2e); border: 2px solid #ffd700; color: #ffd700; font-size: 16px; padding: 8px; }
-.confianza-bar-container { background: linear-gradient(135deg, #0a1a2e, #1a0a2e); border: 2px solid #00ff88; border-radius: 10px; padding: 12px; margin: 8px 0; text-align: center; }
-.confianza-bar-label { color: #00ff88; font-size: 12px; font-weight: bold; margin-bottom: 6px; text-transform: uppercase; letter-spacing: 1px; }
-.confianza-bar-track { background: #1a1a2e; border-radius: 10px; height: 28px; position: relative; overflow: hidden; border: 1px solid #333; }
-.confianza-bar-fill { height: 100%; border-radius: 10px; transition: width 0.5s ease; display: flex; align-items: center; justify-content: center; font-weight: bold; font-size: 14px; color: white; text-shadow: 1px 1px 2px rgba(0,0,0,0.8); }
-.confianza-alta { background: linear-gradient(90deg, #00cc00, #00ff00); box-shadow: 0 0 15px rgba(0, 255, 0, 0.6); }
-.confianza-media { background: linear-gradient(90deg, #ffaa00, #ffcc00); box-shadow: 0 0 15px rgba(255, 170, 0, 0.6); }
-.confianza-baja { background: linear-gradient(90deg, #ff4400, #ff6600); box-shadow: 0 0 15px rgba(255, 68, 0, 0.6); }
-.radar-container { position: relative; width: 150px; height: 150px; margin: 8px auto; }
-.radar { width: 150px; height: 150px; border-radius: 50%; position: relative; overflow: hidden; border: 3px solid; }
-.radar-green { border-color: #00ff00; background: radial-gradient(circle, #0a2a1a, #000); box-shadow: 0 0 20px rgba(0, 255, 0, 0.5); }
-.radar-red { border-color: #ff0000; background: radial-gradient(circle, #2a0a0a, #000); box-shadow: 0 0 20px rgba(255, 0, 0, 0.5); }
-.radar-yellow { border-color: #ffd700; background: radial-gradient(circle, #2a2a1a, #000); box-shadow: 0 0 20px rgba(255, 215, 0, 0.5); }
+.block-container { padding-top: 10px !important; padding-bottom: 0px !important; padding-left: 10px !important; padding-right: 10px !important; max-width: 100% !important; }
+.stApp { background: radial-gradient(1200px 600px at 50% -10%, #12224a 0%, #070b18 55%, #04060d 100%) !important; }
+body { background: #04060d; color: #eef2ff; font-family: 'Inter', Arial, sans-serif; }
+.main-container { width: 100%; max-width: 460px; margin: 0 auto; display: flex; flex-direction: column; gap: 8px; font-family: 'Inter', Arial, sans-serif; }
+.header { position: relative; background: linear-gradient(160deg, rgba(255,255,255,0.07), rgba(255,255,255,0.02)); padding: 16px 12px 13px; border-radius: 18px; border: 1px solid rgba(140,170,255,0.25); text-align: center; box-shadow: 0 10px 30px rgba(0,0,0,0.45), inset 0 1px 0 rgba(255,255,255,0.08); backdrop-filter: blur(6px); }
+.header h1 { margin: 0; font-size: 21px; font-weight: 900; letter-spacing: 3px; background: linear-gradient(90deg, #7dd3fc, #a5b4fc, #f0abfc); -webkit-background-clip: text; background-clip: text; color: transparent; }
+.header p { color: #8b96b8; margin: 5px 0 0 0; font-size: 10px; letter-spacing: 1.5px; text-transform: uppercase; }
+.badge-version { position: absolute; top: 10px; right: 12px; background: rgba(0,230,140,0.14); color: #00e68c; border: 1px solid rgba(0,230,140,0.45); font-size: 9px; font-weight: 700; letter-spacing: 1px; padding: 2px 8px; border-radius: 999px; }
+.stats-row { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; }
+.stat-box { background: linear-gradient(160deg, rgba(255,255,255,0.06), rgba(255,255,255,0.015)); border: 1px solid rgba(255,255,255,0.09); border-radius: 14px; padding: 9px 4px; text-align: center; box-shadow: inset 0 1px 0 rgba(255,255,255,0.06); }
+.stat-box strong { color: #8b96b8; font-size: 9px; font-weight: 700; letter-spacing: 1.5px; text-transform: uppercase; display: block; margin-bottom: 3px; }
+.stat-box span { color: #ffffff; font-size: 16px; font-weight: 800; font-variant-numeric: tabular-nums; }
+.hora-box { background: linear-gradient(160deg, rgba(0,230,140,0.10), rgba(0,230,140,0.02)); border: 1px solid rgba(0,230,140,0.35); border-radius: 14px; padding: 8px; text-align: center; }
+.hora-box span { color: #00e68c; font-size: 23px; font-weight: 800; letter-spacing: 2px; font-variant-numeric: tabular-nums; text-shadow: 0 0 14px rgba(0,230,140,0.55); }
+.signal-box { padding: 14px 10px; border-radius: 16px; text-align: center; font-size: 26px; font-weight: 900; letter-spacing: 3px; margin: 5px 0; }
+@keyframes pulso-suave { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.012); } }
+.signal-call { background: linear-gradient(135deg, #00b359, #00e676); border: 1px solid rgba(0,255,150,0.7); color: #ffffff; box-shadow: 0 8px 28px rgba(0,230,118,0.35), inset 0 1px 0 rgba(255,255,255,0.35); animation: pulso-suave 1.6s ease-in-out infinite; text-shadow: 0 1px 3px rgba(0,60,25,0.5); }
+.signal-put { background: linear-gradient(135deg, #d81b3a, #ff4d5e); border: 1px solid rgba(255,90,110,0.7); color: #ffffff; box-shadow: 0 8px 28px rgba(255,60,90,0.32), inset 0 1px 0 rgba(255,255,255,0.3); animation: pulso-suave 1.6s ease-in-out infinite; text-shadow: 0 1px 3px rgba(70,0,10,0.5); }
+.signal-wait { background: linear-gradient(160deg, rgba(255,255,255,0.05), rgba(255,255,255,0.01)); border: 1px solid rgba(250,200,60,0.4); color: #facc15; font-size: 15px; letter-spacing: 1.5px; padding: 11px; }
+.confianza-bar-container { background: linear-gradient(160deg, rgba(255,255,255,0.06), rgba(255,255,255,0.015)); border: 1px solid rgba(255,255,255,0.10); border-radius: 16px; padding: 14px; margin: 9px 0; text-align: center; box-shadow: inset 0 1px 0 rgba(255,255,255,0.06); }
+.confianza-bar-label { color: #aab4d4; font-size: 11px; font-weight: 700; margin-bottom: 8px; text-transform: uppercase; letter-spacing: 2px; }
+.confianza-bar-track { background: rgba(255,255,255,0.07); border-radius: 999px; height: 26px; position: relative; overflow: hidden; border: 1px solid rgba(255,255,255,0.08); }
+.confianza-bar-fill { height: 100%; border-radius: 999px; transition: width 0.5s ease; display: flex; align-items: center; justify-content: center; font-weight: 800; font-size: 13px; color: white; text-shadow: 0 1px 2px rgba(0,0,0,0.55); }
+.confianza-alta { background: linear-gradient(90deg, #00b359, #00e676); box-shadow: 0 0 16px rgba(0,230,118,0.55); }
+.confianza-media { background: linear-gradient(90deg, #e8930c, #facc15); box-shadow: 0 0 16px rgba(250,190,20,0.5); }
+.confianza-baja { background: linear-gradient(90deg, #e63c1e, #ff7a3c); box-shadow: 0 0 16px rgba(255,100,50,0.5); }
+.radar-container { position: relative; width: 154px; height: 154px; margin: 10px auto; }
+.radar { width: 154px; height: 154px; border-radius: 50%; position: relative; overflow: hidden; border: 2px solid; }
+.radar-green { border-color: rgba(0,230,118,0.8); background: radial-gradient(circle, #0a2e1e 0%, #04140c 75%); box-shadow: 0 0 26px rgba(0,230,118,0.35), inset 0 0 34px rgba(0,230,118,0.12); }
+.radar-red { border-color: rgba(255,77,94,0.8); background: radial-gradient(circle, #2e0d13 0%, #140405 75%); box-shadow: 0 0 26px rgba(255,77,94,0.32), inset 0 0 34px rgba(255,77,94,0.12); }
+.radar-yellow { border-color: rgba(250,204,21,0.8); background: radial-gradient(circle, #2e2a0d 0%, #141104 75%); box-shadow: 0 0 26px rgba(250,204,21,0.3), inset 0 0 34px rgba(250,204,21,0.12); }
 .radar-center { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); text-align: center; z-index: 10; }
-.radar-number { font-size: 48px; font-weight: bold; line-height: 1; text-shadow: 0 0 10px currentColor; }
-.radar-number-green { color: #00ff00; }
-.radar-number-red { color: #ff0000; }
-.radar-number-yellow { color: #ffd700; font-size: 16px; }
-.radar-label { color: #fff; font-size: 9px; margin-top: 3px; letter-spacing: 1px; }
-.info-panel { background: linear-gradient(135deg, #0a1a2e, #1a0a2e); border: 1px solid #00ff88; border-radius: 6px; padding: 6px 10px; font-size: 11px; text-align: center; }
-.info-panel strong { color: #00ff88; }
-.voz-indicator { background: #6a0dad; border: 1px solid #da70d6; border-radius: 6px; padding: 4px 8px; font-size: 10px; color: #fff; text-align: center; margin: 4px 0; }
+.radar-number { font-size: 50px; font-weight: 900; line-height: 1; font-variant-numeric: tabular-nums; text-shadow: 0 0 14px currentColor; }
+.radar-number-green { color: #00e676; }
+.radar-number-red { color: #ff4d5e; }
+.radar-number-yellow { color: #facc15; font-size: 17px; font-weight: 800; }
+.radar-label { color: #8b96b8; font-size: 9px; font-weight: 700; margin-top: 4px; letter-spacing: 2px; }
+.info-panel { background: linear-gradient(160deg, rgba(255,255,255,0.05), rgba(255,255,255,0.012)); border: 1px solid rgba(125,211,252,0.22); border-radius: 11px; padding: 7px 11px; font-size: 11.5px; text-align: center; color: #d7def5; line-height: 1.5; }
+.info-panel strong { color: #7dd3fc; }
+.voz-indicator { background: linear-gradient(135deg, rgba(139,92,246,0.25), rgba(217,70,239,0.16)); border: 1px solid rgba(196,130,255,0.45); border-radius: 11px; padding: 5px 9px; font-size: 10px; color: #efe6ff; text-align: center; margin: 4px 0; }
+div.stButton > button { background: linear-gradient(160deg, rgba(255,255,255,0.09), rgba(255,255,255,0.03)); color: #eef2ff; border: 1px solid rgba(255,255,255,0.16); border-radius: 12px; font-weight: 700; transition: all 0.15s ease; }
+div.stButton > button:hover { border-color: rgba(125,211,252,0.6); color: #ffffff; transform: translateY(-1px); }
+div.stFormSubmitButton > button { background: linear-gradient(135deg, #2563eb, #7c3aed); color: #ffffff; border: none; border-radius: 12px; font-weight: 800; letter-spacing: 1px; }
+[data-testid="stExpander"] { background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.09) !important; border-radius: 14px !important; }
+[data-baseweb="select"] > div { background: rgba(255,255,255,0.05); border-color: rgba(255,255,255,0.14); border-radius: 12px; }
+::-webkit-scrollbar { width: 8px; } ::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.15); border-radius: 8px; }
 </style>
 """
 st.markdown(CSS, unsafe_allow_html=True)
@@ -794,7 +812,7 @@ st.markdown(CSS, unsafe_allow_html=True)
 # ---------------- Parte estatica (ya NO se recarga cada segundo) ----------------
 
 st.markdown('<div class="main-container">', unsafe_allow_html=True)
-st.markdown(f'<div class="header"><h1>⚡ ZT TRADERS PRO</h1><p>User: {st.session_state.usuario_actual} | IA AUTO-APRENDIZAJE</p></div>', unsafe_allow_html=True)
+st.markdown(f'<div class="header"><span class="badge-version">v3.7.1</span><h1>⚡ ZT TRADERS PRO</h1><p>User: {st.session_state.usuario_actual} · IA AUTO-APRENDIZAJE</p></div>', unsafe_allow_html=True)
 
 col1, col2 = st.columns([3, 1])
 with col1:
@@ -1192,6 +1210,25 @@ def zona_dinamica(codigo_f, tipo_f):
     if st.session_state.precio_real_entrada:
         entrada_html = f'<div class="info-panel">Entrada: <strong>{round(st.session_state.precio_real_entrada, 5)}</strong></div>'
 
+    # Precio EN VIVO durante la operacion (v3.6.1): la Entrada es la foto
+    # del segundo :00 y no se mueve; este precio si se mueve, para que el
+    # usuario compare contra IQ Option en el mismo instante y vea si va
+    # ganando o perdiendo y por cuanto.
+    vivo_html = ""
+    _precio_ahora = obtener_precio_actual(codigo_f, tipo_f)
+    if _precio_ahora and st.session_state.precio_real_entrada:
+        _ent = float(st.session_state.precio_real_entrada)
+        _dif = float(_precio_ahora) - _ent
+        _va_ganando = (_dif > 0) if es_call else (_dif < 0)
+        if tipo_f == "forex":
+            _pip = 0.01 if "JPY" in str(codigo_f) else 0.0001
+            _dif_txt = f"{_dif / _pip:+.1f} pips"
+        else:
+            _dif_txt = f"{_dif / _ent * 100:+.3f}%"
+        vivo_html = (f'<div class="info-panel">Precio ahora: <strong>{round(float(_precio_ahora), 5)}</strong>'
+                     f' · Diferencia: <strong>{_dif_txt}</strong>'
+                     f' · Vas <strong>{"GANANDO" if _va_ganando else "PERDIENDO"}</strong></div>')
+
     clase_box = "signal-call" if es_call else "signal-put"
     clase_radar = "radar-green" if es_call else "radar-red"
     clase_numero = "radar-number-green" if es_call else "radar-number-red"
@@ -1203,6 +1240,7 @@ def zona_dinamica(codigo_f, tipo_f):
         + f"""
         <div class="signal-box {clase_box}">{tipo_signal}</div>
         {entrada_html}
+        {vivo_html}
         <div class="radar-container"><div class="radar {clase_radar}"><div class="radar-center"><div class="radar-number {clase_numero}">{segundos_restantes_op}</div><div class="radar-label">EXPIRACIÓN</div></div></div></div>
         """,
         unsafe_allow_html=True,
