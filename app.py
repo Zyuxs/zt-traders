@@ -67,6 +67,21 @@
 # 23) ESPERA queda SOLO para cuando no hay datos utilizables (insuficientes
 #     o desactualizados): sin datos no hay analisis posible.
 #     No hay que reentrenar: las variables y el modelo no cambian.
+# --- v3.4: forex sin señales + capa de razonamiento IA (gratis en prueba) ---
+# 24) BUG FOREX: EUR/USD y similares no daban señales. La descarga de Yahoo
+#     via yfinance devolvia vacio o pocas velas desde la nube, y el indice
+#     podia venir sin zona horaria (la edad del dato se calculaba mal y el
+#     candado de frescura bloqueaba todo). Ahora: descarga normalizada a
+#     UTC y RESPALDO por la API grafica de Yahoo (query2.finance.yahoo.com),
+#     y el ESPERA muestra cuantas velas llegaron (diagnostico visible).
+# 25) Capa de razonamiento (razonamiento_ia.py, opcional y apagada sin
+#     clave): un LLM revisa cada señal como trader senior (CONFIRMA /
+#     SUBE / REBAJA el NIVEL, jamas veta ni cambia la direccion), resume el
+#     clima de la sesion y analiza el historial en el panel Admin (diario
+#     inteligente). Proveedores con nivel GRATUITO para la fase de prueba:
+#     Gemini (Google AI Studio), Groq y OpenRouter; se configuran solo
+#     desde Secrets (ia_proveedor, ia_api_key, ia_segunda_opinion...).
+#     Sin clave o con la API caida, la app funciona igual que la v3.3.
 # ============================================================
 import streamlit as st
 import streamlit.components.v1 as components
@@ -76,11 +91,13 @@ import yfinance as yf
 import ta
 import json
 import os
+import time
 import uuid
 from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 
 import nucleo_ia
+import razonamiento_ia
 
 st.set_page_config(page_title="ZT TRADERS INSTITUTIONAL PRO", layout="centered", page_icon="⚡")
 
@@ -288,28 +305,65 @@ def obtener_datos_binance(symbol, interval="1m", limit=50):
     except Exception:
         return None
 
+def _normalizar_yahoo(datos):
+    """Deja el DataFrame de Yahoo con columnas open/high/low/close/volume y
+    el indice en UTC con zona horaria (sin esto, la edad del dato se
+    calculaba mal y el candado de frescura bloqueaba el forex)."""
+    if datos is None or len(datos) == 0:
+        return None
+    if isinstance(datos.columns, pd.MultiIndex):
+        datos.columns = datos.columns.get_level_values(0)
+    datos = datos.rename(columns={"Open": "open", "High": "high", "Low": "low",
+                                  "Close": "close", "Volume": "volume"})
+    cols = [c for c in ["open", "high", "low", "close", "volume"] if c in datos.columns]
+    datos = datos[cols].dropna(subset=["close"]).copy()
+    idx = pd.to_datetime(datos.index)
+    if getattr(idx, "tz", None) is None:
+        idx = idx.tz_localize("America/New_York")
+    datos.index = idx.tz_convert("UTC")
+    return datos.sort_index()
+
 @st.cache_data(ttl=20, show_spinner=False)
 def _descargar_yahoo(symbol, period, interval="1m"):
     try:
         datos = yf.download(symbol, period=period, interval=interval, progress=False)
-        if datos is None or len(datos) == 0:
+        return _normalizar_yahoo(datos)
+    except Exception:
+        return None
+
+@st.cache_data(ttl=20, show_spinner=False)
+def _yahoo_chart_api(symbol, rango="2d"):
+    """Respaldo: API grafica de Yahoo (la que usa su web). yfinance a veces
+    devuelve vacio desde IPs de nube; esta ruta suele responder igual."""
+    try:
+        import urllib.parse as _up
+        url = f"https://query2.finance.yahoo.com/v8/finance/chart/{_up.quote(symbol, safe='')}?interval=1m&range={rango}"
+        r = sesion_http().get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=12)
+        if r.status_code != 200:
             return None
-        if isinstance(datos.columns, pd.MultiIndex):
-            datos.columns = datos.columns.get_level_values(0)
-        datos = datos.rename(columns={"Open": "open", "High": "high", "Low": "low",
-                                      "Close": "close", "Volume": "volume"})
-        cols = [c for c in ["open", "high", "low", "close", "volume"] if c in datos.columns]
-        return datos[cols].dropna(subset=["close"]).copy()
+        res = (r.json().get("chart", {}).get("result") or [None])[0]
+        if not res or not res.get("timestamp"):
+            return None
+        q = res["indicators"]["quote"][0]
+        df = pd.DataFrame({
+            "open": q.get("open"), "high": q.get("high"), "low": q.get("low"),
+            "close": q.get("close"), "volume": q.get("volume") or [0] * len(res["timestamp"]),
+        }, index=pd.to_datetime(res["timestamp"], unit="s", utc=True))
+        return df.dropna(subset=["close"]).sort_index()
     except Exception:
         return None
 
 def obtener_datos_yahoo(symbol):
-    # Primero 1 dia (mucho menos datos que 2d); solo si no alcanza, se pide 2d.
+    # 1) yfinance 1d; 2) yfinance 2d; 3) API grafica de Yahoo.
     df = _descargar_yahoo(symbol, "1d")
     if df is None or len(df) < 60:
         df2 = _descargar_yahoo(symbol, "2d")
         if df2 is not None and (df is None or len(df2) > len(df)):
-            return df2
+            df = df2
+    if df is None or len(df) < 60:
+        df3 = _yahoo_chart_api(symbol, "2d")
+        if df3 is not None and (df is None or len(df3) > len(df)):
+            df = df3
     return df
 
 @st.cache_data(ttl=3, show_spinner=False)
@@ -325,14 +379,15 @@ def _precio_yahoo(symbol):
     # porque el precio de entrada/cierre necesita ser lo mas fresco posible.
     try:
         datos = yf.download(symbol, period="1d", interval="1m", progress=False)
-        if datos is None or len(datos) == 0:
-            return None
-        if isinstance(datos.columns, pd.MultiIndex):
-            datos.columns = datos.columns.get_level_values(0)
-        datos = datos.rename(columns={"Close": "close"})
-        return float(datos["close"].iloc[-1])
+        datos = _normalizar_yahoo(datos)
+        if datos is not None and len(datos) > 0:
+            return float(datos["close"].iloc[-1])
     except Exception:
-        return None
+        pass
+    df = _yahoo_chart_api(symbol, "1d")
+    if df is not None and len(df) > 0:
+        return float(df["close"].iloc[-1])
+    return None
 
 def obtener_precio_actual(codigo_par, tipo="crypto"):
     return _precio_binance(codigo_par) if tipo == "crypto" else _precio_yahoo(codigo_par)
@@ -345,7 +400,10 @@ def _edad_ultimo_dato_seg(df):
         if "timestamp" in df.columns:
             ultimo = float(df["timestamp"].iloc[-1]) / 1000.0
         elif isinstance(df.index, pd.DatetimeIndex):
-            ultimo = df.index[-1].timestamp()
+            ts = pd.Timestamp(df.index[-1])
+            if ts.tz is None:
+                ts = ts.tz_localize("America/New_York")
+            ultimo = ts.timestamp()
         else:
             return None
         return max(0.0, datetime.now(timezone.utc).timestamp() - ultimo)
@@ -358,7 +416,11 @@ def analizar_par(codigo_par, tipo="crypto"):
               "nivel": "", "advertencias": []}
     df = obtener_datos_binance(codigo_par, interval="1m", limit=120) if tipo == "crypto" else obtener_datos_yahoo(codigo_par)
     if df is None or len(df) < 60:
-        return espera
+        n = 0 if df is None else len(df)
+        return {"señal": "ESPERA", "confianza": 0,
+                "razon": f"Datos insuficientes: el proveedor entregó {n} velas (se necesitan 60)",
+                "indicadores": {"rsi": 50, "precio_relativo": 0.5}, "features": None,
+                "nivel": "", "advertencias": []}
 
     # Unico ESPERA que queda: datos viejos = no hay mercado que analizar
     edad = _edad_ultimo_dato_seg(df)
@@ -446,6 +508,43 @@ def analizar_par(codigo_par, tipo="crypto"):
     except Exception:
         return espera
 
+# ---------------- Capa de razonamiento IA (v3.4, opcional) ----------------
+
+def _ia_bool(nombre, defecto=False):
+    v = _secret(nombre, nombre.upper())
+    if v is None:
+        return defecto
+    if isinstance(v, bool):
+        return v
+    return str(v).strip().lower() in ("1", "true", "si", "sí", "yes", "on")
+
+def ia_configurar_desde_secrets():
+    razonamiento_ia.configurar(
+        proveedor=_secret("ia_proveedor", "IA_PROVEEDOR") or "gemini",
+        api_key=_secret("ia_api_key", "IA_API_KEY") or "",
+        modelo=_secret("ia_modelo", "IA_MODELO"),
+        base_url=_secret("ia_base_url", "IA_BASE_URL"),
+    )
+    return razonamiento_ia.disponible()
+
+def ia_opinion_activa():
+    return _ia_bool("ia_segunda_opinion") and ia_configurar_desde_secrets()
+
+def ia_clima_activo():
+    return _ia_bool("ia_clima") and ia_configurar_desde_secrets()
+
+_NIVELES = ["Baja", "Media", "Alta"]
+
+def _ajustar_nivel(nivel, veredicto):
+    if nivel not in _NIVELES:
+        return nivel
+    i = _NIVELES.index(nivel)
+    if veredicto == "SUBE":
+        i = min(i + 1, 2)
+    elif veredicto == "REBAJA":
+        i = max(i - 1, 0)
+    return _NIVELES[i]
+
 def reproducir_voz(mensaje):
     # json.dumps escapa el texto de forma segura para meterlo en el JS.
     js_code = f"""
@@ -483,6 +582,7 @@ def _init_estado():
         'estado': 'analizando', 'par_sel': 'Bitcoin', 'senal': None,
         'resultado_guardado': False, 'precio_real_entrada': None,
         'voz_reproducida': False, 'ciclo_senal': None, 'ciclo_entrada': None,
+        'opinion_ia': None, 'ciclo_opinion': None, 'clima_ia': '', 'clima_ts': 0.0,
     }
     for k, v in valores.items():
         if k not in st.session_state:
@@ -618,6 +718,39 @@ if st.session_state.usuario_actual.startswith("👑"):
                 st.success("Modelo activo. A partir de ahora las señales crypto se filtran con su probabilidad calibrada (mínimo 62%).")
             except Exception as _e:
                 st.error(f"No se pudo entrenar: {_e}")
+    with st.expander("💬 Diario inteligente — IA que razona (v3.4)"):
+        if not ia_configurar_desde_secrets():
+            st.info("Sin clave de IA configurada. En los Secrets de Streamlit agrega: ia_api_key = \"tu clave gratis\" e ia_proveedor = \"gemini\" (o \"groq\" / \"openrouter\"). Claves gratis: Google AI Studio (aistudio.google.com) o Groq (console.groq.com).")
+        else:
+            st.caption(f"IA conectada (proveedor: {_secret('ia_proveedor', 'IA_PROVEEDOR') or 'gemini'}). Segunda opinión por señal: {'ACTIVADA' if _ia_bool('ia_segunda_opinion') else 'apagada — actívala con ia_segunda_opinion = true en Secrets'}. Clima de sesión: {'ACTIVADO' if _ia_bool('ia_clima') else 'apagado — ia_clima = true'}.")
+            if st.button("🧠 Analizar mi historial con IA", use_container_width=True):
+                _hist = st.session_state.hist_cache
+                _tot = len(_hist)
+                _gan = sum(1 for h in _hist if h.get("resultado") == "GANADA")
+                _lineas = [f"Operaciones registradas: {_tot}"]
+                if _tot:
+                    _lineas.append(f"Ganadas: {_gan} ({_gan / _tot * 100:.1f}%)")
+                    for _s in ("CALL", "PUT"):
+                        _hs = [h for h in _hist if h.get("señal") == _s]
+                        if _hs:
+                            _g = sum(1 for h in _hs if h.get("resultado") == "GANADA")
+                            _lineas.append(f"{_s}: {_g}/{len(_hs)} ganadas ({_g / len(_hs) * 100:.0f}%)")
+                    _idx_reg = nucleo_ia.FEATURES_BASE.index("regimen_cod")
+                    _por_reg = {}
+                    for _h in _hist:
+                        _f = _h.get("features")
+                        if _f and len(_f) > _idx_reg:
+                            _rn = nucleo_ia.nombre_regimen(_f[_idx_reg])
+                            _a, _b = _por_reg.get(_rn, (0, 0))
+                            _por_reg[_rn] = (_a + 1, _b + (1 if _h.get("resultado") == "GANADA" else 0))
+                    for _rn, (_n, _g) in _por_reg.items():
+                        _lineas.append(f"Régimen {_rn}: {_g}/{_n} ganadas ({_g / _n * 100:.0f}%)")
+                with st.spinner("La IA está leyendo tu historial..."):
+                    _informe = razonamiento_ia.analizar_historial("\n".join(_lineas))
+                if _informe:
+                    st.markdown(_informe)
+                else:
+                    st.error("La IA no respondió. Revisa tu clave de API o inténtalo de nuevo.")
 elif _info_modelo:
     st.caption(f"🧠 IA v3 activa — modelo entrenado el {_info_modelo['metricas']['fecha_entrenamiento']}")
 
@@ -665,6 +798,9 @@ def nivel_html_de(señal):
     html = f'<div class="info-panel">{emoji} Nivel de la señal: <strong>{nivel}</strong></div>'
     for adv in (señal.get('advertencias') or []):
         html += f'<div class="info-panel">⚠️ {adv}</div>'
+    op = señal.get('opinion_ia')
+    if op:
+        html += f'<div class="info-panel">🧠 IA ({op["veredicto"]}): {op["motivo"]}</div>'
     return html
 
 def cerrar_operacion(codigo_op, tipo_op):
@@ -720,8 +856,43 @@ def zona_dinamica(codigo_f, tipo_f):
             st.session_state.estado = 'analizando'
             st.session_state.senal = None
             st.session_state.voz_reproducida = False
+
+        # Segunda opinion IA (v3.4): pre-analisis al segundo 40, para que el
+        # veredicto ya este listo cuando la señal salga (segundo 55).
+        if segundo_actual >= 40 and st.session_state.ciclo_opinion != clave_minuto:
+            st.session_state.ciclo_opinion = clave_minuto
+            if ia_opinion_activa():
+                try:
+                    pre = analizar_par(codigo_f, tipo_f)
+                    if pre.get('señal') in ('CALL', 'PUT'):
+                        op = razonamiento_ia.segunda_opinion({
+                            'par': codigo_f, 'tipo': tipo_f, 'direccion': pre['señal'],
+                            'confianza': pre['confianza'], 'nivel': pre.get('nivel') or '-',
+                            'razon': pre['razon'], 'regimen': '',
+                            'advertencias': pre.get('advertencias') or []})
+                        if op:
+                            op['direccion'] = pre['señal']
+                            st.session_state.opinion_ia = op
+                except Exception:
+                    pass
+
+        # Clima de sesion IA (v3.4): se renueva cada 15 minutos.
+        if ia_clima_activo() and (time.time() - st.session_state.clima_ts > 900):
+            st.session_state.clima_ts = time.time()
+            try:
+                dfc = obtener_datos_binance(codigo_f, interval="1m", limit=120) if tipo_f == "crypto" else obtener_datos_yahoo(codigo_f)
+                if dfc is not None and len(dfc) > 61:
+                    var = (float(dfc['close'].iloc[-1]) / float(dfc['close'].iloc[-61]) - 1) * 100
+                    txt = razonamiento_ia.clima_sesion(codigo_f, tipo_f, round(var, 2), "segun el analisis del ciclo")
+                    if txt:
+                        st.session_state.clima_ia = txt
+            except Exception:
+                pass
+
+        clima_html = f'<div class="info-panel">🧠 Clima IA: {st.session_state.clima_ia}</div>' if st.session_state.clima_ia else ''
         contenedor.markdown(f"""
         <div class="signal-box signal-wait">📊 ESCANEANDO MERCADO...</div>
+        {clima_html}
         <div class="info-panel">⏱️ Próxima señal en: <strong>{55 - segundo_actual}s</strong></div>
         <div class="radar-container"><div class="radar radar-yellow"><div class="radar-center"><div class="radar-number radar-number-yellow">IA</div><div class="radar-label">ACTIVA</div></div></div></div>
         """, unsafe_allow_html=True)
@@ -742,6 +913,15 @@ def zona_dinamica(codigo_f, tipo_f):
             <div class="info-panel">Motivo: <strong>{señal["razon"]}</strong></div>
             """, unsafe_allow_html=True)
             return
+
+        # Segunda opinion IA (v3.4): ajusta el NIVEL si la direccion
+        # coincide con la del pre-analisis. Nunca veta ni cambia la señal.
+        _op = st.session_state.opinion_ia
+        if _op and _op.get('direccion') == señal['señal'] and not señal.get('opinion_aplicada'):
+            señal['nivel'] = _ajustar_nivel(señal.get('nivel') or 'Media', _op['veredicto'])
+            señal['opinion_ia'] = _op
+            señal['opinion_aplicada'] = True
+            st.session_state.senal = señal
 
         es_call = señal['señal'] == 'CALL'
         confianza_actual = int(señal['confianza'])
