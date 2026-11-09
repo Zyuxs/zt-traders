@@ -1,5 +1,6 @@
 # ============================================================
-# ZT TRADERS INSTITUTIONAL PRO - v2 mejorada
+# ZT TRADERS INSTITUTIONAL PRO - v3 (backtesting + señales filtradas)
+# Requiere el archivo nucleo_ia.py en la misma carpeta/repo.
 # Misma app, mismas fases y misma interfaz. Cambios internos:
 #  1) La zona dinamica es un fragmento que se actualiza cada 1s:
 #     la pagina completa (grafico TradingView, encabezado, selector)
@@ -26,6 +27,17 @@
 # 11) v2.1: el HTML de la zona dinamica se limpia de indentacion antes de
 #     mostrarse (limpiar_html). Sin eso, Markdown lo trataba como bloque de
 #     codigo y la caja de la señal se veia como texto crudo <div>...</div>.
+# --- Novedades v3 ---
+# 12) Aprendizaje real en nucleo_ia.py: 15 variables por vela (tendencia,
+#     volatilidad, impulso, volumen, hora), no solo RSI + Bollinger.
+# 13) El modelo se entrena con BACKTESTING desde el panel Admin (descarga
+#     meses de velas Binance y genera miles de ejemplos etiquetados), con
+#     division por tiempo y probabilidad CALIBRADA.
+# 14) Señales FILTRADAS: con modelo, solo se emite si la probabilidad
+#     calibrada >= 62%; sin modelo, solo si el puntaje tecnico >= 3.
+#     El resto de los ciclos la app dice ESPERA y no opera.
+# 15) El modelo entrenado se guarda en modelo_v3.pkl y se aplica solo a
+#     crypto; forex opera con el filtro de puntaje (sin modelo, avisado).
 # ============================================================
 import streamlit as st
 import streamlit.components.v1 as components
@@ -38,7 +50,8 @@ import os
 import uuid
 from datetime import datetime
 from zoneinfo import ZoneInfo
-from sklearn.ensemble import RandomForestClassifier
+
+import nucleo_ia
 
 st.set_page_config(page_title="ZT TRADERS INSTITUTIONAL PRO", layout="centered", page_icon="⚡")
 
@@ -190,10 +203,6 @@ if "hist_cache" not in st.session_state:
     st.session_state.hist_cache = leer_json(ARCHIVO_HISTORIAL, [])
 if "pesos" not in st.session_state:
     st.session_state.pesos = {**PATRONES_BASE, **leer_json(ARCHIVO_PATRONES, {})}
-if "modelo_ml" not in st.session_state:
-    st.session_state.modelo_ml = None
-if "modelo_entrenado_con" not in st.session_state:
-    st.session_state.modelo_entrenado_con = 0
 
 def resetear_memoria():
     for archivo in (ARCHIVO_HISTORIAL, ARCHIVO_PATRONES):
@@ -201,10 +210,8 @@ def resetear_memoria():
             os.remove(archivo)
     st.session_state.hist_cache = []
     st.session_state.pesos = dict(PATRONES_BASE)
-    st.session_state.modelo_ml = None
-    st.session_state.modelo_entrenado_con = 0
 
-def aprender(señal, resultado, indicadores, precio_real_entrada):
+def aprender(señal, resultado, indicadores, precio_real_entrada, features=None):
     """Registra el resultado una sola vez por operacion y actualiza memoria + disco."""
     hist = st.session_state.hist_cache
     pesos = st.session_state.pesos
@@ -214,6 +221,7 @@ def aprender(señal, resultado, indicadores, precio_real_entrada):
         "resultado": resultado,
         "precio_entrada_real": precio_real_entrada,
         "indicadores": indicadores,
+        "features": features,
     })
     pesos["total_ops"] += 1
     if resultado == "GANADA":
@@ -222,49 +230,14 @@ def aprender(señal, resultado, indicadores, precio_real_entrada):
     guardar_json_atomico(ARCHIVO_HISTORIAL, hist)
     guardar_json_atomico(ARCHIVO_PATRONES, pesos)
 
-# ---------------- Machine Learning ----------------
+# ---------------- Modelo IA v3 (entrenado con backtesting) ----------------
 
-def _extraer_dataset(hist):
-    X, y = [], []
-    for op in hist:
-        try:
-            ind = op.get("indicadores", {})
-            X.append([ind.get("rsi", 50), ind.get("precio_relativo", 0.5), 1 if op["señal"] == "CALL" else 0])
-            y.append(1 if op["resultado"] == "GANADA" else 0)
-        except Exception:
-            continue
-    return X, y
+ARCHIVO_MODELO_V3 = "modelo_v3.pkl"
 
-def obtener_modelo_ml():
-    """Entrena solo si: hay >=10 ops, existen las 2 clases y llegaron >=5 ops nuevas."""
-    hist = st.session_state.hist_cache
-    modelo = st.session_state.modelo_ml
-    if len(hist) < 10:
-        return None
-    if modelo is not None and len(hist) - st.session_state.modelo_entrenado_con < 5:
-        return modelo
-    X, y = _extraer_dataset(hist)
-    if len(X) < 10 or len(set(y)) < 2:
-        return None
-    try:
-        nuevo = RandomForestClassifier(n_estimators=100, max_depth=3, random_state=42)
-        nuevo.fit(X, y)
-        st.session_state.modelo_ml = nuevo
-        st.session_state.modelo_entrenado_con = len(hist)
-        return nuevo
-    except Exception:
-        return modelo
-
-def prob_ganada_ml(modelo, rsi, precio_relativo, es_call):
-    """Probabilidad de GANADA segun el modelo (esto corrige el bug de confianza original)."""
-    if modelo is None:
-        return None
-    try:
-        proba = modelo.predict_proba([[rsi, precio_relativo, 1 if es_call else 0]])[0]
-        clases = list(modelo.classes_)
-        return float(proba[clases.index(1)]) if 1 in clases else None
-    except Exception:
-        return None
+@st.cache_resource
+def modelo_v3_info():
+    """Carga modelo_v3.pkl si existe (se crea desde el panel Admin)."""
+    return nucleo_ia.cargar_modelo(ARCHIVO_MODELO_V3)
 
 # ---------------- Datos de mercado (con cache) ----------------
 
@@ -272,7 +245,7 @@ def prob_ganada_ml(modelo, rsi, precio_relativo, es_call):
 def obtener_datos_binance(symbol, interval="1m", limit=50):
     try:
         r = sesion_http().get(
-            "https://api.binance.com/api/v3/klines",
+            "https://data-api.binance.vision/api/v3/klines",
             params={"symbol": symbol, "interval": interval, "limit": limit},
             timeout=10,
         )
@@ -294,7 +267,10 @@ def _descargar_yahoo(symbol, period, interval="1m"):
             return None
         if isinstance(datos.columns, pd.MultiIndex):
             datos.columns = datos.columns.get_level_values(0)
-        return datos[["Open", "High", "Low", "Close"]].dropna().copy()
+        datos = datos.rename(columns={"Open": "open", "High": "high", "Low": "low",
+                                      "Close": "close", "Volume": "volume"})
+        cols = [c for c in ["open", "high", "low", "close", "volume"] if c in datos.columns]
+        return datos[cols].dropna(subset=["close"]).copy()
     except Exception:
         return None
 
@@ -310,7 +286,7 @@ def obtener_datos_yahoo(symbol):
 @st.cache_data(ttl=3, show_spinner=False)
 def _precio_binance(symbol):
     try:
-        return float(sesion_http().get(f"https://api.binance.com/api/v3/ticker/price?symbol={symbol}", timeout=5).json()["price"])
+        return float(sesion_http().get(f"https://data-api.binance.vision/api/v3/ticker/price?symbol={symbol}", timeout=5).json()["price"])
     except Exception:
         return None
 
@@ -324,7 +300,8 @@ def _precio_yahoo(symbol):
             return None
         if isinstance(datos.columns, pd.MultiIndex):
             datos.columns = datos.columns.get_level_values(0)
-        return float(datos["Close"].iloc[-1])
+        datos = datos.rename(columns={"Close": "close"})
+        return float(datos["close"].iloc[-1])
     except Exception:
         return None
 
@@ -334,76 +311,54 @@ def obtener_precio_actual(codigo_par, tipo="crypto"):
 # ---------------- Analisis de señal (por puntaje) ----------------
 
 def analizar_par(codigo_par, tipo="crypto"):
-    espera = {"señal": "ESPERA", "confianza": 0, "razon": "Datos insuficientes", "indicadores": {"rsi": 50, "precio_relativo": 0.5}}
-    df = obtener_datos_binance(codigo_par, interval="1m", limit=50) if tipo == "crypto" else obtener_datos_yahoo(codigo_par)
-    if df is None or len(df) < 25:
+    espera = {"señal": "ESPERA", "confianza": 0, "razon": "Datos insuficientes",
+              "indicadores": {"rsi": 50, "precio_relativo": 0.5}, "features": None}
+    df = obtener_datos_binance(codigo_par, interval="1m", limit=120) if tipo == "crypto" else obtener_datos_yahoo(codigo_par)
+    if df is None or len(df) < 60:
         return espera
-    c_close = "close" if tipo == "crypto" else "Close"
     try:
-        df = df.copy()
-        df["RSI"] = ta.momentum.RSIIndicator(df[c_close], window=14).rsi()
-        bb = ta.volatility.BollingerBands(df[c_close], window=20, window_dev=2)
-        df["BB_High"] = bb.bollinger_hband()
-        df["BB_Low"] = bb.bollinger_lband()
-        df["SMA20"] = df[c_close].rolling(20).mean()
-        df = df.dropna(subset=["RSI", "BB_High", "BB_Low", "SMA20"])
-        if len(df) < 5:
+        d = nucleo_ia.agregar_indicadores(df)
+        validas = nucleo_ia.filas_validas(d)
+        if len(validas) == 0:
+            return espera
+        pos = int(validas[-1])
+        fila = d.iloc[pos]
+        precio = float(fila["close"])
+        rsi = float(fila["_rsi"])
+        bb_low = float(fila["_bb_low"]); bb_high = float(fila["_bb_high"])
+        sma = float(fila["_sma20"])
+        sma_prev = float(d["_sma20"].iloc[pos - 5]) if pos >= 5 else sma
+        if precio <= 0:
             return espera
 
-        u1 = df.iloc[-1]
-        precio = float(u1[c_close])
-        rsi = float(u1["RSI"])
-        bb_high = float(u1["BB_High"])
-        bb_low = float(u1["BB_Low"])
-        sma = float(u1["SMA20"])
-        sma_prev = float(df["SMA20"].iloc[-6]) if len(df) >= 6 else sma
-        rango_bb = bb_high - bb_low
-        if rango_bb <= 0 or precio <= 0:
-            return espera
-        precio_relativo = max(0.0, min(1.0, (precio - bb_low) / rango_bb))
+        direccion, score, razones = nucleo_ia.direccion_por_puntaje(rsi, precio, bb_low, bb_high, sma, sma_prev)
+        es_call = direccion == "CALL"
+        vector_base = nucleo_ia.fila_features(d, pos)
+        indicadores = {"rsi": rsi, "precio_relativo": float(fila["precio_relativo"])}
+        features_full = vector_base + [1 if es_call else 0]
 
-        # Puntaje: positivo favorece CALL, negativo favorece PUT.
-        score = 0
-        razones = []
-        if rsi <= 30:
-            score += 3; razones.append("RSI Sobreventa")
-        elif rsi <= 45:
-            score += 1; razones.append("RSI Bajo")
-        elif rsi >= 70:
-            score -= 3; razones.append("RSI Sobrecompra")
-        elif rsi >= 55:
-            score -= 1; razones.append("RSI Alto")
-        if precio <= bb_low:
-            score += 2; razones.append("Banda Inf")
-        elif precio >= bb_high:
-            score -= 2; razones.append("Banda Sup")
-        if precio > sma and sma >= sma_prev:
-            score += 1; razones.append("Tend. Alcista")
-        elif precio < sma and sma <= sma_prev:
-            score -= 1; razones.append("Tend. Bajista")
+        # Con modelo entrenado (solo crypto): la confianza ES la probabilidad calibrada
+        info_modelo = modelo_v3_info() if tipo == "crypto" else None
+        p = nucleo_ia.prob_ganada(info_modelo, vector_base, es_call) if info_modelo else None
+        if p is not None:
+            confianza = int(round(p * 100))
+            if p < nucleo_ia.UMBRAL_CONFIANZA_ML:
+                return {"señal": "ESPERA", "confianza": confianza,
+                        "razon": f"Filtro IA: probabilidad {confianza}% < {int(nucleo_ia.UMBRAL_CONFIANZA_ML * 100)}%",
+                        "indicadores": indicadores, "features": None}
+            razones.append(f"IA calibrada {confianza}%")
+            return {"señal": direccion, "confianza": confianza, "razon": " | ".join(razones),
+                    "indicadores": indicadores, "features": features_full}
 
-        if score > 0:
-            direccion = "CALL"
-        elif score < 0:
-            direccion = "PUT"
-        else:
-            direccion = "CALL" if rsi < 50 else "PUT"
-            razones.append("Sin ventaja clara")
-
+        # Sin modelo: filtro de puntaje tecnico
+        if abs(score) < nucleo_ia.UMBRAL_SCORE_MIN:
+            return {"señal": "ESPERA", "confianza": 0,
+                    "razon": f"Filtro técnico: puntaje {score} sin ventaja suficiente",
+                    "indicadores": indicadores, "features": None}
         confianza = 55 + min(30, abs(score) * 6)
-        if score == 0:
-            confianza = 52
-
-        indicadores = {"rsi": rsi, "precio_relativo": precio_relativo}
-        p_ganar = prob_ganada_ml(obtener_modelo_ml(), rsi, precio_relativo, direccion == "CALL")
-        if p_ganar is not None:
-            confianza_ml = int(p_ganar * 100)
-            confianza = int(confianza * 0.7 + confianza_ml * 0.3)
-            razones.append(f"ML:{confianza_ml}%")
-            if p_ganar < 0.40:
-                razones.append("ML en contra")
-
-        return {"señal": direccion, "confianza": max(50, min(int(confianza), 95)), "razon": " | ".join(razones) if razones else "Continuidad", "indicadores": indicadores}
+        razones.append("Sin modelo IA" + (" (forex)" if tipo != "crypto" else " entrenado"))
+        return {"señal": direccion, "confianza": max(50, min(int(confianza), 95)),
+                "razon": " | ".join(razones), "indicadores": indicadores, "features": features_full}
     except Exception:
         return espera
 
@@ -537,6 +492,47 @@ widget_html = f"""
 """
 components.html(widget_html, height=185)
 
+# ---------------- Panel IA v3 (solo Admin): backtesting + entrenamiento ----------------
+_info_modelo = modelo_v3_info()
+if st.session_state.usuario_actual.startswith("👑"):
+    with st.expander("🧠 IA v3 — Entrenar con backtesting"):
+        if _info_modelo:
+            _m = _info_modelo["metricas"]
+            st.success(f"Modelo activo — entrenado el {_m['fecha_entrenamiento']} con {_m['ejemplos_entrenamiento']} ejemplos. Brier: {_m['brier']}")
+            st.dataframe(pd.DataFrame(_m["por_umbral"]), use_container_width=True, hide_index=True)
+            st.caption("Precisión = % de acierto de las señales emitidas en datos que el modelo nunca vio. Cobertura = % de ciclos en los que sí emite señal.")
+        else:
+            st.info("Todavía no hay modelo entrenado. Sin modelo, la app usa solo el filtro de puntaje técnico.")
+        _codigos_crypto = [v["codigo"] for v in PARES.values() if v["tipo"] == "crypto"]
+        _sel = st.multiselect("Pares crypto para el backtest", _codigos_crypto,
+                              default=["BTCUSDT", "ETHUSDT", "SOLUSDT"])
+        _dias = st.slider("Días de historial (velas 1m)", 7, 30, 14)
+        if st.button("🚀 Entrenar modelo con backtest", use_container_width=True):
+            try:
+                with st.status("Entrenando modelo v3...", expanded=True) as _estado:
+                    _dfs = []
+                    for _sym in _sel:
+                        _estado.write(f"Descargando {_sym}: {_dias} días de velas 1m de Binance...")
+                        _dfh = nucleo_ia.descargar_historico_binance(_sym, _dias, sesion_http())
+                        if _dfh is not None:
+                            _dfs.append(_dfh)
+                            _estado.write(f"  {_sym}: {len(_dfh)} velas")
+                    _estado.write("Construyendo dataset etiquetado (esto puede tardar unos minutos)...")
+                    _X, _y, _g, _t = nucleo_ia.construir_dataset(_dfs)
+                    _estado.write(f"Dataset: {len(_X)} ejemplos, {len(set(_g.tolist()))} decisiones útiles")
+                    _estado.write("Entrenando y calibrando (división por tiempo 60/20/20)...")
+                    _info = nucleo_ia.entrenar_modelo(_X, _y, _g, _t)
+                    nucleo_ia.guardar_modelo(_info, ARCHIVO_MODELO_V3, "modelo_v3_metricas.json")
+                    modelo_v3_info.clear()
+                    _estado.update(label="✅ Modelo v3 entrenado y guardado", state="complete")
+                st.dataframe(pd.DataFrame(_info["metricas"]["por_umbral"]), use_container_width=True, hide_index=True)
+                st.success("Modelo activo. A partir de ahora las señales crypto se filtran con su probabilidad calibrada (mínimo 62%).")
+            except Exception as _e:
+                st.error(f"No se pudo entrenar: {_e}")
+elif _info_modelo:
+    st.caption(f"🧠 IA v3 activa — modelo entrenado el {_info_modelo['metricas']['fecha_entrenamiento']}")
+
+
 # ---------------- Helpers de la zona dinamica ----------------
 
 def limpiar_html(html):
@@ -585,7 +581,7 @@ def cerrar_operacion(codigo_op, tipo_op):
         es_call = señal['señal'] == 'CALL'
         if (es_call and precio_actual > entrada) or (not es_call and precio_actual < entrada):
             resultado = 'GANADA'
-    aprender(señal['señal'], resultado, señal.get('indicadores', {}), entrada)
+    aprender(señal['señal'], resultado, señal.get('indicadores', {}), entrada, señal.get('features'))
     st.session_state.resultado_guardado = True
 
 # ---------------- Zona dinamica: fragmento cada 1s ----------------
