@@ -18,7 +18,7 @@ ARCHIVO_PATRONES = "patrones.json"
 ARCHIVO_LICENCIAS = "licencias.json"
 
 # ==========================================
-# 🔑 SISTEMA DE LICENCIAS INTELIGENTE
+# 🔑 SISTEMA DE LICENCIAS
 # ==========================================
 def cargar_licencias():
     if os.path.exists(ARCHIVO_LICENCIAS):
@@ -55,83 +55,66 @@ if device_token and not st.session_state.licencia_activa:
 if not st.session_state.licencia_activa:
     st.markdown("""
     <style>
-    body { background: #000; color: #fff; font-family: Arial, sans-serif; margin: 0; padding: 0; }
-    .login-container { max-width: 320px; margin: 60px auto; padding: 25px; background: linear-gradient(135deg, #0a0a1a, #1a0a2e); border-radius: 12px; border: 2px solid #ffd700; box-shadow: 0 0 30px rgba(255, 215, 0, 0.4); text-align: center; }
-    .login-title { color: #ffd700; font-size: 24px; font-weight: bold; margin-bottom: 5px; letter-spacing: 2px; }
-    .login-subtitle { color: #aaa; font-size: 11px; margin-bottom: 20px; }
+    body { background: #000; color: #fff; font-family: Arial, sans-serif; }
+    .login-container { max-width: 320px; margin: 60px auto; padding: 25px; background: linear-gradient(135deg, #0a0a1a, #1a0a2e); border-radius: 12px; border: 2px solid #ffd700; text-align: center; }
+    .login-title { color: #ffd700; font-size: 24px; font-weight: bold; }
     </style>
     """, unsafe_allow_html=True)
-    st.markdown('<div class="login-container"><div class="login-title">⚡ ZT TRADERS</div><div class="login-subtitle">Sistema de Acceso Privado</div>', unsafe_allow_html=True)
-    
-    with st.form("login_form", clear_on_submit=False):
-        key_input = st.text_input("License Key", type="password", placeholder="Ingresa tu clave")
-        submit_key = st.form_submit_button("🚀 CONECTAR TERMINAL", use_container_width=True)
-        
+    st.markdown('<div class="login-container"><div class="login-title">⚡ ZT TRADERS</div><div style="color:#aaa; font-size:11px;">Sistema de Acceso Privado</div>', unsafe_allow_html=True)
+    with st.form("login_form"):
+        key_input = st.text_input("License Key", type="password")
+        submit_key = st.form_submit_button("🚀 CONECTAR", use_container_width=True)
         if submit_key:
             if key_input in ["ADMIN-MASTER-2026", "ADMIN-MASTER-2027"]:
                 st.session_state.licencia_activa = True
                 st.session_state.usuario_actual = "👑 Admin Master"
                 st.query_params["zt_token"] = "admin_master_device"
-                st.success("¡Acceso Admin Concedido!")
-                st.rerun()
-            
-            licencias = cargar_licencias()
-            if key_input in licencias:
-                datos = licencias[key_input]
-                try:
-                    fecha_venc = datetime.strptime(datos['vence'], '%Y-%m-%d').date()
-                    if datetime.now().date() > fecha_venc:
-                        st.error(f"❌ Key expirada el {datos['vence']}.")
-                        st.stop()
-                except:
-                    st.error("❌ Error al validar la fecha.")
-                    st.stop()
-                
-                if datos.get('device_id') is None:
-                    nuevo_token = str(uuid.uuid4())
-                    datos['device_id'] = nuevo_token
-                    licencias[key_input] = datos
-                    guardar_licencias(licencias)
-                    st.query_params["zt_token"] = nuevo_token
-                else:
-                    st.query_params["zt_token"] = datos['device_id']
-                
-                st.session_state.licencia_activa = True
-                st.session_state.usuario_actual = f"Licencia ({key_input[:8]}...)"
-                st.success("✅ Acceso concedido. Dispositivo reconocido.")
                 st.rerun()
             else:
-                st.error("❌ Key no encontrada o inválida.")
-    
+                licencias = cargar_licencias()
+                if key_input in licencias:
+                    datos = licencias[key_input]
+                    try:
+                        if datetime.now().date() > datetime.strptime(datos['vence'], '%Y-%m-%d').date():
+                            st.error("❌ Key expirada.")
+                            st.stop()
+                    except: pass
+                    if datos.get('device_id') is None:
+                        datos['device_id'] = str(uuid.uuid4())
+                        licencias[key_input] = datos
+                        guardar_licencias(licencias)
+                        st.query_params["zt_token"] = datos['device_id']
+                    else:
+                        st.query_params["zt_token"] = datos['device_id']
+                    st.session_state.licencia_activa = True
+                    st.session_state.usuario_actual = f"Licencia ({key_input[:8]}...)"
+                    st.rerun()
+                else: st.error("❌ Key no encontrada.")
     st.markdown('</div>', unsafe_allow_html=True)
     st.stop()
 
 # ==========================================
-# 🧠 CEREBRO ORIGINAL (Equilibrado y Efectivo)
+# 🧠 CEREBRO ORIGINAL
 # ==========================================
 def cargar_patrones():
     if os.path.exists(ARCHIVO_PATRONES):
         try:
             with open(ARCHIVO_PATRONES, 'r') as f: return json.load(f)
-        except: os.remove(ARCHIVO_PATRONES)
+        except: return {'total_ops': 0, 'total_ganadas': 0, 'winrate': 0.0}
     return {'total_ops': 0, 'total_ganadas': 0, 'winrate': 0.0}
 
 def guardar_patrones(pesos):
-    try:
-        with open(ARCHIVO_PATRONES, 'w') as f: json.dump(pesos, f, indent=2)
-    except: pass
+    with open(ARCHIVO_PATRONES, 'w') as f: json.dump(pesos, f, indent=2)
 
 def cargar_historial():
     if os.path.exists(ARCHIVO_HISTORIAL):
         try:
             with open(ARCHIVO_HISTORIAL, 'r') as f: return json.load(f)
-        except: os.remove(ARCHIVO_HISTORIAL)
+        except: return []
     return []
 
 def guardar_historial(hist):
-    try:
-        with open(ARCHIVO_HISTORIAL, 'w') as f: json.dump(hist, f, indent=2)
-    except: pass
+    with open(ARCHIVO_HISTORIAL, 'w') as f: json.dump(hist, f, indent=2)
 
 def resetear_memoria():
     if os.path.exists(ARCHIVO_HISTORIAL): os.remove(ARCHIVO_HISTORIAL)
@@ -156,8 +139,7 @@ def entrenar_modelo_ml():
 def aprender_en_segundo_plano(señal, resultado, indicadores, precio_real_entrada):
     hist = cargar_historial()
     pesos = cargar_patrones()
-    registro = {'fecha': datetime.now().strftime('%H:%M:%S'), 'señal': señal, 'resultado': resultado, 'precio_entrada_real': precio_real_entrada, 'indicadores': indicadores}
-    hist.append(registro)
+    hist.append({'fecha': datetime.now().strftime('%H:%M:%S'), 'señal': señal, 'resultado': resultado, 'precio_entrada_real': precio_real_entrada, 'indicadores': indicadores})
     pesos['total_ops'] += 1
     if resultado == 'GANADA': pesos['total_ganadas'] += 1
     pesos['winrate'] = (pesos['total_ganadas'] / pesos['total_ops'] * 100) if pesos['total_ops'] > 0 else 0.0
@@ -166,9 +148,7 @@ def aprender_en_segundo_plano(señal, resultado, indicadores, precio_real_entrad
 
 def obtener_datos_binance(symbol, interval='1m', limit=50):
     try:
-        url = f"https://api.binance.com/api/v3/klines"
-        params = {'symbol': symbol, 'interval': interval, 'limit': limit}
-        response = requests.get(url, params=params, timeout=10).json()
+        response = requests.get("https://api.binance.com/api/v3/klines", params={'symbol': symbol, 'interval': interval, 'limit': limit}, timeout=10).json()
         df = pd.DataFrame(response, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume', 'close_time', 'quote_asset_volume', 'number_of_trades', 'taker_buy_base', 'taker_buy_quote', 'ignore'])
         for col in ['open', 'high', 'low', 'close', 'volume']: df[col] = pd.to_numeric(df[col])
         return df
@@ -198,7 +178,7 @@ def analizar_par(codigo_par, tipo='crypto'):
     else: df = obtener_datos_yahoo(codigo_par, period="2d", interval="1m")
     
     if df is None or len(df) < 20:
-        return {'señal': 'CALL', 'confianza': 65, 'razon': "Análisis base por defecto", 'indicadores': {'rsi': 50, 'precio_relativo': 0.5}}
+        return {'señal': 'CALL', 'confianza': 65, 'razon': "Análisis base", 'indicadores': {'rsi': 50, 'precio_relativo': 0.5}}
     
     c_close = 'close' if tipo == 'crypto' else 'Close'
     try:
@@ -214,35 +194,38 @@ def analizar_par(codigo_par, tipo='crypto'):
         bb_low = float(u1['BB_Low'])
         
         if rsi <= 50 or precio <= bb_low:
-            dirección = 'CALL'
+            direccion = 'CALL'
             razones = []
             if rsi < 45: razones.append("RSI Bajo")
-            if precio <= bb_low: razones.append("Toque Banda Inferior")
-            if not razones: razones.append("Tendencia Alcista Corta")
+            if precio <= bb_low: razones.append("Banda Inf")
+            if not razones: razones.append("Tend. Alcista")
         else:
-            dirección = 'PUT'
+            direccion = 'PUT'
             razones = []
             if rsi > 55: razones.append("RSI Alto")
-            if precio >= bb_high: razones.append("Toque Banda Superior")
-            if not razones: razones.append("Tendencia Bajista Corta")
+            if precio >= bb_high: razones.append("Banda Sup")
+            if not razones: razones.append("Tend. Bajista")
 
         confianza_base = 70
         modelo_ml = entrenar_modelo_ml()
         indicadores = {'rsi': rsi, 'precio_relativo': (precio - bb_low) / (bb_high - bb_low + 1e-9)}
         
         if modelo_ml is not None:
-            prediccion = modelo_ml.predict([[indicadores['rsi'], indicadores['precio_relativo'], 1 if dirección == 'CALL' else 0]])
-            probabilidad = modelo_ml.predict_proba([[indicadores['rsi'], indicadores['precio_relativo'], 1 if dirección == 'CALL' else 0]])
+            prediccion = modelo_ml.predict([[indicadores['rsi'], indicadores['precio_relativo'], 1 if direccion == 'CALL' else 0]])
+            probabilidad = modelo_ml.predict_proba([[indicadores['rsi'], indicadores['precio_relativo'], 1 if direccion == 'CALL' else 0]])
             confianza_ml = int(probabilidad[0][prediccion[0]] * 100)
             confianza = int((confianza_base + confianza_ml) / 2)
-            razones.append(f"ML Ajustado ({confianza}%)")
+            razones.append(f"ML:{confianza_ml}%")
         else:
             confianza = confianza_base
 
-        return {'señal': dirección, 'confianza': max(50, min(confianza, 98)), 'razon': " | ".join(razones), 'indicadores': indicadores}
+        return {'señal': direccion, 'confianza': max(50, min(confianza, 98)), 'razon': " | ".join(razones), 'indicadores': indicadores}
     except:
-        return {'señal': 'CALL', 'confianza': 60, 'razon': "Señal de continuidad", 'indicadores': {'rsi': 50, 'precio_relativo': 0.5}}
+        return {'señal': 'CALL', 'confianza': 60, 'razon': "Continuidad", 'indicadores': {'rsi': 50, 'precio_relativo': 0.5}}
 
+# ==========================================
+# 🔊 VOZ - CORREGIDA PARA ACTIVARSE AL 75%
+# ==========================================
 def reproducir_voz(mensaje):
     mensaje_seguro = mensaje.replace("'", "\\'").replace('"', '\\"')
     js_code = f"""
@@ -252,28 +235,28 @@ def reproducir_voz(mensaje):
             window.speechSynthesis.cancel();
             setTimeout(function() {{
                 const msg = new SpeechSynthesisUtterance('{mensaje_seguro}');
-                msg.lang = 'es-ES'; msg.rate = 1.0; msg.volume = 1.0;
+                msg.lang = 'es-ES';
+                msg.rate = 1.0;
+                msg.volume = 1.0;
                 window.speechSynthesis.speak(msg);
-            }}, 300);
+            }}, 100);
         }}
     }})();
     </script>
     """
-    st.markdown(js_code, unsafe_allow_html=True)
+    components.html(js_code, height=0, width=0)
 
+# ==========================================
+# 📊 PARES
+# ==========================================
 PARES = {
+    'Bitcoin': {'codigo': 'BTCUSDT', 'tipo': 'crypto'}, 'Ethereum': {'codigo': 'ETHUSDT', 'tipo': 'crypto'},
+    'Solana': {'codigo': 'SOLUSDT', 'tipo': 'crypto'}, 'Binance Coin': {'codigo': 'BNBUSDT', 'tipo': 'crypto'},
+    'Ripple': {'codigo': 'XRPUSDT', 'tipo': 'crypto'}, 'Cardano': {'codigo': 'ADAUSDT', 'tipo': 'crypto'},
+    'Dogecoin': {'codigo': 'DOGEUSDT', 'tipo': 'crypto'}, 'Polkadot': {'codigo': 'DOTUSDT', 'tipo': 'crypto'},
+    'Litecoin': {'codigo': 'LTCUSDT', 'tipo': 'crypto'}, 'Polygon': {'codigo': 'MATICUSDT', 'tipo': 'crypto'},
     'EUR/USD': {'codigo': 'EURUSD=X', 'tipo': 'forex'}, 'GBP/USD': {'codigo': 'GBPUSD=X', 'tipo': 'forex'},
     'USD/JPY': {'codigo': 'USDJPY=X', 'tipo': 'forex'}, 'AUD/USD': {'codigo': 'AUDUSD=X', 'tipo': 'forex'},
-    'EUR/JPY': {'codigo': 'EURJPY=X', 'tipo': 'forex'}, 'AUD/CAD': {'codigo': 'AUDCAD=X', 'tipo': 'forex'},
-    'EUR/GBP': {'codigo': 'EURGBP=X', 'tipo': 'forex'}, 'GBP/JPY': {'codigo': 'GBPJPY=X', 'tipo': 'forex'},
-    'NZD/USD': {'codigo': 'NZDUSD=X', 'tipo': 'forex'}, 'USD/CAD': {'codigo': 'USDCAD=X', 'tipo': 'forex'},
-    'USD/CHF': {'codigo': 'USDCHF=X', 'tipo': 'forex'}, 'AUD/JPY': {'codigo': 'AUDJPY=X', 'tipo': 'forex'},
-    'Bitcoin': {'codigo': 'BTCUSDT', 'tipo': 'crypto'}, 'Ethereum': {'codigo': 'ETHUSDT', 'tipo': 'crypto'},
-    'Polkadot': {'codigo': 'DOTUSDT', 'tipo': 'crypto'}, 'Worldcoin': {'codigo': 'WLDUSDT', 'tipo': 'crypto'},
-    'Binance Coin': {'codigo': 'BNBUSDT', 'tipo': 'crypto'}, 'Cardano': {'codigo': 'ADAUSDT', 'tipo': 'crypto'},
-    'Solana': {'codigo': 'SOLUSDT', 'tipo': 'crypto'}, 'Ripple': {'codigo': 'XRPUSDT', 'tipo': 'crypto'},
-    'Dogecoin': {'codigo': 'DOGEUSDT', 'tipo': 'crypto'}, 'Polygon': {'codigo': 'MATICUSDT', 'tipo': 'crypto'},
-    'Litecoin': {'codigo': 'LTCUSDT', 'tipo': 'crypto'}
 }
 
 if 'estado' not in st.session_state: st.session_state.estado = 'analizando'
@@ -286,17 +269,13 @@ if 'precio_real_entrada' not in st.session_state: st.session_state.precio_real_e
 if 'voz_reproducida' not in st.session_state: st.session_state.voz_reproducida = False
 
 # ==========================================
-# 🎨 INTERFAZ + ANTI-DESCONEXIÓN
+# 🎨 INTERFAZ CON BARRA DE CONFIANZA VISIBLE
 # ==========================================
 CSS = """
 <style>
 #MainMenu, footer, header {visibility: hidden;}
 .block-container { padding-top: 5px !important; padding-bottom: 0px !important; padding-left: 8px !important; padding-right: 8px !important; max-width: 100% !important; }
-body { background: #000; color: #fff; font-family: Arial, sans-serif; margin: 0; padding: 0; }
-
-/* Ocultar el banner feo de "Reconnecting" de Streamlit */
-[data-testid="stStatusWidget"] { display: none !important; }
-
+body { background: #000; color: #fff; font-family: Arial, sans-serif; }
 .main-container { width: 100%; max-width: 450px; margin: 0 auto; display: flex; flex-direction: column; gap: 6px; }
 .header { background: linear-gradient(90deg, #1a0a2e, #0a1a2e); padding: 8px; border-radius: 8px; border: 1.5px solid #ffd700; text-align: center; }
 .header h1 { color: #ffd700; margin: 0; font-size: 18px; letter-spacing: 2px; }
@@ -311,6 +290,48 @@ body { background: #000; color: #fff; font-family: Arial, sans-serif; margin: 0;
 .signal-call { background: linear-gradient(135deg, #00cc00, #00ff00); border: 2px solid #00ff00; color: white; box-shadow: 0 0 20px rgba(0, 255, 0, 0.6); }
 .signal-put { background: linear-gradient(135deg, #cc0000, #ff0000); border: 2px solid #ff0000; color: white; box-shadow: 0 0 20px rgba(255, 0, 0, 0.6); }
 .signal-wait { background: linear-gradient(135deg, #1a1a2e, #0a1a2e); border: 2px solid #ffd700; color: #ffd700; font-size: 16px; padding: 8px; }
+
+/* BARRA DE CONFIANZA GRANDE Y VISIBLE */
+.confianza-bar-container {
+    background: linear-gradient(135deg, #0a1a2e, #1a0a2e);
+    border: 2px solid #00ff88;
+    border-radius: 10px;
+    padding: 12px;
+    margin: 8px 0;
+    text-align: center;
+}
+.confianza-bar-label {
+    color: #00ff88;
+    font-size: 12px;
+    font-weight: bold;
+    margin-bottom: 6px;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+}
+.confianza-bar-track {
+    background: #1a1a2e;
+    border-radius: 10px;
+    height: 28px;
+    position: relative;
+    overflow: hidden;
+    border: 1px solid #333;
+}
+.confianza-bar-fill {
+    height: 100%;
+    border-radius: 10px;
+    transition: width 0.5s ease;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: bold;
+    font-size: 14px;
+    color: white;
+    text-shadow: 1px 1px 2px rgba(0,0,0,0.8);
+}
+.confianza-alta { background: linear-gradient(90deg, #00cc00, #00ff00); box-shadow: 0 0 15px rgba(0, 255, 0, 0.6); }
+.confianza-media { background: linear-gradient(90deg, #ffaa00, #ffcc00); box-shadow: 0 0 15px rgba(255, 170, 0, 0.6); }
+.confianza-baja { background: linear-gradient(90deg, #ff4400, #ff6600); box-shadow: 0 0 15px rgba(255, 68, 0, 0.6); }
+
 .radar-container { position: relative; width: 150px; height: 150px; margin: 8px auto; }
 .radar { width: 150px; height: 150px; border-radius: 50%; position: relative; overflow: hidden; border: 3px solid; }
 .radar-green { border-color: #00ff00; background: radial-gradient(circle, #0a2a1a, #000); box-shadow: 0 0 20px rgba(0, 255, 0, 0.5); }
@@ -324,29 +345,10 @@ body { background: #000; color: #fff; font-family: Arial, sans-serif; margin: 0;
 .radar-label { color: #fff; font-size: 9px; margin-top: 3px; letter-spacing: 1px; }
 .info-panel { background: linear-gradient(135deg, #0a1a2e, #1a0a2e); border: 1px solid #00ff88; border-radius: 6px; padding: 6px 10px; font-size: 11px; text-align: center; }
 .info-panel strong { color: #00ff88; }
+.voz-indicator { background: #6a0dad; border: 1px solid #da70d6; border-radius: 6px; padding: 4px 8px; font-size: 10px; color: #fff; text-align: center; margin: 4px 0; }
 </style>
 """
 st.markdown(CSS, unsafe_allow_html=True)
-
-# ==========================================
-# 🔌 SCRIPT ANTI-DESCONEXIÓN INTELIGENTE
-# ==========================================
-st.markdown("""
-<script>
-(function() {
-    // Intenta hacer clic en "Rerun" o "Reconnect" si aparece el banner de Streamlit
-    setInterval(function() {
-        const buttons = document.querySelectorAll('button');
-        buttons.forEach(btn => {
-            if (btn.textContent.includes('Rerun') || btn.textContent.includes('Reconnect') || btn.textContent.includes('Reconectar')) {
-                console.log('🔄 Reconexión automática activada...');
-                btn.click();
-            }
-        });
-    }, 3000);
-})();
-</script>
-""", unsafe_allow_html=True)
 
 st.markdown('<div class="main-container">', unsafe_allow_html=True)
 st.markdown(f'<div class="header"><h1>⚡ ZT TRADERS PRO</h1><p>User: {st.session_state.usuario_actual} | IA AUTO-APRENDIZAJE</p></div>', unsafe_allow_html=True)
@@ -406,6 +408,9 @@ elif st.session_state.minuto_anterior != minuto_actual:
     st.session_state.voz_reproducida = False
     st.session_state.minuto_anterior = minuto_actual
 
+# ==========================================
+# ⏱️ CICLO DE 2 MINUTOS
+# ==========================================
 if minuto_es_par:
     if segundo_actual < 55:
         st.markdown('<div class="signal-box signal-wait">📊 ESCANEANDO MERCADO...</div>', unsafe_allow_html=True)
@@ -423,11 +428,37 @@ if minuto_es_par:
         segundos_restantes = 59 - segundo_actual
         confianza_actual = int(señal['confianza'])
         
+        # 🔊 VOZ: Se activa SOLO si confianza >= 75%
         if not st.session_state.voz_reproducida:
             if confianza_actual >= 75:
                 tipo_texto = "COMPRA" if es_call else "VENTA"
                 reproducir_voz(f"Atención. Señal de alta confianza. {tipo_texto}. {confianza_actual} por ciento. Entrar ahora.")
+                st.markdown(f'<div class="voz-indicator">🔊 VOZ ACTIVADA - {confianza_actual}%</div>', unsafe_allow_html=True)
+            else:
+                st.markdown(f'<div class="voz-indicator">🔇 Confianza {confianza_actual}% - Voz silenciada (mínimo 75%)</div>', unsafe_allow_html=True)
             st.session_state.voz_reproducida = True
+        
+        # 🎯 BARRA DE CONFIANZA GRANDE Y VISIBLE
+        if confianza_actual >= 75:
+            clase_barra = "confianza-alta"
+            icono = "🔊"
+        elif confianza_actual >= 60:
+            clase_barra = "confianza-media"
+            icono = "⚠️"
+        else:
+            clase_barra = "confianza-baja"
+            icono = "🔇"
+        
+        st.markdown(f"""
+        <div class="confianza-bar-container">
+            <div class="confianza-bar-label">{icono} NIVEL DE CONFIANZA DE LA SEÑAL</div>
+            <div class="confianza-bar-track">
+                <div class="confianza-bar-fill {clase_barra}" style="width: {confianza_actual}%;">
+                    {confianza_actual}%
+                </div>
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
         
         clase_box = "signal-call" if es_call else "signal-put"
         clase_radar = "radar-green" if es_call else "radar-red"
@@ -435,7 +466,7 @@ if minuto_es_par:
         tipo_signal = "🟢 COMPRA (CALL)" if es_call else "🔴 VENTA (PUT)"
         
         st.markdown(f'<div class="signal-box {clase_box}">{tipo_signal}</div>', unsafe_allow_html=True)
-        st.markdown(f'<div class="info-panel">Confianza IA: <strong>{confianza_actual}%</strong> | <strong>{señal["razon"]}</strong></div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="info-panel">Razón: <strong>{señal["razon"]}</strong></div>', unsafe_allow_html=True)
         st.markdown(f'<div class="radar-container"><div class="radar {clase_radar}"><div class="radar-center"><div class="radar-number {clase_numero}">{segundos_restantes}</div><div class="radar-label">SEGUNDOS</div></div></div></div>', unsafe_allow_html=True)
         time_module.sleep(0.3)
         st.rerun()
@@ -445,10 +476,31 @@ else:
         st.session_state.precio_real_entrada = obtener_precio_actual(codigo, tipo)
     
     señal = st.session_state.senal
-    if señal is None: señal = {'señal': 'CALL', 'confianza': 60, 'razon': "Esperando"}
+    if señal is None:
+        señal = {'señal': 'CALL', 'confianza': 60, 'razon': "Esperando"}
     
     es_call = señal['señal'] == 'CALL'
     segundos_restantes_op = 59 - segundo_actual
+    confianza_actual = int(señal['confianza'])
+    
+    # Mostrar barra de confianza también durante la operación
+    if confianza_actual >= 75:
+        clase_barra = "confianza-alta"
+    elif confianza_actual >= 60:
+        clase_barra = "confianza-media"
+    else:
+        clase_barra = "confianza-baja"
+    
+    st.markdown(f"""
+    <div class="confianza-bar-container">
+        <div class="confianza-bar-label">📊 CONFIANZA DE LA OPERACIÓN EN CURSO</div>
+        <div class="confianza-bar-track">
+            <div class="confianza-bar-fill {clase_barra}" style="width: {confianza_actual}%;">
+                {confianza_actual}%
+            </div>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
     
     clase_box = "signal-call" if es_call else "signal-put"
     clase_radar = "radar-green" if es_call else "radar-red"
