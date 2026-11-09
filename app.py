@@ -261,6 +261,8 @@ if not st.session_state.licencia_activa:
                     st.rerun()
                 else:
                     st.error("❌ Key no encontrada.")
+    st.caption("Al conectar, este navegador queda activado con tu enlace personal: guárdalo en Favoritos o en la "
+               "pantalla de inicio y entrarás directo, sin escribir la clave cada vez.")
     if not master_keys_configuradas():
         st.caption("Admin: configura zt_master_key y zt_admin_token en Secrets para habilitar el acceso maestro.")
     st.markdown("</div>", unsafe_allow_html=True)
@@ -846,6 +848,12 @@ div.stFormSubmitButton > button { background: linear-gradient(135deg, #2563eb, #
 [data-testid="stExpander"] { background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.09) !important; border-radius: 14px !important; }
 [data-baseweb="select"] > div { background: rgba(255,255,255,0.05); border-color: rgba(255,255,255,0.14); border-radius: 12px; }
 ::-webkit-scrollbar { width: 8px; } ::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.15); border-radius: 8px; }
+/* v3.10: vista compacta tipo "una sola pantalla" (inspirada en el panel
+   del amigo de Jose): menos aire entre bloques y tarjetas mas bajas,
+   para ver señal + estadisticas sin bajar tanto. */
+.stVerticalBlock { gap: 0.45rem !important; }
+.stat-box { padding: 6px 2px !important; }
+.hora-box { margin: 2px 0 !important; }
 </style>
 """
 st.markdown(CSS, unsafe_allow_html=True)
@@ -853,7 +861,10 @@ st.markdown(CSS, unsafe_allow_html=True)
 # ---------------- Parte estatica (ya NO se recarga cada segundo) ----------------
 
 st.markdown('<div class="main-container">', unsafe_allow_html=True)
-st.markdown(f'<div class="header"><span class="badge-version">v3.9.1</span><h1>⚡ ZT TRADERS PRO</h1><p>User: {st.session_state.usuario_actual} · IA AUTO-APRENDIZAJE</p></div>', unsafe_allow_html=True)
+st.markdown(f'<div class="header"><span class="badge-version">v3.10</span><h1>⚡ ZT TRADERS PRO</h1><p>User: {st.session_state.usuario_actual} · IA AUTO-APRENDIZAJE</p></div>', unsafe_allow_html=True)
+if st.query_params.get("zt_token"):
+    st.caption("✅ Este dispositivo está activado: guarda ESTA página en Favoritos o en la pantalla de inicio "
+               "(con la dirección completa, tal como está arriba) y la próxima vez entrarás directo, sin escribir la clave.")
 
 col1, col2 = st.columns([3, 1])
 with col1:
@@ -894,6 +905,11 @@ widget_html = f"""
 </div>
 """
 components.html(widget_html, height=185)
+
+# v3.10: la zona de señales en vivo se ancla AQUI, justo debajo del grafico
+# (antes se dibujaba al final de la pagina y habia que bajar mucho para
+# verla). Los paneles de aprendizaje/admin quedan debajo, en expanders.
+slot_zona = st.container()
 
 # ---------------- Panel IA v3 (solo Admin): backtesting + entrenamiento ----------------
 _info_modelo = modelo_v3_info()
@@ -1378,5 +1394,6 @@ def zona_dinamica(codigo_f, tipo_f):
     if segundo_actual >= 57 and not st.session_state.resultado_guardado:
         cerrar_operacion(codigo_f, tipo_f)
 
-zona_dinamica(codigo, tipo)
+with slot_zona:
+    zona_dinamica(codigo, tipo)
 st.markdown('</div>', unsafe_allow_html=True)
