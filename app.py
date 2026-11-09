@@ -38,6 +38,24 @@
 #     El resto de los ciclos la app dice ESPERA y no opera.
 # 15) El modelo entrenado se guarda en modelo_v3.pkl y se aplica solo a
 #     crypto; forex opera con el filtro de puntaje (sin modelo, avisado).
+# --- Ajustes v3.1 (a partir de la aclaracion de Jose: operar en IQ Option) ---
+# 16) La direccion la ELIGE el modelo comparando la probabilidad de CALL y
+#     de PUT y quedandose con la mayor (antes solo validaba la direccion del
+#     puntaje). Si el modelo dice PUT, la señal es PUT (BAJA en IQ Option).
+# 17) Candado de datos frescos: si la ultima vela es vieja (mercado cerrado,
+#     fin de semana forex / OTC), la app da ESPERA en vez de operar con
+#     precios que ya no representan al mercado.
+# --- Novedades v3.2: conocimiento de trader profesional ---
+# 18) Nuevas variables en nucleo_ia: accion del precio (envolvente, pin bar,
+#     inside bar, mechas de rechazo), distancia a soportes/resistencias en
+#     ATR, rupturas, posicion en el rango y REGIMEN de mercado (25 variables).
+#     OJO: al cambiar las variables, el modelo_v3.pkl anterior queda
+#     incompatible y la app lo ignora: hay que REENTRENAR desde el panel.
+# 19) Regla de confluencia: la señal solo sale con >= 2 confirmaciones
+#     independientes (tendencia, nivel S/R, patron de vela, impulso) y sin
+#     bloqueos duros (pegado al nivel contrario o contra tendencia fuerte).
+# 20) El entrenamiento ahora tambien mide precision por REGIMEN, para saber
+#     en que tipo de mercado gana o pierde el cerebro (su "diario").
 # ============================================================
 import streamlit as st
 import streamlit.components.v1 as components
@@ -48,7 +66,7 @@ import ta
 import json
 import os
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 
 import nucleo_ia
@@ -310,12 +328,34 @@ def obtener_precio_actual(codigo_par, tipo="crypto"):
 
 # ---------------- Analisis de señal (por puntaje) ----------------
 
+def _edad_ultimo_dato_seg(df):
+    """Segundos desde la ultima vela recibida; None si no se puede saber."""
+    try:
+        if "timestamp" in df.columns:
+            ultimo = float(df["timestamp"].iloc[-1]) / 1000.0
+        elif isinstance(df.index, pd.DatetimeIndex):
+            ultimo = df.index[-1].timestamp()
+        else:
+            return None
+        return max(0.0, datetime.now(timezone.utc).timestamp() - ultimo)
+    except Exception:
+        return None
+
 def analizar_par(codigo_par, tipo="crypto"):
     espera = {"señal": "ESPERA", "confianza": 0, "razon": "Datos insuficientes",
               "indicadores": {"rsi": 50, "precio_relativo": 0.5}, "features": None}
     df = obtener_datos_binance(codigo_par, interval="1m", limit=120) if tipo == "crypto" else obtener_datos_yahoo(codigo_par)
     if df is None or len(df) < 60:
         return espera
+
+    # Candado de frescura: con datos viejos no se opera (ej. forex el fin de semana)
+    edad = _edad_ultimo_dato_seg(df)
+    limite_edad = 180 if tipo == "crypto" else 420
+    if edad is not None and edad > limite_edad:
+        return {"señal": "ESPERA", "confianza": 0,
+                "razon": f"Datos desactualizados ({int(edad // 60)} min) — mercado cerrado o proveedor atrasado",
+                "indicadores": {"rsi": 50, "precio_relativo": 0.5}, "features": None}
+
     try:
         d = nucleo_ia.agregar_indicadores(df)
         validas = nucleo_ia.filas_validas(d)
@@ -331,34 +371,61 @@ def analizar_par(codigo_par, tipo="crypto"):
         if precio <= 0:
             return espera
 
-        direccion, score, razones = nucleo_ia.direccion_por_puntaje(rsi, precio, bb_low, bb_high, sma, sma_prev)
-        es_call = direccion == "CALL"
+        direccion_puntaje, score, razones = nucleo_ia.direccion_por_puntaje(rsi, precio, bb_low, bb_high, sma, sma_prev)
         vector_base = nucleo_ia.fila_features(d, pos)
+        fv = dict(zip(nucleo_ia.FEATURES_BASE, vector_base))
+        regimen_nombre = nucleo_ia.nombre_regimen(fv.get("regimen_cod", 0))
         indicadores = {"rsi": rsi, "precio_relativo": float(fila["precio_relativo"])}
-        features_full = vector_base + [1 if es_call else 0]
 
-        # Con modelo entrenado (solo crypto): la confianza ES la probabilidad calibrada
+        # CON MODELO (solo crypto): el modelo compara CALL vs PUT y ELIGE la direccion
         info_modelo = modelo_v3_info() if tipo == "crypto" else None
-        p = nucleo_ia.prob_ganada(info_modelo, vector_base, es_call) if info_modelo else None
-        if p is not None:
+        p_call = nucleo_ia.prob_ganada(info_modelo, vector_base, True) if info_modelo else None
+        p_put = nucleo_ia.prob_ganada(info_modelo, vector_base, False) if info_modelo else None
+        if p_call is not None and p_put is not None:
+            es_call = p_call >= p_put
+            direccion = "CALL" if es_call else "PUT"
+            p = max(p_call, p_put)
             confianza = int(round(p * 100))
             if p < nucleo_ia.UMBRAL_CONFIANZA_ML:
                 return {"señal": "ESPERA", "confianza": confianza,
-                        "razon": f"Filtro IA: probabilidad {confianza}% < {int(nucleo_ia.UMBRAL_CONFIANZA_ML * 100)}%",
+                        "razon": f"Filtro IA: SUBE {int(round(p_call * 100))}% / BAJA {int(round(p_put * 100))}% — ninguna supera el {int(nucleo_ia.UMBRAL_CONFIANZA_ML * 100)}%",
                         "indicadores": indicadores, "features": None}
-            razones.append(f"IA calibrada {confianza}%")
+            conf, bloqueos, detalles = nucleo_ia.evaluar_confluencia(fv, direccion)
+            if bloqueos:
+                return {"señal": "ESPERA", "confianza": confianza,
+                        "razon": f"Confluencia: bloqueo por {bloqueos[0]} (régimen {regimen_nombre})",
+                        "indicadores": indicadores, "features": None}
+            if conf < 2:
+                return {"señal": "ESPERA", "confianza": confianza,
+                        "razon": f"Confluencia insuficiente ({conf}/2) en régimen {regimen_nombre}",
+                        "indicadores": indicadores, "features": None}
+            if direccion != direccion_puntaje:
+                razones.append(f"La IA elige {direccion} (el puntaje decía {direccion_puntaje})")
+            razones.append(f"IA: SUBE {int(round(p_call * 100))}% vs BAJA {int(round(p_put * 100))}%")
+            razones.append(f"Régimen: {regimen_nombre} · Confluencia {conf}✓")
             return {"señal": direccion, "confianza": confianza, "razon": " | ".join(razones),
-                    "indicadores": indicadores, "features": features_full}
+                    "indicadores": indicadores, "features": vector_base + [1 if es_call else 0]}
 
-        # Sin modelo: filtro de puntaje tecnico
+        # SIN MODELO: direccion por puntaje tecnico, con filtro de fuerza
         if abs(score) < nucleo_ia.UMBRAL_SCORE_MIN:
             return {"señal": "ESPERA", "confianza": 0,
                     "razon": f"Filtro técnico: puntaje {score} sin ventaja suficiente",
                     "indicadores": indicadores, "features": None}
+        conf, bloqueos, detalles = nucleo_ia.evaluar_confluencia(fv, direccion_puntaje)
+        if bloqueos:
+            return {"señal": "ESPERA", "confianza": 0,
+                    "razon": f"Confluencia: bloqueo por {bloqueos[0]} (régimen {regimen_nombre})",
+                    "indicadores": indicadores, "features": None}
+        if conf < 2:
+            return {"señal": "ESPERA", "confianza": 0,
+                    "razon": f"Confluencia insuficiente ({conf}/2) en régimen {regimen_nombre}",
+                    "indicadores": indicadores, "features": None}
         confianza = 55 + min(30, abs(score) * 6)
+        razones.append(f"Régimen: {regimen_nombre} · Confluencia {conf}✓")
         razones.append("Sin modelo IA" + (" (forex)" if tipo != "crypto" else " entrenado"))
-        return {"señal": direccion, "confianza": max(50, min(int(confianza), 95)),
-                "razon": " | ".join(razones), "indicadores": indicadores, "features": features_full}
+        return {"señal": direccion_puntaje, "confianza": max(50, min(int(confianza), 95)),
+                "razon": " | ".join(razones), "indicadores": indicadores,
+                "features": vector_base + [1 if direccion_puntaje == "CALL" else 0]}
     except Exception:
         return espera
 
@@ -500,6 +567,9 @@ if st.session_state.usuario_actual.startswith("👑"):
             _m = _info_modelo["metricas"]
             st.success(f"Modelo activo — entrenado el {_m['fecha_entrenamiento']} con {_m['ejemplos_entrenamiento']} ejemplos. Brier: {_m['brier']}")
             st.dataframe(pd.DataFrame(_m["por_umbral"]), use_container_width=True, hide_index=True)
+            if _m.get("por_regimen"):
+                st.caption("Precisión por régimen de mercado (umbral 0.62):")
+                st.dataframe(pd.DataFrame(_m["por_regimen"]), use_container_width=True, hide_index=True)
             st.caption("Precisión = % de acierto de las señales emitidas en datos que el modelo nunca vio. Cobertura = % de ciclos en los que sí emite señal.")
         else:
             st.info("Todavía no hay modelo entrenado. Sin modelo, la app usa solo el filtro de puntaje técnico.")
@@ -526,6 +596,8 @@ if st.session_state.usuario_actual.startswith("👑"):
                     modelo_v3_info.clear()
                     _estado.update(label="✅ Modelo v3 entrenado y guardado", state="complete")
                 st.dataframe(pd.DataFrame(_info["metricas"]["por_umbral"]), use_container_width=True, hide_index=True)
+                if _info["metricas"].get("por_regimen"):
+                    st.dataframe(pd.DataFrame(_info["metricas"]["por_regimen"]), use_container_width=True, hide_index=True)
                 st.success("Modelo activo. A partir de ahora las señales crypto se filtran con su probabilidad calibrada (mínimo 62%).")
             except Exception as _e:
                 st.error(f"No se pudo entrenar: {_e}")
