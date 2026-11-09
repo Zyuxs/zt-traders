@@ -17,9 +17,6 @@ ARCHIVO_HISTORIAL = "historial.json"
 ARCHIVO_PATRONES = "patrones.json"
 ARCHIVO_LICENCIAS = "licencias.json"
 
-# ==========================================
-# 🔑 SISTEMA DE LICENCIAS
-# ==========================================
 def cargar_licencias():
     if os.path.exists(ARCHIVO_LICENCIAS):
         try:
@@ -93,9 +90,6 @@ if not st.session_state.licencia_activa:
     st.markdown('</div>', unsafe_allow_html=True)
     st.stop()
 
-# ==========================================
-# 🧠 CEREBRO ORIGINAL
-# ==========================================
 def cargar_patrones():
     if os.path.exists(ARCHIVO_PATRONES):
         try:
@@ -223,9 +217,6 @@ def analizar_par(codigo_par, tipo='crypto'):
     except:
         return {'señal': 'CALL', 'confianza': 60, 'razon': "Continuidad", 'indicadores': {'rsi': 50, 'precio_relativo': 0.5}}
 
-# ==========================================
-# 🔊 VOZ - CORREGIDA PARA ACTIVARSE AL 75%
-# ==========================================
 def reproducir_voz(mensaje):
     mensaje_seguro = mensaje.replace("'", "\\'").replace('"', '\\"')
     js_code = f"""
@@ -246,9 +237,6 @@ def reproducir_voz(mensaje):
     """
     components.html(js_code, height=0, width=0)
 
-# ==========================================
-# 📊 PARES
-# ==========================================
 PARES = {
     'Bitcoin': {'codigo': 'BTCUSDT', 'tipo': 'crypto'}, 'Ethereum': {'codigo': 'ETHUSDT', 'tipo': 'crypto'},
     'Solana': {'codigo': 'SOLUSDT', 'tipo': 'crypto'}, 'Binance Coin': {'codigo': 'BNBUSDT', 'tipo': 'crypto'},
@@ -268,9 +256,6 @@ if 'minuto_anterior' not in st.session_state: st.session_state.minuto_anterior =
 if 'precio_real_entrada' not in st.session_state: st.session_state.precio_real_entrada = None
 if 'voz_reproducida' not in st.session_state: st.session_state.voz_reproducida = False
 
-# ==========================================
-# 🎨 INTERFAZ CON BARRA DE CONFIANZA VISIBLE
-# ==========================================
 CSS = """
 <style>
 #MainMenu, footer, header {visibility: hidden;}
@@ -290,48 +275,13 @@ body { background: #000; color: #fff; font-family: Arial, sans-serif; }
 .signal-call { background: linear-gradient(135deg, #00cc00, #00ff00); border: 2px solid #00ff00; color: white; box-shadow: 0 0 20px rgba(0, 255, 0, 0.6); }
 .signal-put { background: linear-gradient(135deg, #cc0000, #ff0000); border: 2px solid #ff0000; color: white; box-shadow: 0 0 20px rgba(255, 0, 0, 0.6); }
 .signal-wait { background: linear-gradient(135deg, #1a1a2e, #0a1a2e); border: 2px solid #ffd700; color: #ffd700; font-size: 16px; padding: 8px; }
-
-/* BARRA DE CONFIANZA GRANDE Y VISIBLE */
-.confianza-bar-container {
-    background: linear-gradient(135deg, #0a1a2e, #1a0a2e);
-    border: 2px solid #00ff88;
-    border-radius: 10px;
-    padding: 12px;
-    margin: 8px 0;
-    text-align: center;
-}
-.confianza-bar-label {
-    color: #00ff88;
-    font-size: 12px;
-    font-weight: bold;
-    margin-bottom: 6px;
-    text-transform: uppercase;
-    letter-spacing: 1px;
-}
-.confianza-bar-track {
-    background: #1a1a2e;
-    border-radius: 10px;
-    height: 28px;
-    position: relative;
-    overflow: hidden;
-    border: 1px solid #333;
-}
-.confianza-bar-fill {
-    height: 100%;
-    border-radius: 10px;
-    transition: width 0.5s ease;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-weight: bold;
-    font-size: 14px;
-    color: white;
-    text-shadow: 1px 1px 2px rgba(0,0,0,0.8);
-}
+.confianza-bar-container { background: linear-gradient(135deg, #0a1a2e, #1a0a2e); border: 2px solid #00ff88; border-radius: 10px; padding: 12px; margin: 8px 0; text-align: center; }
+.confianza-bar-label { color: #00ff88; font-size: 12px; font-weight: bold; margin-bottom: 6px; text-transform: uppercase; letter-spacing: 1px; }
+.confianza-bar-track { background: #1a1a2e; border-radius: 10px; height: 28px; position: relative; overflow: hidden; border: 1px solid #333; }
+.confianza-bar-fill { height: 100%; border-radius: 10px; transition: width 0.5s ease; display: flex; align-items: center; justify-content: center; font-weight: bold; font-size: 14px; color: white; text-shadow: 1px 1px 2px rgba(0,0,0,0.8); }
 .confianza-alta { background: linear-gradient(90deg, #00cc00, #00ff00); box-shadow: 0 0 15px rgba(0, 255, 0, 0.6); }
 .confianza-media { background: linear-gradient(90deg, #ffaa00, #ffcc00); box-shadow: 0 0 15px rgba(255, 170, 0, 0.6); }
 .confianza-baja { background: linear-gradient(90deg, #ff4400, #ff6600); box-shadow: 0 0 15px rgba(255, 68, 0, 0.6); }
-
 .radar-container { position: relative; width: 150px; height: 150px; margin: 8px auto; }
 .radar { width: 150px; height: 150px; border-radius: 50%; position: relative; overflow: hidden; border: 3px solid; }
 .radar-green { border-color: #00ff00; background: radial-gradient(circle, #0a2a1a, #000); box-shadow: 0 0 20px rgba(0, 255, 0, 0.5); }
@@ -409,67 +359,83 @@ elif st.session_state.minuto_anterior != minuto_actual:
     st.session_state.minuto_anterior = minuto_actual
 
 # ==========================================
-# ⏱️ CICLO DE 2 MINUTOS
+# 🎯 CONTENEDOR ÚNICO (SOLUCIÓN AL DOBLE CRONÓMETRO)
 # ==========================================
-if minuto_es_par:
-    if segundo_actual < 55:
-        st.markdown('<div class="signal-box signal-wait">📊 ESCANEANDO MERCADO...</div>', unsafe_allow_html=True)
-        st.markdown(f'<div class="info-panel">⏱️ Próxima señal en: <strong>{55 - segundo_actual}s</strong></div>', unsafe_allow_html=True)
-        st.markdown('<div class="radar-container"><div class="radar radar-yellow"><div class="radar-center"><div class="radar-number radar-number-yellow">IA</div><div class="radar-label">ACTIVA</div></div></div></div>', unsafe_allow_html=True)
-        time_module.sleep(1)
-        st.rerun()
-    else:
-        if st.session_state.senal is None or st.session_state.estado != 'senal':
-            st.session_state.senal = analizar_par(codigo, tipo)
-            st.session_state.estado = 'senal'
-        
-        señal = st.session_state.senal
-        es_call = señal['señal'] == 'CALL'
-        segundos_restantes = 59 - segundo_actual
-        confianza_actual = int(señal['confianza'])
-        
-        # 🔊 VOZ: Se activa SOLO si confianza >= 75%
-        if not st.session_state.voz_reproducida:
-            if confianza_actual >= 75:
-                tipo_texto = "COMPRA" if es_call else "VENTA"
-                reproducir_voz(f"Atención. Señal de alta confianza. {tipo_texto}. {confianza_actual} por ciento. Entrar ahora.")
-                st.markdown(f'<div class="voz-indicator">🔊 VOZ ACTIVADA - {confianza_actual}%</div>', unsafe_allow_html=True)
-            else:
-                st.markdown(f'<div class="voz-indicator">🔇 Confianza {confianza_actual}% - Voz silenciada (mínimo 75%)</div>', unsafe_allow_html=True)
-            st.session_state.voz_reproducida = True
-        
-        # 🎯 BARRA DE CONFIANZA GRANDE Y VISIBLE
+contenedor = st.empty()
+
+# Construir HTML en UNA sola variable
+html_final = ""
+
+# FASE 1: ESCANEO (minutos pares, segundos 0-54)
+if minuto_es_par and segundo_actual < 55:
+    html_final = f"""
+    <div class="signal-box signal-wait">📊 ESCANEANDO MERCADO...</div>
+    <div class="info-panel">⏱️ Próxima señal en: <strong>{55 - segundo_actual}s</strong></div>
+    <div class="radar-container"><div class="radar radar-yellow"><div class="radar-center"><div class="radar-number radar-number-yellow">IA</div><div class="radar-label">ACTIVA</div></div></div></div>
+    """
+    contenedor.markdown(html_final, unsafe_allow_html=True)
+    time_module.sleep(1)
+    st.rerun()
+
+# FASE 2: SEÑAL (minutos pares, segundos 55-59)
+elif minuto_es_par and segundo_actual >= 55:
+    if st.session_state.senal is None or st.session_state.estado != 'senal':
+        st.session_state.senal = analizar_par(codigo, tipo)
+        st.session_state.estado = 'senal'
+    
+    señal = st.session_state.senal
+    es_call = señal['señal'] == 'CALL'
+    segundos_restantes = 59 - segundo_actual
+    confianza_actual = int(señal['confianza'])
+    
+    # 🔊 VOZ
+    voz_html = ""
+    if not st.session_state.voz_reproducida:
         if confianza_actual >= 75:
-            clase_barra = "confianza-alta"
-            icono = "🔊"
-        elif confianza_actual >= 60:
-            clase_barra = "confianza-media"
-            icono = "⚠️"
+            tipo_texto = "COMPRA" if es_call else "VENTA"
+            reproducir_voz(f"Atención. Señal de alta confianza. {tipo_texto}. {confianza_actual} por ciento. Entrar ahora.")
+            voz_html = '<div class="voz-indicator">🔊 VOZ ACTIVADA - ' + str(confianza_actual) + '%</div>'
         else:
-            clase_barra = "confianza-baja"
-            icono = "🔇"
-        
-        st.markdown(f"""
-        <div class="confianza-bar-container">
-            <div class="confianza-bar-label">{icono} NIVEL DE CONFIANZA DE LA SEÑAL</div>
-            <div class="confianza-bar-track">
-                <div class="confianza-bar-fill {clase_barra}" style="width: {confianza_actual}%;">
-                    {confianza_actual}%
-                </div>
+            voz_html = '<div class="voz-indicator">🔇 Confianza ' + str(confianza_actual) + '% - Voz silenciada (mínimo 75%)</div>'
+        st.session_state.voz_reproducida = True
+    
+    # 🎯 BARRA DE CONFIANZA
+    if confianza_actual >= 75:
+        clase_barra = "confianza-alta"
+        icono = "🔊"
+    elif confianza_actual >= 60:
+        clase_barra = "confianza-media"
+        icono = "⚠️"
+    else:
+        clase_barra = "confianza-baja"
+        icono = "🔇"
+    
+    barra_html = f"""
+    <div class="confianza-bar-container">
+        <div class="confianza-bar-label">{icono} NIVEL DE CONFIANZA DE LA SEÑAL</div>
+        <div class="confianza-bar-track">
+            <div class="confianza-bar-fill {clase_barra}" style="width: {confianza_actual}%;">
+                {confianza_actual}%
             </div>
         </div>
-        """, unsafe_allow_html=True)
-        
-        clase_box = "signal-call" if es_call else "signal-put"
-        clase_radar = "radar-green" if es_call else "radar-red"
-        clase_numero = "radar-number-green" if es_call else "radar-number-red"
-        tipo_signal = "🟢 COMPRA (CALL)" if es_call else "🔴 VENTA (PUT)"
-        
-        st.markdown(f'<div class="signal-box {clase_box}">{tipo_signal}</div>', unsafe_allow_html=True)
-        st.markdown(f'<div class="info-panel">Razón: <strong>{señal["razon"]}</strong></div>', unsafe_allow_html=True)
-        st.markdown(f'<div class="radar-container"><div class="radar {clase_radar}"><div class="radar-center"><div class="radar-number {clase_numero}">{segundos_restantes}</div><div class="radar-label">SEGUNDOS</div></div></div></div>', unsafe_allow_html=True)
-        time_module.sleep(0.3)
-        st.rerun()
+    </div>
+    """
+    
+    clase_box = "signal-call" if es_call else "signal-put"
+    clase_radar = "radar-green" if es_call else "radar-red"
+    clase_numero = "radar-number-green" if es_call else "radar-number-red"
+    tipo_signal = "🟢 COMPRA (CALL)" if es_call else "🔴 VENTA (PUT)"
+    
+    html_final = voz_html + barra_html + f"""
+    <div class="signal-box {clase_box}">{tipo_signal}</div>
+    <div class="info-panel">Razón: <strong>{señal["razon"]}</strong></div>
+    <div class="radar-container"><div class="radar {clase_radar}"><div class="radar-center"><div class="radar-number {clase_numero}">{segundos_restantes}</div><div class="radar-label">SEGUNDOS</div></div></div></div>
+    """
+    contenedor.markdown(html_final, unsafe_allow_html=True)
+    time_module.sleep(0.3)
+    st.rerun()
+
+# FASE 3: OPERACIÓN (minutos impares)
 else:
     if st.session_state.estado != 'operando':
         st.session_state.estado = 'operando'
@@ -483,7 +449,6 @@ else:
     segundos_restantes_op = 59 - segundo_actual
     confianza_actual = int(señal['confianza'])
     
-    # Mostrar barra de confianza también durante la operación
     if confianza_actual >= 75:
         clase_barra = "confianza-alta"
     elif confianza_actual >= 60:
@@ -491,7 +456,7 @@ else:
     else:
         clase_barra = "confianza-baja"
     
-    st.markdown(f"""
+    barra_html = f"""
     <div class="confianza-bar-container">
         <div class="confianza-bar-label">📊 CONFIANZA DE LA OPERACIÓN EN CURSO</div>
         <div class="confianza-bar-track">
@@ -500,18 +465,23 @@ else:
             </div>
         </div>
     </div>
-    """, unsafe_allow_html=True)
+    """
     
     clase_box = "signal-call" if es_call else "signal-put"
     clase_radar = "radar-green" if es_call else "radar-red"
     clase_numero = "radar-number-green" if es_call else "radar-number-red"
     tipo_signal = "🟢 EN CURSO (CALL)" if es_call else "🔴 EN CURSO (PUT)"
     
-    st.markdown(f'<div class="signal-box {clase_box}">{tipo_signal}</div>', unsafe_allow_html=True)
+    entrada_html = ""
     if st.session_state.precio_real_entrada:
-        st.markdown(f'<div class="info-panel">Entrada: <strong>{round(st.session_state.precio_real_entrada, 5)}</strong></div>', unsafe_allow_html=True)
+        entrada_html = f'<div class="info-panel">Entrada: <strong>{round(st.session_state.precio_real_entrada, 5)}</strong></div>'
     
-    st.markdown(f'<div class="radar-container"><div class="radar {clase_radar}"><div class="radar-center"><div class="radar-number {clase_numero}">{segundos_restantes_op}</div><div class="radar-label">EXPIRACIÓN</div></div></div></div>', unsafe_allow_html=True)
+    html_final = barra_html + f"""
+    <div class="signal-box {clase_box}">{tipo_signal}</div>
+    {entrada_html}
+    <div class="radar-container"><div class="radar {clase_radar}"><div class="radar-center"><div class="radar-number {clase_numero}">{segundos_restantes_op}</div><div class="radar-label">EXPIRACIÓN</div></div></div></div>
+    """
+    contenedor.markdown(html_final, unsafe_allow_html=True)
     
     if segundo_actual >= 58 and not st.session_state.resultado_guardado:
         if st.session_state.precio_real_entrada and st.session_state.precio_real_entrada > 0:
