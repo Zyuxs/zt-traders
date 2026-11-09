@@ -657,6 +657,11 @@ def analizar_par(codigo_par, tipo="crypto"):
                 nivel = "Baja"
             if p < 0.538:
                 advertencias.append("Prob. bajo el equilibrio de IQ Option (53,8% con payout 86%)")
+            nivel, _motivos_lec = nucleo_ia.aplicar_lecciones(
+                nivel, fv, direccion, codigo_par,
+                nucleo_ia.lecciones_aprendidas(st.session_state.get("hist_cache", [])))
+            for _m in _motivos_lec:
+                advertencias.append(f"📓 Lección de la experiencia: {_m} — nivel ajustado")
             if direccion != direccion_puntaje:
                 razones.append(f"La IA elige {direccion} (el puntaje decía {direccion_puntaje})")
             razones.append(f"IA: SUBE {int(round(p_call * 100))}% vs BAJA {int(round(p_put * 100))}%")
@@ -688,6 +693,11 @@ def analizar_par(codigo_par, tipo="crypto"):
             nivel = "Media"
         else:
             nivel = "Baja"
+        nivel, _motivos_lec = nucleo_ia.aplicar_lecciones(
+            nivel, fv, direccion, codigo_par,
+            nucleo_ia.lecciones_aprendidas(st.session_state.get("hist_cache", [])))
+        for _m in _motivos_lec:
+            advertencias.append(f"📓 Lección de la experiencia: {_m} — nivel ajustado")
         razones.append(f"Régimen: {regimen_nombre} · Confluencia {conf}✓ · Nivel {nivel}")
         if tipo != "crypto" and modelo_vivo_info() is None:
             _validas = len(nucleo_ia.ops_validas_para_vivo(st.session_state.hist_cache))
@@ -944,7 +954,7 @@ st.markdown(CSS, unsafe_allow_html=True)
 # ---------------- Parte estatica (ya NO se recarga cada segundo) ----------------
 
 st.markdown('<div class="main-container">', unsafe_allow_html=True)
-st.markdown(f'<div class="header"><span class="badge-version">v3.11.1</span><h1>⚡ ZT TRADERS PRO</h1><p>User: {st.session_state.usuario_actual} · IA AUTO-APRENDIZAJE</p></div>', unsafe_allow_html=True)
+st.markdown(f'<div class="header"><span class="badge-version">v3.12</span><h1>⚡ ZT TRADERS PRO</h1><p>User: {st.session_state.usuario_actual} · IA AUTO-APRENDIZAJE</p></div>', unsafe_allow_html=True)
 if st.query_params.get("zt_token"):
     st.caption("✅ Este dispositivo está activado: guarda ESTA página en Favoritos o en la pantalla de inicio "
                "(con la dirección completa, tal como está arriba) y la próxima vez entrarás directo, sin escribir la clave.")
@@ -1260,6 +1270,15 @@ with st.expander("📈 Aprendizaje en vivo — así va aprendiendo la app"):
                 _filas_aut = [{"causa probable": c, "pérdidas": n,
                                "%": "muestra chica"} for c, n in _autopsia.items()]
             st.dataframe(pd.DataFrame(_filas_aut), use_container_width=True, hide_index=True)
+        _lecciones = nucleo_ia.lecciones_aprendidas(_hist)
+        if _lecciones:
+            st.caption("📓 Lecciones de la experiencia — lo que la app aprendió de sus propias pérdidas. "
+                       "Ya se aplican solas a las señales nuevas (bajan el nivel en los contextos que castigan):")
+            for _l in _lecciones:
+                st.info(f"**{_l['titulo']}**\n\n🔍 Evidencia: {_l['evidencia']}.\n\n🛠 Ajuste activo: {_l['efecto']}")
+        elif _n_perdidas >= 10:
+            st.caption("📓 Todavía sin lecciones automáticas: se activan cuando una causa de pérdida domina "
+                       "con 20+ pérdidas registradas (muestra suficiente para no aprender de ruido).")
         _c1, _c2 = st.columns(2)
         with _c1:
             st.caption("Acierto por par")
