@@ -408,6 +408,110 @@ def entrenar_modelo(X, y, grupos, tiempos):
     }
     return {"modelo": modelo, "features": FEATURES_COMPLETAS, "metricas": metricas}
 
+MIN_OPS_MODELO_VIVO = 60     # operaciones reales minimas para activar el cerebro en vivo
+REENTRENAR_CADA_OPS = 20     # reentrenar cuando se juntan 20 operaciones nuevas
+
+# El patron central del trading es una INTERACCION (direccion x contexto):
+# comprar en tendencia alcista no es lo mismo que comprar en rango, y con
+# pocos datos un arbol tarda en descubrir esas combinaciones solo. Por eso
+# el modelo en vivo agrega 3 variables derivadas que las hacen explicitas.
+FEATURES_VIVO = FEATURES_COMPLETAS + ["alineado_tendencia", "alineado_ema", "espacio_favorable"]
+
+def _extender_vivo(vector_base, es_call):
+    fv = dict(zip(FEATURES_BASE, vector_base))
+    regimen = int(round(float(fv.get("regimen_cod", 0))))
+    dir_sign = 1.0 if es_call else -1.0
+    if (regimen == 1 and es_call) or (regimen == 2 and not es_call):
+        alineado = 1.0
+    elif regimen in (1, 2):
+        alineado = -1.0
+    else:
+        alineado = 0.0
+    alineado_ema = float(np.sign(float(fv.get("ema_gap", 0.0)))) * dir_sign
+    espacio = (float(fv.get("dist_resistencia", 0.0)) - float(fv.get("dist_soporte", 0.0))) * dir_sign
+    return list(vector_base) + [1.0 if es_call else 0.0, alineado, alineado_ema, espacio]
+
+def ops_validas_para_vivo(historial):
+    """Operaciones del historial que sirven para aprender (traen variables
+    completas y resultado)."""
+    return [h for h in (historial or [])
+            if h.get("features") and len(h["features"]) == len(FEATURES_COMPLETAS)
+            and h.get("resultado") in ("GANADA", "PERDIDA")]
+
+def entrenar_modelo_vivo(historial):
+    """Cerebro EN VIVO: aprende de las operaciones reales de la app.
+
+    Cada operacion registrada trae el estado del mercado (26 variables,
+    incluida la direccion tomada) y su resultado real (GANADA/PERDIDA,
+    juzgado por la app con el precio de entrada y el de cierre). Con eso
+    aprende en que estados del mercado las señales de ESTE sistema ganan
+    y en cuales pierden, tambien en forex, donde no hay backtest de
+    Binance. Division por orden de registro: 70% entrena, 30% se usa
+    para calibrar y medir precision sin tocar. Devuelve un info
+    compatible con prob_ganada()/guardar_modelo(), o None si aun no
+    hay operaciones suficientes.
+    """
+    from sklearn.ensemble import HistGradientBoostingClassifier
+    from sklearn.calibration import CalibratedClassifierCV
+    from sklearn.metrics import brier_score_loss
+
+    ops = ops_validas_para_vivo(historial)
+    if len(ops) < MIN_OPS_MODELO_VIVO:
+        return None
+    X = np.nan_to_num(np.array([_extender_vivo(h["features"][:len(FEATURES_BASE)],
+                                               h["features"][-1] == 1) for h in ops], dtype=float),
+                      nan=0.0, posinf=0.0, neginf=0.0)
+    y = np.array([1 if h["resultado"] == "GANADA" else 0 for h in ops], dtype=int)
+    if len(set(y.tolist())) < 2:
+        return None
+    corte = int(len(ops) * 0.7)
+    X_tr, y_tr, X_te, y_te = X[:corte], y[:corte], X[corte:], y[corte:]
+    if len(set(y_tr.tolist())) < 2 or len(y_te) < 10:
+        return None
+
+    def _base():
+        return HistGradientBoostingClassifier(max_iter=200, learning_rate=0.08,
+                                              max_leaf_nodes=15, min_samples_leaf=15,
+                                              random_state=42)
+    modelo = CalibratedClassifierCV(_base(), method="sigmoid", cv=3)
+    modelo.fit(X_tr, y_tr)
+    prob_te = modelo.predict_proba(X_te)[:, list(modelo.classes_).index(1)]
+    brier = float(brier_score_loss(y_te, prob_te))
+    con_filtro = prob_te >= 0.55
+    metricas = {
+        "fecha_entrenamiento": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC"),
+        "ejemplos_entrenamiento": int(len(ops)),
+        "winrate_prueba_%": round(float(y_te.mean()) * 100, 1),
+        "precision_filtro_0.55_%": round(float(y_te[con_filtro].mean()) * 100, 1) if con_filtro.sum() else 0.0,
+        "cobertura_filtro_0.55_%": round(float(con_filtro.mean()) * 100, 1),
+        "brier": round(brier, 4),
+    }
+    return {"modelo": modelo, "features": FEATURES_VIVO,
+            "metricas": metricas, "tipo": "vivo"}
+
+def cargar_modelo_vivo(ruta_pkl="modelo_vivo.pkl"):
+    """Como cargar_modelo pero para el modelo en vivo (otras variables)."""
+    try:
+        with open(ruta_pkl, "rb") as f:
+            info = pickle.load(f)
+        if info.get("features") != FEATURES_VIVO:
+            return None
+        return info
+    except Exception:
+        return None
+
+def prob_ganada_vivo(info_modelo, vector_base, es_call):
+    """Probabilidad de GANADA segun el modelo en vivo (variables extendidas)."""
+    if info_modelo is None:
+        return None
+    try:
+        X = np.array([_extender_vivo(vector_base, es_call)], dtype=float)
+        proba = info_modelo["modelo"].predict_proba(X)[0]
+        clases = list(info_modelo["modelo"].classes_)
+        return float(proba[clases.index(1)])
+    except Exception:
+        return None
+
 def guardar_modelo(info, ruta_pkl="modelo_v3.pkl", ruta_metricas="modelo_v3_metricas.json"):
     with open(ruta_pkl, "wb") as f:
         pickle.dump(info, f)
