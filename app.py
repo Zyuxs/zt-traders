@@ -285,7 +285,7 @@ def resetear_memoria():
     st.session_state.pesos = dict(PATRONES_BASE)
 
 def aprender(señal, resultado, indicadores, precio_real_entrada, features=None,
-             par=None, tipo=None, nivel=None, confianza=None):
+             par=None, tipo=None, nivel=None, confianza=None, fuente=None):
     """Registra el resultado una sola vez por operacion y actualiza memoria + disco."""
     hist = st.session_state.hist_cache
     pesos = st.session_state.pesos
@@ -300,6 +300,7 @@ def aprender(señal, resultado, indicadores, precio_real_entrada, features=None,
         "tipo": tipo,
         "nivel": nivel,
         "confianza": confianza,
+        "fuente_datos": fuente,
     })
     pesos["total_ops"] += 1
     if resultado == "GANADA":
@@ -599,6 +600,15 @@ def analizar_par(codigo_par, tipo="crypto"):
         _prob_fn = nucleo_ia.prob_ganada_vivo if fuente_modelo.startswith("en vivo") else nucleo_ia.prob_ganada
         p_call = _prob_fn(info_modelo, vector_base, True) if info_modelo else None
         p_put = _prob_fn(info_modelo, vector_base, False) if info_modelo else None
+        # PUERTA DE CONFIANZA (v3.8): el modelo en vivo solo MANDA en la
+        # direccion cuando ya demostro precision en operaciones que no vio
+        # al entrenar (>=55% en su filtro de probabilidad). Mientras tanto
+        # observa y sigue aprendiendo: manda el puntaje tecnico.
+        if info_modelo is not None and fuente_modelo.startswith("en vivo"):
+            _prec = (info_modelo.get("metricas") or {}).get("precision_filtro_0.55_%", 0) or 0
+            if _prec < 55:
+                razones.append(f"Cerebro en vivo en observación (precisión en datos no vistos: {_prec}% < 55%): manda el puntaje técnico")
+                p_call = p_put = None
         if p_call is not None and p_put is not None:
             es_call = p_call >= p_put
             direccion = "CALL" if es_call else "PUT"
@@ -645,7 +655,7 @@ def analizar_par(codigo_par, tipo="crypto"):
         else:
             nivel = "Baja"
         razones.append(f"Régimen: {regimen_nombre} · Confluencia {conf}✓ · Nivel {nivel}")
-        if tipo != "crypto":
+        if tipo != "crypto" and modelo_vivo_info() is None:
             _validas = len(nucleo_ia.ops_validas_para_vivo(st.session_state.hist_cache))
             razones.append(f"Modelo en vivo aprendiendo: {_validas}/{nucleo_ia.MIN_OPS_MODELO_VIVO} operaciones reales")
         else:
@@ -817,7 +827,7 @@ st.markdown(CSS, unsafe_allow_html=True)
 # ---------------- Parte estatica (ya NO se recarga cada segundo) ----------------
 
 st.markdown('<div class="main-container">', unsafe_allow_html=True)
-st.markdown(f'<div class="header"><span class="badge-version">v3.7.3</span><h1>⚡ ZT TRADERS PRO</h1><p>User: {st.session_state.usuario_actual} · IA AUTO-APRENDIZAJE</p></div>', unsafe_allow_html=True)
+st.markdown(f'<div class="header"><span class="badge-version">v3.8</span><h1>⚡ ZT TRADERS PRO</h1><p>User: {st.session_state.usuario_actual} · IA AUTO-APRENDIZAJE</p></div>', unsafe_allow_html=True)
 
 col1, col2 = st.columns([3, 1])
 with col1:
@@ -977,6 +987,23 @@ with st.expander("📈 Aprendizaje en vivo — así va aprendiendo la app"):
         _ganadas = sum(1 for _h in _validas if _h["resultado"] == "GANADA")
         st.caption(f"Operaciones reales registradas: {_n_val} · Acierto global: {round(_ganadas / _n_val * 100, 1)}% "
                    f"(con payout 86% en IQ Option necesitas más del 53,8% para ganar dinero).")
+        if _n_val >= 20:
+            _espejo = round((_n_val - _ganadas) / _n_val * 100, 1)
+            st.caption(f"🔁 Señal espejo: operando TODO al revés de lo que dijo la app, el acierto habría sido {_espejo}%. "
+                       f"Si el espejo supera al derecho por mucho, hay un sesgo que corregir, no mala suerte.")
+            for _dir in ("CALL", "PUT"):
+                _sub = [_h for _h in _validas if _h.get("señal") == _dir]
+                if len(_sub) >= 20:
+                    _wr = sum(1 for _h in _sub if _h["resultado"] == "GANADA") / len(_sub) * 100
+                    if _wr < 40:
+                        st.warning(f"⚠️ Sesgo {_dir}: solo {_wr:.1f}% de acierto en {len(_sub)} operaciones. "
+                                   f"Esa dirección está rindiendo muy por debajo del azar; el cerebro lo tiene en cuenta al entrenar.")
+                    elif _wr >= 58:
+                        st.success(f"✅ {_dir} viene fuerte: {_wr:.1f}% de acierto en {len(_sub)} operaciones.")
+        _limpias = sum(1 for _h in _validas if _h.get("fuente_datos") in ("Twelve Data", "Binance"))
+        st.caption(f"🎯 Operaciones con etiqueta limpia (juzgadas con precio sincronizado de Twelve Data o Binance): "
+                   f"{_limpias} de {_n_val}. Al llegar a {nucleo_ia.MIN_OPS_MODELO_VIVO} limpias, el cerebro entrenará solo con esas "
+                   f"y dejará fuera las que se juzgaron con el precio retrasado de Yahoo.")
         _c1, _c2 = st.columns(2)
         with _c1:
             st.caption("Acierto por par")
@@ -1051,7 +1078,8 @@ def cerrar_operacion(codigo_op, tipo_op):
         if (es_call and precio_actual > entrada) or (not es_call and precio_actual < entrada):
             resultado = 'GANADA'
     aprender(señal['señal'], resultado, señal.get('indicadores', {}), entrada, señal.get('features'),
-             par=codigo_op, tipo=tipo_op, nivel=señal.get('nivel'), confianza=señal.get('confianza'))
+             par=codigo_op, tipo=tipo_op, nivel=señal.get('nivel'), confianza=señal.get('confianza'),
+             fuente=señal.get('fuente'))
     st.session_state.resultado_guardado = True
 
 # ---------------- Zona dinamica: fragmento cada 1s ----------------
