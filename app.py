@@ -93,6 +93,20 @@
 #     aprendizaje, acierto real global y por par / direccion / nivel /
 #     tipo, y el estado del cerebro en vivo con su precision medida en
 #     operaciones que no vio al entrenar. Asi se VE si esta aprendiendo.
+# --- v3.6: TWELVE DATA para forex (observacion de Jose) ---
+# 29) Jose noto que Yahoo Finance va retrasado frente a IQ Option
+#     (~3 pips en EUR/USD en su observacion) y que Twelve Data va parejo
+#     con IQ Option. Forex ahora se analiza y se juzga (entrada/cierre)
+#     con Twelve Data como fuente principal y Yahoo de respaldo; la
+#     razon de cada señal dice la fuente ("Datos: Twelve Data"). Clave
+#     en Secrets: twelvedata_api_key. Incluye todo lo de la v3.5.1.
+# --- v3.5.1: RESPALDO DEL APRENDIZAJE (sin cambiar nada de la v3.5) ---
+# 28) Panel Admin "Respaldo del aprendizaje": botones para descargar
+#     historial.json, patrones.json y modelo_vivo.pkl. El aprendizaje vive
+#     solo en el disco del servidor de Streamlit y se puede perder al
+#     reiniciar o volver a subir la app; con la copia guardada, subir ese
+#     archivo junto a la app lo restaura (el cerebro en vivo se reentrena
+#     solo desde el historial restaurado al llegar a 60 operaciones).
 # ============================================================
 import streamlit as st
 import streamlit.components.v1 as components
@@ -436,8 +450,75 @@ def _precio_yahoo(symbol):
         return float(df["close"].iloc[-1])
     return None
 
+# ---------------- Twelve Data: fuente principal de FOREX (v3.6) ----------------
+# Observacion de Jose (2026-11-09): Yahoo Finance va retrasado frente a
+# IQ Option (el vio ~3 pips de diferencia en EUR/USD) y Twelve Data va
+# parejo con IQ Option. En operaciones de 1 minuto, 3 pips voltean el
+# resultado: por eso forex ahora se analiza y se juzga con Twelve Data.
+# Plan Basic de Jose: 800 creditos/dia, 8/min. Cada llamada = 1 credito y
+# el cache de Streamlit se comparte entre sesiones: la serie se pide con
+# ttl 45s y el precio con ttl 10s. Si no hay clave, se acaban los
+# creditos o la API falla, la app cae a Yahoo automaticamente.
+
+def _twelvedata_key():
+    return _secret("twelvedata_api_key", "TWELVEDATA_API_KEY")
+
+def _simbolo_twelvedata(codigo_yahoo):
+    base = str(codigo_yahoo).replace("=X", "")
+    return f"{base[:3]}/{base[3:6]}" if len(base) >= 6 else base
+
+def _td_request(codigo_yahoo, outputsize):
+    key = _twelvedata_key()
+    if not key:
+        return None
+    try:
+        r = sesion_http().get(
+            "https://api.twelvedata.com/time_series",
+            params={"symbol": _simbolo_twelvedata(codigo_yahoo), "interval": "1min",
+                    "outputsize": outputsize, "apikey": key, "format": "JSON",
+                    "timezone": "UTC"},
+            timeout=12)
+        j = r.json()
+        valores = j.get("values")
+        if not valores:
+            return None
+        df = pd.DataFrame(valores)
+        df["datetime"] = pd.to_datetime(df["datetime"], utc=True)
+        df = df.set_index("datetime").sort_index()
+        for col in ("open", "high", "low", "close"):
+            df[col] = pd.to_numeric(df[col], errors="coerce")
+        if "volume" in df.columns:
+            df["volume"] = pd.to_numeric(df["volume"], errors="coerce").fillna(0)
+        else:
+            df["volume"] = 0.0
+        return df[["open", "high", "low", "close", "volume"]].dropna(subset=["close"])
+    except Exception:
+        return None
+
+@st.cache_data(ttl=45, show_spinner=False)
+def _serie_twelvedata(codigo_yahoo, outputsize=120):
+    return _td_request(codigo_yahoo, outputsize)
+
+@st.cache_data(ttl=10, show_spinner=False)
+def _precio_twelvedata(codigo_yahoo):
+    df = _td_request(codigo_yahoo, 1)
+    if df is not None and len(df):
+        return float(df["close"].iloc[-1])
+    return None
+
+def obtener_datos_forex(codigo_par):
+    """(df, fuente): Twelve Data primero; Yahoo de respaldo."""
+    df = _serie_twelvedata(codigo_par, 120)
+    if df is not None and len(df) >= 60:
+        return df, "Twelve Data"
+    dfy = obtener_datos_yahoo(codigo_par)
+    return dfy, "Yahoo Finance"
+
 def obtener_precio_actual(codigo_par, tipo="crypto"):
-    return _precio_binance(codigo_par) if tipo == "crypto" else _precio_yahoo(codigo_par)
+    if tipo == "crypto":
+        return _precio_binance(codigo_par)
+    precio = _precio_twelvedata(codigo_par)
+    return precio if precio is not None else _precio_yahoo(codigo_par)
 
 # ---------------- Analisis de señal (por puntaje) ----------------
 
@@ -461,7 +542,11 @@ def analizar_par(codigo_par, tipo="crypto"):
     espera = {"señal": "ESPERA", "confianza": 0, "razon": "Datos insuficientes",
               "indicadores": {"rsi": 50, "precio_relativo": 0.5}, "features": None,
               "nivel": "", "advertencias": []}
-    df = obtener_datos_binance(codigo_par, interval="1m", limit=120) if tipo == "crypto" else obtener_datos_yahoo(codigo_par)
+    if tipo == "crypto":
+        df = obtener_datos_binance(codigo_par, interval="1m", limit=120)
+        fuente_datos = "Binance"
+    else:
+        df, fuente_datos = obtener_datos_forex(codigo_par)
     if df is None or len(df) < 60:
         n = 0 if df is None else len(df)
         return {"señal": "ESPERA", "confianza": 0,
@@ -536,9 +621,10 @@ def analizar_par(codigo_par, tipo="crypto"):
             razones.append(f"IA: SUBE {int(round(p_call * 100))}% vs BAJA {int(round(p_put * 100))}%")
             razones.append(f"Fuente IA: {fuente_modelo}")
             razones.append(f"Régimen: {regimen_nombre} · Confluencia {conf}✓ · Nivel {nivel}")
+            razones.append(f"Datos: {fuente_datos}")
             return {"señal": direccion, "confianza": confianza, "razon": " | ".join(razones),
                     "indicadores": indicadores, "features": vector_base + [1 if es_call else 0],
-                    "nivel": nivel, "advertencias": advertencias}
+                    "nivel": nivel, "advertencias": advertencias, "fuente": fuente_datos}
 
         # SIN MODELO: direccion por puntaje (desempate por tendencia), SIEMPRE emite
         direccion = direccion_puntaje
@@ -562,10 +648,11 @@ def analizar_par(codigo_par, tipo="crypto"):
             razones.append(f"Modelo en vivo aprendiendo: {_validas}/{nucleo_ia.MIN_OPS_MODELO_VIVO} operaciones reales")
         else:
             razones.append("Sin modelo IA entrenado")
+        razones.append(f"Datos: {fuente_datos}")
         return {"señal": direccion, "confianza": confianza,
                 "razon": " | ".join(razones), "indicadores": indicadores,
                 "features": vector_base + [1 if direccion == "CALL" else 0],
-                "nivel": nivel, "advertencias": advertencias}
+                "nivel": nivel, "advertencias": advertencias, "fuente": fuente_datos}
     except Exception:
         return espera
 
@@ -812,6 +899,26 @@ if st.session_state.usuario_actual.startswith("👑"):
                     st.markdown(_informe)
                 else:
                     st.error("La IA no respondió. Revisa tu clave de API o inténtalo de nuevo.")
+    with st.expander("💾 Respaldo del aprendizaje — guarda tus operaciones"):
+        st.caption("El historial y el cerebro en vivo viven solo en el servidor de Streamlit y se pueden perder al reiniciar o volver a subir la app. Descarga una copia antes de subir una versión nueva y guárdala junto a los archivos de la app: si se pierde, subir ese archivo con la app lo restaura.")
+        _hist_respaldo = st.session_state.hist_cache
+        st.download_button("⬇️ Descargar historial.json (operaciones reales)",
+                           data=json.dumps(_hist_respaldo, indent=2, ensure_ascii=False),
+                           file_name=f"historial_{ahora_local().strftime('%Y%m%d_%H%M')}.json",
+                           mime="application/json", use_container_width=True)
+        st.download_button("⬇️ Descargar patrones.json (contadores)",
+                           data=json.dumps(st.session_state.pesos, indent=2, ensure_ascii=False),
+                           file_name=f"patrones_{ahora_local().strftime('%Y%m%d_%H%M')}.json",
+                           mime="application/json", use_container_width=True)
+        if os.path.exists(ARCHIVO_MODELO_VIVO):
+            with open(ARCHIVO_MODELO_VIVO, "rb") as _f:
+                st.download_button("⬇️ Descargar modelo_vivo.pkl (cerebro en vivo)",
+                                   data=_f.read(),
+                                   file_name=f"modelo_vivo_{ahora_local().strftime('%Y%m%d_%H%M')}.pkl",
+                                   mime="application/octet-stream", use_container_width=True)
+        else:
+            st.caption("Todavía no hay modelo en vivo (se crea solo al llegar a 60 operaciones reales).")
+        st.caption(f"Operaciones en el historial ahora: {len(_hist_respaldo)}.")
 elif _info_modelo:
     st.caption(f"🧠 IA v3 activa — modelo entrenado el {_info_modelo['metricas']['fecha_entrenamiento']}")
 
@@ -985,7 +1092,10 @@ def zona_dinamica(codigo_f, tipo_f):
         if ia_clima_activo() and (time.time() - st.session_state.clima_ts > 900):
             st.session_state.clima_ts = time.time()
             try:
-                dfc = obtener_datos_binance(codigo_f, interval="1m", limit=120) if tipo_f == "crypto" else obtener_datos_yahoo(codigo_f)
+                if tipo_f == "crypto":
+                    dfc = obtener_datos_binance(codigo_f, interval="1m", limit=120)
+                else:
+                    dfc, _fuente_clima = obtener_datos_forex(codigo_f)
                 if dfc is not None and len(dfc) > 61:
                     var = (float(dfc['close'].iloc[-1]) / float(dfc['close'].iloc[-61]) - 1) * 100
                     txt = razonamiento_ia.clima_sesion(codigo_f, tipo_f, round(var, 2), "segun el analisis del ciclo")
