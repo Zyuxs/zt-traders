@@ -438,6 +438,48 @@ def ops_validas_para_vivo(historial):
             if h.get("features") and len(h["features"]) == len(FEATURES_COMPLETAS)
             and h.get("resultado") in ("GANADA", "PERDIDA")]
 
+def autopsia_perdidas(historial):
+    """Autopsia de señales (v3.9, idea destilada de 'signal-postmortem' del
+    proyecto claude-trading-skills, MIT): atribuye cada operacion PERDIDA a
+    una causa probable segun el estado del mercado guardado con la señal.
+    Devuelve {causa: cantidad} ordenado de mayor a menor."""
+    causas = {}
+    for h in ops_validas_para_vivo(historial):
+        if h.get("resultado") != "PERDIDA":
+            continue
+        f = h["features"]
+        es_call = f[-1] == 1
+        regimen = int(f[FEATURES_BASE.index("regimen_cod")])
+        dist_res = float(f[FEATURES_BASE.index("dist_resistencia")])
+        dist_sop = float(f[FEATURES_BASE.index("dist_soporte")])
+        if (regimen == 1 and not es_call) or (regimen == 2 and es_call):
+            causa = "Contra la tendencia del régimen"
+        elif (es_call and dist_res < 0.5) or (not es_call and dist_sop < 0.5):
+            causa = "Pegada a soporte/resistencia"
+        elif regimen == 0:
+            causa = "En rango, sin confirmación"
+        elif regimen == 3:
+            causa = "En volatilidad extrema"
+        else:
+            causa = "Sin causa clara"
+        causas[causa] = causas.get(causa, 0) + 1
+    return dict(sorted(causas.items(), key=lambda kv: -kv[1]))
+
+def postura_sesion(historial, ventana=20):
+    """Postura de exposición de la sesión (v3.9, idea destilada de
+    'exposure-coach', MIT): mira el acierto de las ultimas operaciones
+    reales y recomienda cuanto exponerse. Devuelve (postura, acierto_% o
+    None, n). Es una recomendacion visible; nunca bloquea señales."""
+    ops = ops_validas_para_vivo(historial)[-ventana:]
+    if len(ops) < 10:
+        return ("SIN DATOS", None, len(ops))
+    acierto = sum(1 for h in ops if h["resultado"] == "GANADA") / len(ops) * 100
+    if acierto >= 55:
+        return ("PLENA", round(acierto, 1), len(ops))
+    if acierto >= 45:
+        return ("NEUTRA", round(acierto, 1), len(ops))
+    return ("REDUCIR", round(acierto, 1), len(ops))
+
 def entrenar_modelo_vivo(historial):
     """Cerebro EN VIVO: aprende de las operaciones reales de la app.
 
