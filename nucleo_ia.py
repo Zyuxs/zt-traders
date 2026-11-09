@@ -10,6 +10,12 @@
 # Convencion de datos: DataFrames con columnas en minuscula
 #   open, high, low, close, volume (volume opcional)
 # y el tiempo en el indice (DatetimeIndex) o en columna 'timestamp' (ms).
+#
+# Correccion v3.4: las velas forex de 1m de Yahoo vienen planas
+# (max == min); cuerpo/mechas/rango_rel ahora valen 0 en velas planas
+# en vez de NaN (antes TODAS las filas forex eran invalidas y jamas
+# habia señal en EUR/USD y similares). Las variables son las mismas:
+# el modelo entrenado sigue siendo compatible, no hay que reentrenar.
 # ============================================================
 import json
 import pickle
@@ -113,6 +119,12 @@ def agregar_indicadores(df):
         df["vol_rel"] = 1.0
     df["cuerpo"] = ((close - df["open"]) / rango_vela).clip(-1, 1)
     df["rango_rel"] = rango_vela / close * 100
+    # Forex en Yahoo: las velas de 1m vienen "planas" (max == min en casi
+    # todas), rango_vela = 0 y estas divisiones daban NaN en TODAS las
+    # filas -> filas_validas() = 0 y el forex NUNCA emitia señal (bug
+    # corregido en v3.4). Una vela plana no tiene cuerpo ni mechas: 0.
+    df["cuerpo"] = df["cuerpo"].fillna(0.0)
+    df["rango_rel"] = df["rango_rel"].fillna(0.0)
     df["hora"] = _horas(df)
 
     # --- v3.2: accion del precio, niveles y regimen ---
@@ -122,6 +134,9 @@ def agregar_indicadores(df):
     cuerpo_ratio = (close - apertura).abs() / rango_vela
     df["mecha_sup"] = ((high - max_cuerpo) / rango_vela).clip(0, 1)
     df["mecha_inf"] = ((min_cuerpo - low) / rango_vela).clip(0, 1)
+    df["mecha_sup"] = df["mecha_sup"].fillna(0.0)
+    df["mecha_inf"] = df["mecha_inf"].fillna(0.0)
+    cuerpo_ratio = cuerpo_ratio.fillna(0.0)
 
     prev_o = apertura.shift(1)
     prev_c = close.shift(1)
