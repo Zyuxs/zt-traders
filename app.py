@@ -1,14 +1,40 @@
+# ============================================================
+# ZT TRADERS INSTITUTIONAL PRO - v2 mejorada
+# Misma app, mismas fases y misma interfaz. Cambios internos:
+#  1) La zona dinamica es un fragmento que se actualiza cada 1s:
+#     la pagina completa (grafico TradingView, encabezado, selector)
+#     YA NO se recarga cada 0.3-1s.
+#  2) Datos de mercado con cache (Binance/Yahoo) y una sola sesion HTTP.
+#  3) El modelo ML se entrena solo cuando hay datos nuevos suficientes
+#     (antes se reentrenaba en CADA analisis, leyendo el historial de disco).
+#  4) Bug de confianza ML corregido: antes, si el modelo predecía PERDIDA
+#     con mucha seguridad, eso SUBIA la confianza de la señal.
+#     Ahora se usa directamente la probabilidad de GANADA.
+#  5) Señal por puntaje (RSI + Bollinger + tendencia), sin el sesgo a CALL
+#     de la regla anterior ("RSI <= 50 o precio en banda baja = CALL").
+#  6) Sin datos suficientes ya no se inventa un CALL al 65%: devuelve ESPERA
+#     y esa operacion no se registra ni contamina el aprendizaje.
+#  7) Historial y patrones se cargan una sola vez en memoria y se guardan
+#     con escritura atomica (antes se leian de disco en cada recarga).
+#  8) La clave maestra y el token admin ya NO estan escritos en el codigo:
+#     se leen de Secrets (zt_master_key / zt_admin_token) o de las variables
+#     de entorno ZT_MASTER_KEY / ZT_ADMIN_TOKEN.
+#  9) Reloj y ciclo en hora de Caracas (el servidor de Streamlit Cloud
+#     trabaja en UTC; antes el reloj mostrado no era tu hora local).
+# 10) Si la ventana de cierre (seg 57-59) se pierde por una llamada lenta,
+#     la operacion se cierra al iniciar el siguiente ciclo, no se pierde.
+# ============================================================
 import streamlit as st
 import streamlit.components.v1 as components
 import pandas as pd
 import requests
 import yfinance as yf
 import ta
-import time as time_module
 import json
 import os
 import uuid
 from datetime import datetime
+from zoneinfo import ZoneInfo
 from sklearn.ensemble import RandomForestClassifier
 
 st.set_page_config(page_title="ZT TRADERS INSTITUTIONAL PRO", layout="centered", page_icon="⚡")
@@ -16,38 +42,94 @@ st.set_page_config(page_title="ZT TRADERS INSTITUTIONAL PRO", layout="centered",
 ARCHIVO_HISTORIAL = "historial.json"
 ARCHIVO_PATRONES = "patrones.json"
 ARCHIVO_LICENCIAS = "licencias.json"
+ZONA_HORARIA = ZoneInfo("America/Caracas")
+
+def ahora_local():
+    return datetime.now(ZONA_HORARIA)
+
+# ---------------- Utilidades ----------------
+
+@st.cache_resource
+def sesion_http():
+    s = requests.Session()
+    s.headers.update({"User-Agent": "ZT-Traders/2.0"})
+    return s
+
+def _secret(nombre, env_nombre):
+    try:
+        valor = st.secrets.get(nombre, None)
+        if valor:
+            return valor
+    except Exception:
+        pass
+    return os.getenv(env_nombre)
+
+def master_keys_configuradas():
+    valor = _secret("zt_master_key", "ZT_MASTER_KEY")
+    if not valor:
+        return []
+    if isinstance(valor, (list, tuple)):
+        return [str(v).strip() for v in valor if str(v).strip()]
+    return [v.strip() for v in str(valor).split(",") if v.strip()]
+
+def admin_token_configurado():
+    valor = _secret("zt_admin_token", "ZT_ADMIN_TOKEN")
+    return str(valor) if valor else None
+
+def guardar_json_atomico(archivo, datos):
+    tmp = archivo + ".tmp"
+    try:
+        with open(tmp, "w") as f:
+            json.dump(datos, f, indent=2)
+        os.replace(tmp, archivo)
+        return True
+    except Exception:
+        return False
+
+def leer_json(archivo, defecto):
+    if os.path.exists(archivo):
+        try:
+            with open(archivo, "r") as f:
+                return json.load(f)
+        except Exception:
+            return defecto
+    return defecto
+
+# ---------------- Licencias ----------------
 
 def cargar_licencias():
-    if os.path.exists(ARCHIVO_LICENCIAS):
-        try:
-            with open(ARCHIVO_LICENCIAS, 'r') as f: return json.load(f)
-        except: return {}
-    return {}
+    return leer_json(ARCHIVO_LICENCIAS, {})
 
 def guardar_licencias(licencias):
-    try:
-        with open(ARCHIVO_LICENCIAS, 'w') as f: json.dump(licencias, f, indent=2)
-    except: pass
+    guardar_json_atomico(ARCHIVO_LICENCIAS, licencias)
 
-if 'licencia_activa' not in st.session_state: st.session_state.licencia_activa = False
-if 'usuario_actual' not in st.session_state: st.session_state.usuario_actual = ""
+def licencia_vigente(datos):
+    """True/False si se puede comprobar la fecha; None si la fecha es invalida."""
+    try:
+        return ahora_local().date() <= datetime.strptime(datos["vence"], "%Y-%m-%d").date()
+    except Exception:
+        return None
+
+if "licencia_activa" not in st.session_state:
+    st.session_state.licencia_activa = False
+if "usuario_actual" not in st.session_state:
+    st.session_state.usuario_actual = ""
 
 params = st.query_params
 device_token = params.get("zt_token", None)
+admin_token = admin_token_configurado()
 
 if device_token and not st.session_state.licencia_activa:
-    licencias = cargar_licencias()
-    if device_token == "admin_master_device":
+    if admin_token and device_token == admin_token:
         st.session_state.licencia_activa = True
         st.session_state.usuario_actual = "👑 Admin Master"
     else:
+        licencias = cargar_licencias()
         for k, v in licencias.items():
-            if v.get("device_id") == device_token:
-                try:
-                    if datetime.now().date() <= datetime.strptime(v['vence'], '%Y-%m-%d').date():
-                        st.session_state.licencia_activa = True
-                        st.session_state.usuario_actual = f"Licencia ({k[:8]}...)"
-                except: pass
+            if v.get("device_id") == device_token and licencia_vigente(v):
+                st.session_state.licencia_activa = True
+                st.session_state.usuario_actual = f"Licencia ({k[:8]}...)"
+                break
 
 if not st.session_state.licencia_activa:
     st.markdown("""
@@ -62,170 +144,275 @@ if not st.session_state.licencia_activa:
         key_input = st.text_input("License Key", type="password")
         submit_key = st.form_submit_button("🚀 CONECTAR", use_container_width=True)
         if submit_key:
-            if key_input in ["ADMIN-MASTER-2026", "ADMIN-MASTER-2027"]:
+            claves_master = master_keys_configuradas()
+            if claves_master and key_input in claves_master:
                 st.session_state.licencia_activa = True
                 st.session_state.usuario_actual = "👑 Admin Master"
-                st.query_params["zt_token"] = "admin_master_device"
+                if admin_token:
+                    st.query_params["zt_token"] = admin_token
                 st.rerun()
             else:
                 licencias = cargar_licencias()
                 if key_input in licencias:
                     datos = licencias[key_input]
-                    try:
-                        if datetime.now().date() > datetime.strptime(datos['vence'], '%Y-%m-%d').date():
-                            st.error("❌ Key expirada.")
-                            st.stop()
-                    except: pass
-                    if datos.get('device_id') is None:
-                        datos['device_id'] = str(uuid.uuid4())
+                    vigente = licencia_vigente(datos)
+                    if vigente is False:
+                        st.error("❌ Key expirada.")
+                        st.stop()
+                    if vigente is None:
+                        st.error("❌ Key con fecha inválida. Contacta al administrador.")
+                        st.stop()
+                    if datos.get("device_id") is None:
+                        datos["device_id"] = str(uuid.uuid4())
                         licencias[key_input] = datos
                         guardar_licencias(licencias)
-                        st.query_params["zt_token"] = datos['device_id']
-                    else:
-                        st.query_params["zt_token"] = datos['device_id']
+                    st.query_params["zt_token"] = datos["device_id"]
                     st.session_state.licencia_activa = True
                     st.session_state.usuario_actual = f"Licencia ({key_input[:8]}...)"
                     st.rerun()
-                else: st.error("❌ Key no encontrada.")
-    st.markdown('</div>', unsafe_allow_html=True)
+                else:
+                    st.error("❌ Key no encontrada.")
+    if not master_keys_configuradas():
+        st.caption("Admin: configura zt_master_key y zt_admin_token en Secrets para habilitar el acceso maestro.")
+    st.markdown("</div>", unsafe_allow_html=True)
     st.stop()
 
-def cargar_patrones():
-    if os.path.exists(ARCHIVO_PATRONES):
-        try:
-            with open(ARCHIVO_PATRONES, 'r') as f: return json.load(f)
-        except: return {'total_ops': 0, 'total_ganadas': 0, 'winrate': 0.0}
-    return {'total_ops': 0, 'total_ganadas': 0, 'winrate': 0.0}
+# ---------------- Estado persistente (historial / patrones) ----------------
+# Se cargan UNA vez por sesion y se mantienen en memoria.
+# Antes: cargar_historial()/cargar_patrones() leian disco en cada recarga (varias por segundo).
 
-def guardar_patrones(pesos):
-    with open(ARCHIVO_PATRONES, 'w') as f: json.dump(pesos, f, indent=2)
+PATRONES_BASE = {"total_ops": 0, "total_ganadas": 0, "winrate": 0.0}
 
-def cargar_historial():
-    if os.path.exists(ARCHIVO_HISTORIAL):
-        try:
-            with open(ARCHIVO_HISTORIAL, 'r') as f: return json.load(f)
-        except: return []
-    return []
-
-def guardar_historial(hist):
-    with open(ARCHIVO_HISTORIAL, 'w') as f: json.dump(hist, f, indent=2)
+if "hist_cache" not in st.session_state:
+    st.session_state.hist_cache = leer_json(ARCHIVO_HISTORIAL, [])
+if "pesos" not in st.session_state:
+    st.session_state.pesos = {**PATRONES_BASE, **leer_json(ARCHIVO_PATRONES, {})}
+if "modelo_ml" not in st.session_state:
+    st.session_state.modelo_ml = None
+if "modelo_entrenado_con" not in st.session_state:
+    st.session_state.modelo_entrenado_con = 0
 
 def resetear_memoria():
-    if os.path.exists(ARCHIVO_HISTORIAL): os.remove(ARCHIVO_HISTORIAL)
-    if os.path.exists(ARCHIVO_PATRONES): os.remove(ARCHIVO_PATRONES)
-    st.session_state.pesos = {'total_ops': 0, 'total_ganadas': 0, 'winrate': 0.0}
+    for archivo in (ARCHIVO_HISTORIAL, ARCHIVO_PATRONES):
+        if os.path.exists(archivo):
+            os.remove(archivo)
+    st.session_state.hist_cache = []
+    st.session_state.pesos = dict(PATRONES_BASE)
+    st.session_state.modelo_ml = None
+    st.session_state.modelo_entrenado_con = 0
 
-def entrenar_modelo_ml():
-    hist = cargar_historial()
-    if len(hist) < 5: return None
+def aprender(señal, resultado, indicadores, precio_real_entrada):
+    """Registra el resultado una sola vez por operacion y actualiza memoria + disco."""
+    hist = st.session_state.hist_cache
+    pesos = st.session_state.pesos
+    hist.append({
+        "fecha": ahora_local().strftime("%H:%M:%S"),
+        "señal": señal,
+        "resultado": resultado,
+        "precio_entrada_real": precio_real_entrada,
+        "indicadores": indicadores,
+    })
+    pesos["total_ops"] += 1
+    if resultado == "GANADA":
+        pesos["total_ganadas"] += 1
+    pesos["winrate"] = (pesos["total_ganadas"] / pesos["total_ops"] * 100) if pesos["total_ops"] > 0 else 0.0
+    guardar_json_atomico(ARCHIVO_HISTORIAL, hist)
+    guardar_json_atomico(ARCHIVO_PATRONES, pesos)
+
+# ---------------- Machine Learning ----------------
+
+def _extraer_dataset(hist):
     X, y = [], []
     for op in hist:
-        ind = op.get('indicadores', {})
-        features = [ind.get('rsi', 50), ind.get('precio_relativo', 0.5), 1 if op['señal'] == 'CALL' else 0]
-        X.append(features)
-        y.append(1 if op['resultado'] == 'GANADA' else 0)
-    try:
-        modelo = RandomForestClassifier(n_estimators=30, max_depth=3, random_state=42)
-        modelo.fit(X, y)
+        try:
+            ind = op.get("indicadores", {})
+            X.append([ind.get("rsi", 50), ind.get("precio_relativo", 0.5), 1 if op["señal"] == "CALL" else 0])
+            y.append(1 if op["resultado"] == "GANADA" else 0)
+        except Exception:
+            continue
+    return X, y
+
+def obtener_modelo_ml():
+    """Entrena solo si: hay >=10 ops, existen las 2 clases y llegaron >=5 ops nuevas."""
+    hist = st.session_state.hist_cache
+    modelo = st.session_state.modelo_ml
+    if len(hist) < 10:
+        return None
+    if modelo is not None and len(hist) - st.session_state.modelo_entrenado_con < 5:
         return modelo
-    except: return None
-
-def aprender_en_segundo_plano(señal, resultado, indicadores, precio_real_entrada):
-    hist = cargar_historial()
-    pesos = cargar_patrones()
-    hist.append({'fecha': datetime.now().strftime('%H:%M:%S'), 'señal': señal, 'resultado': resultado, 'precio_entrada_real': precio_real_entrada, 'indicadores': indicadores})
-    pesos['total_ops'] += 1
-    if resultado == 'GANADA': pesos['total_ganadas'] += 1
-    pesos['winrate'] = (pesos['total_ganadas'] / pesos['total_ops'] * 100) if pesos['total_ops'] > 0 else 0.0
-    guardar_historial(hist)
-    guardar_patrones(pesos)
-
-def obtener_datos_binance(symbol, interval='1m', limit=50):
+    X, y = _extraer_dataset(hist)
+    if len(X) < 10 or len(set(y)) < 2:
+        return None
     try:
-        response = requests.get("https://api.binance.com/api/v3/klines", params={'symbol': symbol, 'interval': interval, 'limit': limit}, timeout=10).json()
-        df = pd.DataFrame(response, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume', 'close_time', 'quote_asset_volume', 'number_of_trades', 'taker_buy_base', 'taker_buy_quote', 'ignore'])
-        for col in ['open', 'high', 'low', 'close', 'volume']: df[col] = pd.to_numeric(df[col])
-        return df
-    except: return None
+        nuevo = RandomForestClassifier(n_estimators=100, max_depth=3, random_state=42)
+        nuevo.fit(X, y)
+        st.session_state.modelo_ml = nuevo
+        st.session_state.modelo_entrenado_con = len(hist)
+        return nuevo
+    except Exception:
+        return modelo
 
-def obtener_datos_yahoo(symbol, period="2d", interval="1m"):
+def prob_ganada_ml(modelo, rsi, precio_relativo, es_call):
+    """Probabilidad de GANADA segun el modelo (esto corrige el bug de confianza original)."""
+    if modelo is None:
+        return None
+    try:
+        proba = modelo.predict_proba([[rsi, precio_relativo, 1 if es_call else 0]])[0]
+        clases = list(modelo.classes_)
+        return float(proba[clases.index(1)]) if 1 in clases else None
+    except Exception:
+        return None
+
+# ---------------- Datos de mercado (con cache) ----------------
+
+@st.cache_data(ttl=20, show_spinner=False)
+def obtener_datos_binance(symbol, interval="1m", limit=50):
+    try:
+        r = sesion_http().get(
+            "https://api.binance.com/api/v3/klines",
+            params={"symbol": symbol, "interval": interval, "limit": limit},
+            timeout=10,
+        )
+        datos = r.json()
+        if not isinstance(datos, list) or not datos:
+            return None
+        df = pd.DataFrame(datos, columns=["timestamp", "open", "high", "low", "close", "volume", "close_time", "quote_asset_volume", "number_of_trades", "taker_buy_base", "taker_buy_quote", "ignore"])
+        for col in ["open", "high", "low", "close", "volume"]:
+            df[col] = pd.to_numeric(df[col], errors="coerce")
+        return df.dropna(subset=["close"])
+    except Exception:
+        return None
+
+@st.cache_data(ttl=20, show_spinner=False)
+def _descargar_yahoo(symbol, period, interval="1m"):
     try:
         datos = yf.download(symbol, period=period, interval=interval, progress=False)
-        if isinstance(datos.columns, pd.MultiIndex): datos.columns = datos.columns.get_level_values(0)
-        return datos[['Open', 'High', 'Low', 'Close']].dropna().copy()
-    except: return None
+        if datos is None or len(datos) == 0:
+            return None
+        if isinstance(datos.columns, pd.MultiIndex):
+            datos.columns = datos.columns.get_level_values(0)
+        return datos[["Open", "High", "Low", "Close"]].dropna().copy()
+    except Exception:
+        return None
 
-def obtener_precio_actual(codigo_par, tipo='crypto'):
-    if tipo == 'crypto':
-        try: return float(requests.get(f"https://api.binance.com/api/v3/ticker/price?symbol={codigo_par}", timeout=5).json()['price'])
-        except: return None
-    else:
-        try:
-            datos = yf.download(codigo_par, period="1d", interval="1m", progress=False)
-            if isinstance(datos.columns, pd.MultiIndex): datos.columns = datos.columns.get_level_values(0)
-            if len(datos) < 1: return None
-            return float(datos['Close'].iloc[-1])
-        except: return None
+def obtener_datos_yahoo(symbol):
+    # Primero 1 dia (mucho menos datos que 2d); solo si no alcanza, se pide 2d.
+    df = _descargar_yahoo(symbol, "1d")
+    if df is None or len(df) < 60:
+        df2 = _descargar_yahoo(symbol, "2d")
+        if df2 is not None and (df is None or len(df2) > len(df)):
+            return df2
+    return df
 
-def analizar_par(codigo_par, tipo='crypto'):
-    if tipo == 'crypto': df = obtener_datos_binance(codigo_par, interval='1m', limit=50)
-    else: df = obtener_datos_yahoo(codigo_par, period="2d", interval="1m")
-    
-    if df is None or len(df) < 20:
-        return {'señal': 'CALL', 'confianza': 65, 'razon': "Análisis base", 'indicadores': {'rsi': 50, 'precio_relativo': 0.5}}
-    
-    c_close = 'close' if tipo == 'crypto' else 'Close'
+@st.cache_data(ttl=3, show_spinner=False)
+def _precio_binance(symbol):
     try:
-        df['RSI'] = ta.momentum.RSIIndicator(df[c_close], window=14).rsi()
+        return float(sesion_http().get(f"https://api.binance.com/api/v3/ticker/price?symbol={symbol}", timeout=5).json()["price"])
+    except Exception:
+        return None
+
+@st.cache_data(ttl=3, show_spinner=False)
+def _precio_yahoo(symbol):
+    # Descarga propia con ttl corto: NO reutiliza la descarga de analisis (ttl=20),
+    # porque el precio de entrada/cierre necesita ser lo mas fresco posible.
+    try:
+        datos = yf.download(symbol, period="1d", interval="1m", progress=False)
+        if datos is None or len(datos) == 0:
+            return None
+        if isinstance(datos.columns, pd.MultiIndex):
+            datos.columns = datos.columns.get_level_values(0)
+        return float(datos["Close"].iloc[-1])
+    except Exception:
+        return None
+
+def obtener_precio_actual(codigo_par, tipo="crypto"):
+    return _precio_binance(codigo_par) if tipo == "crypto" else _precio_yahoo(codigo_par)
+
+# ---------------- Analisis de señal (por puntaje) ----------------
+
+def analizar_par(codigo_par, tipo="crypto"):
+    espera = {"señal": "ESPERA", "confianza": 0, "razon": "Datos insuficientes", "indicadores": {"rsi": 50, "precio_relativo": 0.5}}
+    df = obtener_datos_binance(codigo_par, interval="1m", limit=50) if tipo == "crypto" else obtener_datos_yahoo(codigo_par)
+    if df is None or len(df) < 25:
+        return espera
+    c_close = "close" if tipo == "crypto" else "Close"
+    try:
+        df = df.copy()
+        df["RSI"] = ta.momentum.RSIIndicator(df[c_close], window=14).rsi()
         bb = ta.volatility.BollingerBands(df[c_close], window=20, window_dev=2)
-        df['BB_High'] = bb.bollinger_hband()
-        df['BB_Low'] = bb.bollinger_lband()
-        
+        df["BB_High"] = bb.bollinger_hband()
+        df["BB_Low"] = bb.bollinger_lband()
+        df["SMA20"] = df[c_close].rolling(20).mean()
+        df = df.dropna(subset=["RSI", "BB_High", "BB_Low", "SMA20"])
+        if len(df) < 5:
+            return espera
+
         u1 = df.iloc[-1]
         precio = float(u1[c_close])
-        rsi = float(u1['RSI'])
-        bb_high = float(u1['BB_High'])
-        bb_low = float(u1['BB_Low'])
-        
-        if rsi <= 50 or precio <= bb_low:
-            direccion = 'CALL'
-            razones = []
-            if rsi < 45: razones.append("RSI Bajo")
-            if precio <= bb_low: razones.append("Banda Inf")
-            if not razones: razones.append("Tend. Alcista")
-        else:
-            direccion = 'PUT'
-            razones = []
-            if rsi > 55: razones.append("RSI Alto")
-            if precio >= bb_high: razones.append("Banda Sup")
-            if not razones: razones.append("Tend. Bajista")
+        rsi = float(u1["RSI"])
+        bb_high = float(u1["BB_High"])
+        bb_low = float(u1["BB_Low"])
+        sma = float(u1["SMA20"])
+        sma_prev = float(df["SMA20"].iloc[-6]) if len(df) >= 6 else sma
+        rango_bb = bb_high - bb_low
+        if rango_bb <= 0 or precio <= 0:
+            return espera
+        precio_relativo = max(0.0, min(1.0, (precio - bb_low) / rango_bb))
 
-        confianza_base = 70
-        modelo_ml = entrenar_modelo_ml()
-        indicadores = {'rsi': rsi, 'precio_relativo': (precio - bb_low) / (bb_high - bb_low + 1e-9)}
-        
-        if modelo_ml is not None:
-            prediccion = modelo_ml.predict([[indicadores['rsi'], indicadores['precio_relativo'], 1 if direccion == 'CALL' else 0]])
-            probabilidad = modelo_ml.predict_proba([[indicadores['rsi'], indicadores['precio_relativo'], 1 if direccion == 'CALL' else 0]])
-            confianza_ml = int(probabilidad[0][prediccion[0]] * 100)
-            confianza = int((confianza_base + confianza_ml) / 2)
+        # Puntaje: positivo favorece CALL, negativo favorece PUT.
+        score = 0
+        razones = []
+        if rsi <= 30:
+            score += 3; razones.append("RSI Sobreventa")
+        elif rsi <= 45:
+            score += 1; razones.append("RSI Bajo")
+        elif rsi >= 70:
+            score -= 3; razones.append("RSI Sobrecompra")
+        elif rsi >= 55:
+            score -= 1; razones.append("RSI Alto")
+        if precio <= bb_low:
+            score += 2; razones.append("Banda Inf")
+        elif precio >= bb_high:
+            score -= 2; razones.append("Banda Sup")
+        if precio > sma and sma >= sma_prev:
+            score += 1; razones.append("Tend. Alcista")
+        elif precio < sma and sma <= sma_prev:
+            score -= 1; razones.append("Tend. Bajista")
+
+        if score > 0:
+            direccion = "CALL"
+        elif score < 0:
+            direccion = "PUT"
+        else:
+            direccion = "CALL" if rsi < 50 else "PUT"
+            razones.append("Sin ventaja clara")
+
+        confianza = 55 + min(30, abs(score) * 6)
+        if score == 0:
+            confianza = 52
+
+        indicadores = {"rsi": rsi, "precio_relativo": precio_relativo}
+        p_ganar = prob_ganada_ml(obtener_modelo_ml(), rsi, precio_relativo, direccion == "CALL")
+        if p_ganar is not None:
+            confianza_ml = int(p_ganar * 100)
+            confianza = int(confianza * 0.7 + confianza_ml * 0.3)
             razones.append(f"ML:{confianza_ml}%")
-        else:
-            confianza = confianza_base
+            if p_ganar < 0.40:
+                razones.append("ML en contra")
 
-        return {'señal': direccion, 'confianza': max(50, min(confianza, 98)), 'razon': " | ".join(razones), 'indicadores': indicadores}
-    except:
-        return {'señal': 'CALL', 'confianza': 60, 'razon': "Continuidad", 'indicadores': {'rsi': 50, 'precio_relativo': 0.5}}
+        return {"señal": direccion, "confianza": max(50, min(int(confianza), 95)), "razon": " | ".join(razones) if razones else "Continuidad", "indicadores": indicadores}
+    except Exception:
+        return espera
 
 def reproducir_voz(mensaje):
-    mensaje_seguro = mensaje.replace("'", "\\'").replace('"', '\\"')
+    # json.dumps escapa el texto de forma segura para meterlo en el JS.
     js_code = f"""
     <script>
     (function() {{
         if ('speechSynthesis' in window) {{
             window.speechSynthesis.cancel();
             setTimeout(function() {{
-                const msg = new SpeechSynthesisUtterance('{mensaje_seguro}');
+                const msg = new SpeechSynthesisUtterance({json.dumps(mensaje)});
                 msg.lang = 'es-ES';
                 msg.rate = 1.0;
                 msg.volume = 1.0;
@@ -247,14 +434,28 @@ PARES = {
     'USD/JPY': {'codigo': 'USDJPY=X', 'tipo': 'forex'}, 'AUD/USD': {'codigo': 'AUDUSD=X', 'tipo': 'forex'},
 }
 
-if 'estado' not in st.session_state: st.session_state.estado = 'analizando'
-if 'par_sel' not in st.session_state: st.session_state.par_sel = 'Bitcoin'
-if 'senal' not in st.session_state: st.session_state.senal = None
-if 'pesos' not in st.session_state: st.session_state.pesos = cargar_patrones()
-if 'resultado_guardado' not in st.session_state: st.session_state.resultado_guardado = False
-if 'minuto_anterior' not in st.session_state: st.session_state.minuto_anterior = None
-if 'precio_real_entrada' not in st.session_state: st.session_state.precio_real_entrada = None
-if 'voz_reproducida' not in st.session_state: st.session_state.voz_reproducida = False
+# ---------------- Estado dinamico ----------------
+
+def _init_estado():
+    valores = {
+        'estado': 'analizando', 'par_sel': 'Bitcoin', 'senal': None,
+        'resultado_guardado': False, 'precio_real_entrada': None,
+        'voz_reproducida': False, 'ciclo_senal': None, 'ciclo_entrada': None,
+    }
+    for k, v in valores.items():
+        if k not in st.session_state:
+            st.session_state[k] = v
+
+_init_estado()
+
+def reiniciar_ciclo():
+    st.session_state.senal = None
+    st.session_state.estado = 'analizando'
+    st.session_state.precio_real_entrada = None
+    st.session_state.resultado_guardado = False
+    st.session_state.voz_reproducida = False
+    st.session_state.ciclo_senal = None
+    st.session_state.ciclo_entrada = None
 
 CSS = """
 <style>
@@ -300,21 +501,25 @@ body { background: #000; color: #fff; font-family: Arial, sans-serif; }
 """
 st.markdown(CSS, unsafe_allow_html=True)
 
+# ---------------- Parte estatica (ya NO se recarga cada segundo) ----------------
+
 st.markdown('<div class="main-container">', unsafe_allow_html=True)
 st.markdown(f'<div class="header"><h1>⚡ ZT TRADERS PRO</h1><p>User: {st.session_state.usuario_actual} | IA AUTO-APRENDIZAJE</p></div>', unsafe_allow_html=True)
 
 col1, col2 = st.columns([3, 1])
 with col1:
     par_nombre = st.selectbox("", list(PARES.keys()), index=list(PARES.keys()).index(st.session_state.par_sel), label_visibility="collapsed")
-    st.session_state.par_sel = par_nombre
 with col2:
     if st.button("🗑️ Reset", key="reset_btn", use_container_width=True):
         resetear_memoria()
-        st.session_state.senal = None
-        st.session_state.estado = 'analizando'
+        reiniciar_ciclo()
         st.rerun()
 
-codigo_info = PARES[par_nombre]
+if par_nombre != st.session_state.par_sel:
+    st.session_state.par_sel = par_nombre
+    reiniciar_ciclo()
+
+codigo_info = PARES[st.session_state.par_sel]
 codigo = codigo_info['codigo']
 tipo = codigo_info['tipo']
 
@@ -329,171 +534,172 @@ widget_html = f"""
 """
 components.html(widget_html, height=185)
 
-hist = cargar_historial()
-ops = st.session_state.pesos['total_ops']
-ganadas = st.session_state.pesos['total_ganadas']
-winrate = round(st.session_state.pesos['winrate'], 1)
+# ---------------- Helpers de la zona dinamica ----------------
 
-st.markdown(f"""
-<div class="stats-row">
-    <div class="stat-box"><strong>Winrate</strong><span>{winrate}%</span></div>
-    <div class="stat-box"><strong>Ops</strong><span>{ops}</span></div>
-    <div class="stat-box"><strong>Win</strong><span>{ganadas}</span></div>
-    <div class="stat-box"><strong>ML</strong><span style="font-size:11px;">{len(hist)} ops</span></div>
-</div>
-""", unsafe_allow_html=True)
-
-ahora = datetime.now()
-hora_actual = ahora.strftime('%H:%M:%S')
-st.markdown(f'<div class="hora-box"><span>🕐 {hora_actual}</span></div>', unsafe_allow_html=True)
-
-minuto_actual = ahora.minute
-segundo_actual = ahora.second
-minuto_es_par = (minuto_actual % 2 == 0)
-
-if st.session_state.minuto_anterior is None:
-    st.session_state.minuto_anterior = minuto_actual
-elif st.session_state.minuto_anterior != minuto_actual:
-    st.session_state.resultado_guardado = False
-    st.session_state.voz_reproducida = False
-    st.session_state.minuto_anterior = minuto_actual
-
-# ==========================================
-# 🎯 CONTENEDOR ÚNICO (SOLUCIÓN AL DOBLE CRONÓMETRO)
-# ==========================================
-contenedor = st.empty()
-
-# Construir HTML en UNA sola variable
-html_final = ""
-
-# FASE 1: ESCANEO (minutos pares, segundos 0-54)
-if minuto_es_par and segundo_actual < 55:
-    html_final = f"""
-    <div class="signal-box signal-wait">📊 ESCANEANDO MERCADO...</div>
-    <div class="info-panel">⏱️ Próxima señal en: <strong>{55 - segundo_actual}s</strong></div>
-    <div class="radar-container"><div class="radar radar-yellow"><div class="radar-center"><div class="radar-number radar-number-yellow">IA</div><div class="radar-label">ACTIVA</div></div></div></div>
-    """
-    contenedor.markdown(html_final, unsafe_allow_html=True)
-    time_module.sleep(1)
-    st.rerun()
-
-# FASE 2: SEÑAL (minutos pares, segundos 55-59)
-elif minuto_es_par and segundo_actual >= 55:
-    if st.session_state.senal is None or st.session_state.estado != 'senal':
-        st.session_state.senal = analizar_par(codigo, tipo)
-        st.session_state.estado = 'senal'
-    
-    señal = st.session_state.senal
-    es_call = señal['señal'] == 'CALL'
-    segundos_restantes = 59 - segundo_actual
-    confianza_actual = int(señal['confianza'])
-    
-    # 🔊 VOZ
-    voz_html = ""
-    if not st.session_state.voz_reproducida:
-        if confianza_actual >= 75:
-            tipo_texto = "COMPRA" if es_call else "VENTA"
-            reproducir_voz(f"Atención. Señal de alta confianza. {tipo_texto}. {confianza_actual} por ciento. Entrar ahora.")
-            voz_html = '<div class="voz-indicator">🔊 VOZ ACTIVADA - ' + str(confianza_actual) + '%</div>'
-        else:
-            voz_html = '<div class="voz-indicator">🔇 Confianza ' + str(confianza_actual) + '% - Voz silenciada (mínimo 75%)</div>'
-        st.session_state.voz_reproducida = True
-    
-    # 🎯 BARRA DE CONFIANZA
+def barra_confianza_html(confianza_actual, titulo):
     if confianza_actual >= 75:
-        clase_barra = "confianza-alta"
-        icono = "🔊"
+        clase_barra, icono = "confianza-alta", "🔊"
     elif confianza_actual >= 60:
-        clase_barra = "confianza-media"
-        icono = "⚠️"
+        clase_barra, icono = "confianza-media", "⚠️"
     else:
-        clase_barra = "confianza-baja"
-        icono = "🔇"
-    
-    barra_html = f"""
+        clase_barra, icono = "confianza-baja", "🔇"
+    return f"""
     <div class="confianza-bar-container">
-        <div class="confianza-bar-label">{icono} NIVEL DE CONFIANZA DE LA SEÑAL</div>
+        <div class="confianza-bar-label">{icono} {titulo}</div>
         <div class="confianza-bar-track">
-            <div class="confianza-bar-fill {clase_barra}" style="width: {confianza_actual}%;">
-                {confianza_actual}%
-            </div>
+            <div class="confianza-bar-fill {clase_barra}" style="width: {confianza_actual}%;">{confianza_actual}%</div>
         </div>
     </div>
     """
-    
-    clase_box = "signal-call" if es_call else "signal-put"
-    clase_radar = "radar-green" if es_call else "radar-red"
-    clase_numero = "radar-number-green" if es_call else "radar-number-red"
-    tipo_signal = "🟢 COMPRA (CALL)" if es_call else "🔴 VENTA (PUT)"
-    
-    html_final = voz_html + barra_html + f"""
-    <div class="signal-box {clase_box}">{tipo_signal}</div>
-    <div class="info-panel">Razón: <strong>{señal["razon"]}</strong></div>
-    <div class="radar-container"><div class="radar {clase_radar}"><div class="radar-center"><div class="radar-number {clase_numero}">{segundos_restantes}</div><div class="radar-label">SEGUNDOS</div></div></div></div>
-    """
-    contenedor.markdown(html_final, unsafe_allow_html=True)
-    time_module.sleep(0.3)
-    st.rerun()
 
-# FASE 3: OPERACIÓN (minutos impares)
-else:
-    if st.session_state.estado != 'operando':
+def cerrar_operacion(codigo_op, tipo_op):
+    """Evalua la operacion abierta con el precio actual y la registra una sola vez."""
+    señal = st.session_state.senal
+    entrada = st.session_state.precio_real_entrada
+    if señal is None or señal.get('señal') == 'ESPERA' or not entrada or st.session_state.resultado_guardado:
+        st.session_state.resultado_guardado = True
+        return
+    precio_actual = obtener_precio_actual(codigo_op, tipo_op)
+    resultado = 'PERDIDA'
+    if precio_actual is not None:
+        es_call = señal['señal'] == 'CALL'
+        if (es_call and precio_actual > entrada) or (not es_call and precio_actual < entrada):
+            resultado = 'GANADA'
+    aprender(señal['señal'], resultado, señal.get('indicadores', {}), entrada)
+    st.session_state.resultado_guardado = True
+
+# ---------------- Zona dinamica: fragmento cada 1s ----------------
+# Solo esto se re-ejecuta cada segundo. Nada de sleep() + st.rerun() global.
+
+@st.fragment(run_every="1s")
+def zona_dinamica(codigo_f, tipo_f):
+    ahora = ahora_local()
+    hora_actual = ahora.strftime('%H:%M:%S')
+    minuto_actual = ahora.minute
+    segundo_actual = ahora.second
+    minuto_es_par = (minuto_actual % 2 == 0)
+    clave_minuto = ahora.strftime('%Y%m%d%H%M')
+
+    # Cierre de rescate: si el ciclo anterior quedo 'operando' sin registrar
+    # (ventana de cierre perdida), se cierra ahora con el precio actual.
+    if minuto_es_par and st.session_state.estado == 'operando' and not st.session_state.resultado_guardado:
+        cerrar_operacion(codigo_f, tipo_f)
+
+    # Estadisticas + reloj
+    pesos = st.session_state.pesos
+    st.markdown(f"""
+    <div class="stats-row">
+        <div class="stat-box"><strong>Winrate</strong><span>{round(pesos['winrate'], 1)}%</span></div>
+        <div class="stat-box"><strong>Ops</strong><span>{pesos['total_ops']}</span></div>
+        <div class="stat-box"><strong>Win</strong><span>{pesos['total_ganadas']}</span></div>
+        <div class="stat-box"><strong>ML</strong><span style="font-size:11px;">{len(st.session_state.hist_cache)} ops</span></div>
+    </div>
+    """, unsafe_allow_html=True)
+    st.markdown(f'<div class="hora-box"><span>🕐 {hora_actual}</span></div>', unsafe_allow_html=True)
+
+    contenedor = st.empty()
+
+    # FASE 1: ESCANEO (minutos pares, segundos 0-54)
+    if minuto_es_par and segundo_actual < 55:
+        if st.session_state.estado != 'analizando':
+            st.session_state.estado = 'analizando'
+            st.session_state.senal = None
+            st.session_state.voz_reproducida = False
+        contenedor.markdown(f"""
+        <div class="signal-box signal-wait">📊 ESCANEANDO MERCADO...</div>
+        <div class="info-panel">⏱️ Próxima señal en: <strong>{55 - segundo_actual}s</strong></div>
+        <div class="radar-container"><div class="radar radar-yellow"><div class="radar-center"><div class="radar-number radar-number-yellow">IA</div><div class="radar-label">ACTIVA</div></div></div></div>
+        """, unsafe_allow_html=True)
+        return
+
+    # FASE 2: SEÑAL (minutos pares, segundos 55-59) - se analiza UNA vez por ciclo
+    if minuto_es_par and segundo_actual >= 55:
+        if st.session_state.ciclo_senal != clave_minuto:
+            st.session_state.senal = analizar_par(codigo_f, tipo_f)
+            st.session_state.estado = 'senal'
+            st.session_state.ciclo_senal = clave_minuto
+            st.session_state.voz_reproducida = False
+
+        señal = st.session_state.senal or {'señal': 'ESPERA', 'confianza': 0, 'razon': 'Sin datos'}
+        if señal['señal'] == 'ESPERA':
+            contenedor.markdown("""
+            <div class="signal-box signal-wait">⏸️ SIN SEÑAL — DATOS INSUFICIENTES</div>
+            <div class="info-panel">Este ciclo <strong>no se opera ni se registra</strong>. Antes se inventaba un CALL al 65%.</div>
+            """, unsafe_allow_html=True)
+            return
+
+        es_call = señal['señal'] == 'CALL'
+        confianza_actual = int(señal['confianza'])
+        segundos_restantes = 59 - segundo_actual
+
+        voz_html = ""
+        if not st.session_state.voz_reproducida:
+            if confianza_actual >= 75:
+                tipo_texto = "COMPRA" if es_call else "VENTA"
+                reproducir_voz(f"Atención. Señal de alta confianza. {tipo_texto}. {confianza_actual} por ciento. Entrar ahora.")
+                voz_html = f'<div class="voz-indicator">🔊 VOZ ACTIVADA - {confianza_actual}%</div>'
+            else:
+                voz_html = f'<div class="voz-indicator">🔇 Confianza {confianza_actual}% - Voz silenciada (mínimo 75%)</div>'
+            st.session_state.voz_reproducida = True
+
+        clase_box = "signal-call" if es_call else "signal-put"
+        clase_radar = "radar-green" if es_call else "radar-red"
+        clase_numero = "radar-number-green" if es_call else "radar-number-red"
+        tipo_signal = "🟢 COMPRA (CALL)" if es_call else "🔴 VENTA (PUT)"
+        contenedor.markdown(
+            voz_html
+            + barra_confianza_html(confianza_actual, "NIVEL DE CONFIANZA DE LA SEÑAL")
+            + f"""
+            <div class="signal-box {clase_box}">{tipo_signal}</div>
+            <div class="info-panel">Razón: <strong>{señal["razon"]}</strong></div>
+            <div class="radar-container"><div class="radar {clase_radar}"><div class="radar-center"><div class="radar-number {clase_numero}">{segundos_restantes}</div><div class="radar-label">SEGUNDOS</div></div></div></div>
+            """,
+            unsafe_allow_html=True,
+        )
+        return
+
+    # FASE 3: OPERACION (minutos impares)
+    señal = st.session_state.senal
+    if señal is None or señal.get('señal') == 'ESPERA':
+        contenedor.markdown("""
+        <div class="signal-box signal-wait">⏸️ SIN OPERACIÓN EN ESTE CICLO</div>
+        <div class="info-panel">No hubo señal válida en la fase anterior.</div>
+        """, unsafe_allow_html=True)
+        return
+
+    if st.session_state.ciclo_entrada != clave_minuto:
         st.session_state.estado = 'operando'
-        st.session_state.precio_real_entrada = obtener_precio_actual(codigo, tipo)
-    
-    señal = st.session_state.senal
-    if señal is None:
-        señal = {'señal': 'CALL', 'confianza': 60, 'razon': "Esperando"}
-    
+        st.session_state.resultado_guardado = False
+        st.session_state.precio_real_entrada = obtener_precio_actual(codigo_f, tipo_f)
+        st.session_state.ciclo_entrada = clave_minuto
+
     es_call = señal['señal'] == 'CALL'
-    segundos_restantes_op = 59 - segundo_actual
     confianza_actual = int(señal['confianza'])
-    
-    if confianza_actual >= 75:
-        clase_barra = "confianza-alta"
-    elif confianza_actual >= 60:
-        clase_barra = "confianza-media"
-    else:
-        clase_barra = "confianza-baja"
-    
-    barra_html = f"""
-    <div class="confianza-bar-container">
-        <div class="confianza-bar-label">📊 CONFIANZA DE LA OPERACIÓN EN CURSO</div>
-        <div class="confianza-bar-track">
-            <div class="confianza-bar-fill {clase_barra}" style="width: {confianza_actual}%;">
-                {confianza_actual}%
-            </div>
-        </div>
-    </div>
-    """
-    
+    segundos_restantes_op = 59 - segundo_actual
+
+    entrada_html = ""
+    if st.session_state.precio_real_entrada:
+        entrada_html = f'<div class="info-panel">Entrada: <strong>{round(st.session_state.precio_real_entrada, 5)}</strong></div>'
+
     clase_box = "signal-call" if es_call else "signal-put"
     clase_radar = "radar-green" if es_call else "radar-red"
     clase_numero = "radar-number-green" if es_call else "radar-number-red"
     tipo_signal = "🟢 EN CURSO (CALL)" if es_call else "🔴 EN CURSO (PUT)"
-    
-    entrada_html = ""
-    if st.session_state.precio_real_entrada:
-        entrada_html = f'<div class="info-panel">Entrada: <strong>{round(st.session_state.precio_real_entrada, 5)}</strong></div>'
-    
-    html_final = barra_html + f"""
-    <div class="signal-box {clase_box}">{tipo_signal}</div>
-    {entrada_html}
-    <div class="radar-container"><div class="radar {clase_radar}"><div class="radar-center"><div class="radar-number {clase_numero}">{segundos_restantes_op}</div><div class="radar-label">EXPIRACIÓN</div></div></div></div>
-    """
-    contenedor.markdown(html_final, unsafe_allow_html=True)
-    
-    if segundo_actual >= 58 and not st.session_state.resultado_guardado:
-        if st.session_state.precio_real_entrada and st.session_state.precio_real_entrada > 0:
-            precio_actual = obtener_precio_actual(codigo, tipo)
-            resultado_interno = 'PERDIDA'
-            if precio_actual is not None:
-                if (es_call and precio_actual > st.session_state.precio_real_entrada) or (not es_call and precio_actual < st.session_state.precio_real_entrada):
-                    resultado_interno = 'GANADA'
-            aprender_en_segundo_plano(señal['señal'], resultado_interno, señal.get('indicadores', {}), st.session_state.precio_real_entrada)
-            st.session_state.pesos = cargar_patrones()
-        st.session_state.resultado_guardado = True
-    time_module.sleep(0.5)
-    st.rerun()
 
+    contenedor.markdown(
+        barra_confianza_html(confianza_actual, "CONFIANZA DE LA OPERACIÓN EN CURSO")
+        + f"""
+        <div class="signal-box {clase_box}">{tipo_signal}</div>
+        {entrada_html}
+        <div class="radar-container"><div class="radar {clase_radar}"><div class="radar-center"><div class="radar-number {clase_numero}">{segundos_restantes_op}</div><div class="radar-label">EXPIRACIÓN</div></div></div></div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    # Cierre al final del minuto de operacion (seg 57-59). El rescate de la
+    # Fase 1 cubre el caso de que esta ventana se pierda.
+    if segundo_actual >= 57 and not st.session_state.resultado_guardado:
+        cerrar_operacion(codigo_f, tipo_f)
+
+zona_dinamica(codigo, tipo)
 st.markdown('</div>', unsafe_allow_html=True)
