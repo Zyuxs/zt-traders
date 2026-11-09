@@ -11,6 +11,14 @@ Papel de esta capa (acordado con Jose):
   - Tambien resume el "clima" de la sesion y analiza el historial del
     usuario (diario inteligente) cuando el Admin lo pide.
 
+v3.9: los prompts incorporan frameworks destilados del proyecto abierto
+"claude-trading-skills" de tradermonty (licencia MIT,
+github.com/tradermonty/claude-trading-skills): el checklist sistematico
+del analista tecnico (tendencia, niveles, alineacion, volumen/velas,
+conflictos), la disciplina pre-operacion (postura de exposicion y rachas)
+y la autopsia de señales (atribuir cada perdida a una causa probable,
+con muestra minima antes de concluir).
+
 Proveedores GRATUITOS para la fase de prueba (clave propia del usuario):
   - gemini     -> Google AI Studio (aistudio.google.com), nivel gratuito.
   - groq       -> console.groq.com, nivel gratuito, muy rapido.
@@ -56,7 +64,16 @@ SISTEMA = (
     "(2) Piensas como los mejores traders: tendencia manda, no se compra "
     "pegado a resistencia ni se vende pegado a soporte, se desconfia de "
     "entradas tardias tras velas extendidas y de operar en rango sin "
-    "confirmacion. (3) Respondes breve y directo, en español."
+    "confirmacion. "
+    "(3) Trabajas con el metodo de un analista tecnico sistematico: "
+    "tendencia y su fuerza, soportes/resistencias y espacio libre, "
+    "alineacion de medias, impulso y volumen, patrones de velas; y declaras "
+    "los conflictos cuando las piezas no concuerdan. "
+    "(4) Disciplina de riesgo: tras rachas perdedoras o con postura de "
+    "sesion REDUCIR, tu vara es mas exigente, no mas blanda. "
+    "(5) Honestidad estadistica: con muestras chicas (menos de 20 datos) "
+    "hablas de indicios, no de certezas. "
+    "(6) Respondes breve y directo, en español."
 )
 
 
@@ -155,16 +172,26 @@ def segunda_opinion(resumen):
     nivel, razon, regimen y (si hay) probabilidades. Devuelve
     {"veredicto": CONFIRMA|SUBE|REBAJA, "motivo": "..."} o None."""
     prompt = (
-        "Revisa esta señal del sistema cuantitativo y responde SOLO con un "
-        "JSON asi: {\"veredicto\": \"CONFIRMA\"|\"SUBE\"|\"REBAJA\", "
-        "\"motivo\": \"una linea, maximo 25 palabras\"}\n"
+        "Revisa esta señal del sistema cuantitativo con este CHECKLIST de "
+        "analista tecnico (en silencio, punto por punto): "
+        "1) Tendencia: direccion y fuerza; ¿la señal va con ella o contra ella? "
+        "2) Niveles: ¿hay espacio libre hasta el soporte/resistencia o entra "
+        "pegado a un nivel? 3) Alineacion: medias e impulso (MACD/ROC) ¿apoyan? "
+        "4) Volumen y velas: ¿hay confirmacion o es una vela extendida y tardia? "
+        "5) Conflictos: ¿que pieza NO concuerda? 6) Disciplina: postura de la "
+        "sesion y racha reciente ¿permiten ser generoso con el nivel?\n"
+        "Responde SOLO con un JSON asi: {\"veredicto\": "
+        "\"CONFIRMA\"|\"SUBE\"|\"REBAJA\", \"motivo\": \"una linea, maximo 25 "
+        "palabras\"}\n"
         "CONFIRMA = el nivel esta bien. SUBE = merece un nivel mas. "
-        "REBAJA = merece un nivel menos (entrada tardia, contra nivel, "
-        "contexto debil...). Nunca cambies la direccion.\n\n"
+        "REBAJA = merece un nivel menos (contra tendencia, pegado a nivel, "
+        "entrada tardia, conflicto entre piezas, postura REDUCIR...). "
+        "Nunca cambies la direccion.\n\n"
         f"Par: {resumen.get('par')} ({resumen.get('tipo')})\n"
         f"Señal: {resumen.get('direccion')} | Confianza del sistema: "
         f"{resumen.get('confianza')}% | Nivel actual: {resumen.get('nivel')}\n"
         f"Régimen de mercado: {resumen.get('regimen')}\n"
+        f"Postura de la sesión (por resultados recientes): {resumen.get('postura') or 'sin datos'}\n"
         f"Análisis del sistema: {resumen.get('razon')}\n"
         f"Advertencias: {', '.join(resumen.get('advertencias') or []) or 'ninguna'}"
     )
@@ -184,10 +211,13 @@ def segunda_opinion(resumen):
 def clima_sesion(par, tipo, variacion_60m_pct, regimen):
     """Frase corta con el clima del par para la sesion (o "" si no hay IA)."""
     prompt = (
-        f"En UNA frase breve (maximo 20 palabras), describe el clima actual "
-        f"para operar {par} ({tipo}) en operaciones de 1 minuto. "
+        f"En UNA frase breve (maximo 22 palabras), describe el clima actual "
+        f"para operar {par} ({tipo}) en operaciones de 1 minuto, como un "
+        f"entrenador de exposicion: si el contexto invita a operar normal, "
+        f"a ser selectivo o a reducir. "
         f"Variación de la última hora: {variacion_60m_pct}%. "
-        f"Régimen detectado: {regimen}. Sin prometer resultados."
+        f"Contexto (régimen y postura de la sesión): {regimen}. "
+        f"Sin prometer resultados."
     )
     texto = _chat([
         {"role": "system", "content": SISTEMA},
@@ -201,8 +231,14 @@ def analizar_historial(resumen_texto):
     historial y las metricas del usuario. Devuelve "" si no hay IA."""
     prompt = (
         "Analiza el historial de operaciones de este usuario como su mentor "
-        "de trading. Escribe un informe breve en español con estas secciones: "
-        "## Qué está funcionando, ## Qué está fallando, ## Ajustes concretos. "
+        "de trading, con método de autopsia de señales (postmortem): cada "
+        "pérdida se atribuye a una causa probable — contra la tendencia del "
+        "régimen, pegada a soporte/resistencia, en rango sin confirmación, "
+        "en volatilidad extrema, o sin causa clara — y cada patrón se juzga "
+        "solo si tiene muestra suficiente (20+ casos; con menos, es indicio). "
+        "Escribe un informe breve en español con estas secciones: "
+        "## Qué está funcionando, ## Qué está fallando (con la causa dominante "
+        "de las pérdidas), ## Ajustes concretos. "
         "Básate SOLO en los datos dados; si un dato no alcanza, dilo. "
         "Recuerda el equilibrio: con payout 86% necesita acertar mas del "
         "53,8% para no perder.\n\nDATOS:\n" + resumen_texto
