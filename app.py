@@ -665,7 +665,12 @@ def analizar_par(codigo_par, tipo="crypto"):
             razones.append(f"Datos: {fuente_datos}")
             return {"señal": direccion, "confianza": confianza, "razon": " | ".join(razones),
                     "indicadores": indicadores, "features": vector_base + [1 if es_call else 0],
-                    "nivel": nivel, "advertencias": advertencias, "fuente": fuente_datos}
+                    "nivel": nivel, "advertencias": advertencias, "fuente": fuente_datos,
+                    "escaneo": {"regimen": regimen_nombre, "regimen_cod": int(fv.get("regimen_cod", 0)),
+                                "adx": round(float(fv.get("adx", 0)), 1),
+                                "dist_res": round(float(fv.get("dist_resistencia", 0)), 2),
+                                "dist_sop": round(float(fv.get("dist_soporte", 0)), 2),
+                                "confluencia": conf, "bloqueos": len(bloqueos)}}
 
         # SIN MODELO: direccion por puntaje (desempate por tendencia), SIEMPRE emite
         direccion = direccion_puntaje
@@ -693,9 +698,69 @@ def analizar_par(codigo_par, tipo="crypto"):
         return {"señal": direccion, "confianza": confianza,
                 "razon": " | ".join(razones), "indicadores": indicadores,
                 "features": vector_base + [1 if direccion == "CALL" else 0],
-                "nivel": nivel, "advertencias": advertencias, "fuente": fuente_datos}
+                "nivel": nivel, "advertencias": advertencias, "fuente": fuente_datos,
+                "escaneo": {"regimen": regimen_nombre, "regimen_cod": int(fv.get("regimen_cod", 0)),
+                            "adx": round(float(fv.get("adx", 0)), 1),
+                            "dist_res": round(float(fv.get("dist_resistencia", 0)), 2),
+                            "dist_sop": round(float(fv.get("dist_soporte", 0)), 2),
+                            "confluencia": conf, "bloqueos": len(bloqueos)}}
     except Exception:
         return espera
+
+def indice_operabilidad(res):
+    """Indice de Operabilidad REAL (0-100) para el escaneo global (v3.11):
+    puntua las CONDICIONES del par con sus datos de verdad — regimen,
+    fuerza de la tendencia (ADX), espacio libre en la direccion de la
+    señal hasta el soporte/resistencia, confluencia y bloqueos. No es la
+    señal: es si el par esta en condiciones de operarse ahora."""
+    esc = res.get("escaneo") or {}
+    if res.get("señal") not in ("CALL", "PUT") or not esc:
+        return None
+    idx = 50
+    rc = esc.get("regimen_cod", 0)
+    if rc in (1, 2):
+        idx += 15
+    elif rc == 3:
+        idx -= 25
+    adx = esc.get("adx", 0)
+    if adx >= 30:
+        idx += 10
+    elif adx >= 20:
+        idx += 5
+    elif adx < 15:
+        idx -= 10
+    esp = esc.get("dist_res", 0) if res["señal"] == "CALL" else esc.get("dist_sop", 0)
+    if esp >= 2:
+        idx += 15
+    elif esp >= 1:
+        idx += 8
+    elif esp < 0.5:
+        idx -= 20
+    if esc.get("confluencia", 0) >= 2:
+        idx += 10
+    if esc.get("bloqueos", 0):
+        idx -= 15
+    idx += max(0, int(res.get("confianza", 50)) - 50) // 4
+    return max(1, min(99, idx))
+
+def estado_operabilidad(idx):
+    if idx is None:
+        return "⚪ SIN DATOS"
+    if idx >= 70:
+        return "🟢 ARMÓNICO"
+    if idx >= 45:
+        return "🟡 NEUTRO"
+    return "🔴 EVITAR"
+
+def _motivo_escaner(res):
+    esc = res.get("escaneo") or {}
+    if res.get("señal") not in ("CALL", "PUT"):
+        return str(res.get("razon", ""))[:80]
+    esp = esc.get("dist_res", 0) if res["señal"] == "CALL" else esc.get("dist_sop", 0)
+    m = f"{esc.get('regimen', '-')} · ADX {esc.get('adx', 0):.0f} · espacio {esp:.1f} ATR"
+    if esc.get("bloqueos"):
+        m += " · ⚠ con bloqueo"
+    return m
 
 # ---------------- Capa de razonamiento IA (v3.4, opcional) ----------------
 
@@ -855,6 +920,23 @@ div.stFormSubmitButton > button { background: linear-gradient(135deg, #2563eb, #
 .stVerticalBlock { gap: 0.45rem !important; }
 .stat-box { padding: 6px 2px !important; }
 .hora-box { margin: 2px 0 !important; }
+/* v3.11: tarjeta en vivo estilo panel del amigo — radar a la izquierda y
+   filas de datos (etiqueta / valor) a la derecha, barra de progreso del
+   ciclo y pastillas de marcador (W-L) y EN VIVO. */
+.brand-bar { display: flex; justify-content: space-between; align-items: center; margin: 2px 0 6px 0; }
+.pill-record { background: rgba(250,204,21,0.12); border: 1px solid rgba(250,204,21,0.45); color: #fde68a; font-weight: 800; font-size: 12px; padding: 4px 12px; border-radius: 99px; letter-spacing: 1px; }
+.pill-live { background: rgba(239,68,68,0.15); border: 1px solid rgba(239,68,68,0.55); color: #fca5a5; font-weight: 800; font-size: 12px; padding: 4px 12px; border-radius: 99px; letter-spacing: 1px; }
+.live-grid { display: flex; gap: 12px; align-items: center; margin: 6px 0; }
+.live-grid .radar-container { flex: 0 0 auto; margin: 0 !important; padding: 0 !important; }
+.data-rows { flex: 1; display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.data-row { display: flex; justify-content: space-between; align-items: center; gap: 10px; background: linear-gradient(160deg, rgba(255,255,255,0.05), rgba(255,255,255,0.012)); border: 1px solid rgba(255,255,255,0.10); border-radius: 10px; padding: 7px 12px; }
+.data-row span { color: #8b96b8; font-size: 10.5px; font-weight: 700; letter-spacing: 1.5px; white-space: nowrap; }
+.data-row strong { color: #eef2ff; font-size: 14.5px; font-weight: 800; text-align: right; }
+.data-row strong.amarillo { color: #facc15; }
+.data-row strong.verde { color: #00e676; }
+.data-row strong.rojo { color: #ff6b74; }
+.progress-track { height: 8px; background: rgba(255,255,255,0.07); border-radius: 99px; overflow: hidden; margin: 6px 0; }
+.progress-fill { height: 100%; background: linear-gradient(90deg, #facc15, #f59e0b); border-radius: 99px; }
 </style>
 """
 st.markdown(CSS, unsafe_allow_html=True)
@@ -862,7 +944,7 @@ st.markdown(CSS, unsafe_allow_html=True)
 # ---------------- Parte estatica (ya NO se recarga cada segundo) ----------------
 
 st.markdown('<div class="main-container">', unsafe_allow_html=True)
-st.markdown(f'<div class="header"><span class="badge-version">v3.10.1</span><h1>⚡ ZT TRADERS PRO</h1><p>User: {st.session_state.usuario_actual} · IA AUTO-APRENDIZAJE</p></div>', unsafe_allow_html=True)
+st.markdown(f'<div class="header"><span class="badge-version">v3.11</span><h1>⚡ ZT TRADERS PRO</h1><p>User: {st.session_state.usuario_actual} · IA AUTO-APRENDIZAJE</p></div>', unsafe_allow_html=True)
 if st.query_params.get("zt_token"):
     st.caption("✅ Este dispositivo está activado: guarda ESTA página en Favoritos o en la pantalla de inicio "
                "(con la dirección completa, tal como está arriba) y la próxima vez entrarás directo, sin escribir la clave.")
@@ -915,6 +997,46 @@ components.html(widget_html, height=185)
 # (antes se dibujaba al final de la pagina y habia que bajar mucho para
 # verla). Los paneles de aprendizaje/admin quedan debajo, en expanders.
 slot_zona = st.container()
+
+# ---------------- Escaneo global de pares (v3.11) ----------------
+# La idea del panel del amigo de Jose (elegir el mejor par del momento),
+# pero con el Indice de Operabilidad calculado de datos reales.
+with st.expander("🌐 Escaneo global — ¿qué par conviene operar ahora?"):
+    st.caption("Índice de Operabilidad calculado con datos reales de cada par (régimen, fuerza ADX, espacio libre "
+               "hasta soporte/resistencia, confluencia y bloqueos). 🟢 ARMÓNICO = condiciones limpias · "
+               "🟡 NEUTRO = operable con cuidado · 🔴 EVITAR = volátil, pegado a un nivel o con bloqueo. "
+               "Escanear forex consume créditos de Twelve Data (1 por par): úsalo cuando lo necesites.")
+    if st.button("🔍 Escanear los 24 pares ahora", use_container_width=True):
+        _resultados = []
+        _barra = st.progress(0.0)
+        for _i, (_nombre, _info) in enumerate(PARES.items()):
+            try:
+                _r = analizar_par(_info["codigo"], _info["tipo"])
+            except Exception:
+                _r = {"señal": "ESPERA", "confianza": 0, "razon": "Error de análisis", "nivel": "", "escaneo": None}
+            _idx = indice_operabilidad(_r)
+            _resultados.append({"Par": _nombre, "Estado": estado_operabilidad(_idx),
+                                "Índice": _idx, "Señal tentativa": _r.get("señal"),
+                                "Confianza": _r.get("confianza"), "Nivel": _r.get("nivel") or "-",
+                                "Lectura": _motivo_escaner(_r)})
+            _barra.progress((_i + 1) / len(PARES))
+        _barra.empty()
+        st.session_state.escaneo_global = _resultados
+        st.session_state.escaneo_ts = ahora_local().strftime("%H:%M:%S")
+    _esc = st.session_state.get("escaneo_global")
+    if _esc:
+        _con_idx = [r for r in _esc if r["Índice"] is not None]
+        if _con_idx:
+            _mejor = max(_con_idx, key=lambda r: r["Índice"])
+            st.success(f"🏆 Mejor par ahora: {_mejor['Par']} — {_mejor['Estado']} (índice {_mejor['Índice']}) · "
+                       f"señal tentativa {_mejor['Señal tentativa']} · {_mejor['Lectura']} · escaneo de las {st.session_state.get('escaneo_ts', '')}")
+        _orden = sorted(_esc, key=lambda r: (r["Índice"] is None, -(r["Índice"] or 0)))
+        st.dataframe(pd.DataFrame(_orden), use_container_width=True, hide_index=True)
+        _c1, _c2 = st.columns([3, 1])
+        _ir = _c1.selectbox("Ir a operar en:", [r["Par"] for r in _orden], key="escaneo_ir")
+        if _c2.button("➡️ Cambiar par", use_container_width=True):
+            st.session_state.par_sel = _ir
+            st.rerun()
 
 # ---------------- Panel IA v3 (solo Admin): backtesting + entrenamiento ----------------
 _info_modelo = modelo_v3_info()
@@ -1169,6 +1291,17 @@ class ContenedorLimpio:
     def markdown(self, html, **kwargs):
         self._contenedor.markdown(limpiar_html(html), **kwargs)
 
+def _fmt_precio(p, codigo):
+    """Formato de precio segun el par (JPY 3 decimales, cripto grande 2)."""
+    if p is None:
+        return "--.-----"
+    p = float(p)
+    if "JPY" in str(codigo):
+        return f"{p:,.3f}"
+    if abs(p) >= 100:
+        return f"{p:,.2f}"
+    return f"{p:.5f}"
+
 def barra_confianza_html(confianza_actual, titulo):
     if confianza_actual >= 75:
         clase_barra, icono = "confianza-alta", "🔊"
@@ -1244,6 +1377,9 @@ def zona_dinamica(codigo_f, tipo_f):
 
     # Estadisticas + reloj
     pesos = st.session_state.pesos
+    _hw = sum(1 for _h in st.session_state.hist_cache if _h.get('resultado') == 'GANADA')
+    _hl = sum(1 for _h in st.session_state.hist_cache if _h.get('resultado') == 'PERDIDA')
+    st.markdown(f'<div class="brand-bar"><span class="pill-record">🔥 {_hw}W - {_hl}L</span><span class="pill-live">● EN VIVO</span></div>', unsafe_allow_html=True)
     st.markdown(f"""
     <div class="stats-row">
         <div class="stat-box"><strong>Winrate</strong><span>{round(pesos['winrate'], 1)}%</span></div>
@@ -1303,11 +1439,28 @@ def zona_dinamica(codigo_f, tipo_f):
                 pass
 
         clima_html = f'<div class="info-panel">🧠 Clima IA: {_html.escape(str(st.session_state.clima_ia))}</div>' if st.session_state.clima_ia else ''
+        try:
+            _precio_vivo = obtener_precio_actual(codigo_f, tipo_f)
+        except Exception:
+            _precio_vivo = None
+        _precio_txt = _fmt_precio(_precio_vivo, codigo_f)
+        _entrada_txt = (ahora + timedelta(seconds=(60 - segundo_actual))).strftime("%H:%M:%S")
+        _pct_ciclo = min(100, int(segundo_actual / 55 * 100))
         contenedor.markdown(f"""
         <div class="signal-box signal-wait">📊 ESCANEANDO MERCADO...</div>
         {clima_html}
+        <div class="live-grid">
+          <div class="radar-container"><div class="radar radar-yellow"><div class="radar-center"><div class="radar-number radar-number-yellow">IA</div><div class="radar-label">ACTIVA</div></div></div></div>
+          <div class="data-rows">
+            <div class="data-row"><span>⏱ ENTRADA EXACTA</span><strong class="amarillo">{_entrada_txt}</strong></div>
+            <div class="data-row"><span>PUNTO DE ENTRADA</span><strong>{_precio_txt}</strong></div>
+            <div class="data-row"><span>● EN VIVO</span><strong class="verde">{_precio_txt}</strong></div>
+            <div class="data-row"><span>EXPIRACIÓN</span><strong>SIGUIENTE VELA (:00)</strong></div>
+            <div class="data-row"><span>HORA SEÑAL</span><strong>{hora_actual}</strong></div>
+          </div>
+        </div>
+        <div class="progress-track"><div class="progress-fill" style="width:{_pct_ciclo}%"></div></div>
         <div class="info-panel">⏱️ Próxima señal en: <strong>{55 - segundo_actual}s</strong></div>
-        <div class="radar-container"><div class="radar radar-yellow"><div class="radar-center"><div class="radar-number radar-number-yellow">IA</div><div class="radar-label">ACTIVA</div></div></div></div>
         """, unsafe_allow_html=True)
         return
 
@@ -1354,14 +1507,22 @@ def zona_dinamica(codigo_f, tipo_f):
         clase_radar = "radar-green" if es_call else "radar-red"
         clase_numero = "radar-number-green" if es_call else "radar-number-red"
         tipo_signal = "🟢 COMPRA (CALL)" if es_call else "🔴 VENTA (PUT)"
+        _entrada_txt2 = (ahora + timedelta(seconds=(60 - segundo_actual))).strftime("%H:%M:%S")
         contenedor.markdown(
             voz_html
             + barra_confianza_html(confianza_actual, "NIVEL DE CONFIANZA DE LA SEÑAL")
             + nivel_html_de(señal)
             + f"""
             <div class="signal-box {clase_box}">{tipo_signal}</div>
+            <div class="live-grid">
+              <div class="radar-container"><div class="radar {clase_radar}"><div class="radar-center"><div class="radar-number {clase_numero}">{segundos_restantes}</div><div class="radar-label">SEGUNDOS</div></div></div></div>
+              <div class="data-rows">
+                <div class="data-row"><span>⏱ ENTRADA EXACTA</span><strong class="amarillo">{_entrada_txt2}</strong></div>
+                <div class="data-row"><span>EXPIRACIÓN</span><strong>SIGUIENTE VELA (:00)</strong></div>
+                <div class="data-row"><span>HORA SEÑAL</span><strong>{hora_actual}</strong></div>
+              </div>
+            </div>
             <div class="info-panel">Razón: <strong>{señal["razon"]}</strong></div>
-            <div class="radar-container"><div class="radar {clase_radar}"><div class="radar-center"><div class="radar-number {clase_numero}">{segundos_restantes}</div><div class="radar-label">SEGUNDOS</div></div></div></div>
             """,
             unsafe_allow_html=True,
         )
