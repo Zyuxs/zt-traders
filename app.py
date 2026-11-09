@@ -82,6 +82,17 @@
 #     Gemini (Google AI Studio), Groq y OpenRouter; se configuran solo
 #     desde Secrets (ia_proveedor, ia_api_key, ia_segunda_opinion...).
 #     Sin clave o con la API caida, la app funciona igual que la v3.3.
+# --- v3.5: APRENDIZAJE EN VIVO (lo que pide Jose: que aprenda operando) ---
+# 26) Cada operacion se registra con par, tipo, nivel y sus 26 variables, y
+#     la app ya juzga su resultado con el precio real de entrada y el de
+#     cierre (sabe si gano o perdio). Con >= 60 operaciones reales se
+#     entrena SOLO un modelo en vivo (nucleo_ia.entrenar_modelo_vivo) y se
+#     reentrena cada 20 operaciones nuevas. Es el cerebro de FOREX (donde
+#     no hay backtest de Binance) y respaldo del de crypto.
+# 27) Panel "Aprendizaje en vivo" visible para todos: progreso de
+#     aprendizaje, acierto real global y por par / direccion / nivel /
+#     tipo, y el estado del cerebro en vivo con su precision medida en
+#     operaciones que no vio al entrenar. Asi se VE si esta aprendiendo.
 # ============================================================
 import streamlit as st
 import streamlit.components.v1 as components
@@ -257,7 +268,8 @@ def resetear_memoria():
     st.session_state.hist_cache = []
     st.session_state.pesos = dict(PATRONES_BASE)
 
-def aprender(señal, resultado, indicadores, precio_real_entrada, features=None):
+def aprender(señal, resultado, indicadores, precio_real_entrada, features=None,
+             par=None, tipo=None, nivel=None, confianza=None):
     """Registra el resultado una sola vez por operacion y actualiza memoria + disco."""
     hist = st.session_state.hist_cache
     pesos = st.session_state.pesos
@@ -268,6 +280,10 @@ def aprender(señal, resultado, indicadores, precio_real_entrada, features=None)
         "precio_entrada_real": precio_real_entrada,
         "indicadores": indicadores,
         "features": features,
+        "par": par,
+        "tipo": tipo,
+        "nivel": nivel,
+        "confianza": confianza,
     })
     pesos["total_ops"] += 1
     if resultado == "GANADA":
@@ -275,6 +291,7 @@ def aprender(señal, resultado, indicadores, precio_real_entrada, features=None)
     pesos["winrate"] = (pesos["total_ganadas"] / pesos["total_ops"] * 100) if pesos["total_ops"] > 0 else 0.0
     guardar_json_atomico(ARCHIVO_HISTORIAL, hist)
     guardar_json_atomico(ARCHIVO_PATRONES, pesos)
+    quizas_entrenar_vivo()
 
 # ---------------- Modelo IA v3 (entrenado con backtesting) ----------------
 
@@ -284,6 +301,36 @@ ARCHIVO_MODELO_V3 = "modelo_v3.pkl"
 def modelo_v3_info():
     """Carga modelo_v3.pkl si existe (se crea desde el panel Admin)."""
     return nucleo_ia.cargar_modelo(ARCHIVO_MODELO_V3)
+
+# ---------------- Modelo EN VIVO (aprende de las operaciones reales) ----------------
+
+ARCHIVO_MODELO_VIVO = "modelo_vivo.pkl"
+
+@st.cache_resource
+def modelo_vivo_info():
+    """Carga modelo_vivo.pkl: el cerebro que aprende de las operaciones
+    reales registradas por la app (entrada, salida, gano/perdio)."""
+    return nucleo_ia.cargar_modelo_vivo(ARCHIVO_MODELO_VIVO)
+
+def quizas_entrenar_vivo():
+    """Reentrena el modelo en vivo cuando hay operaciones nuevas
+    suficientes. Se llama tras registrar cada operacion; entrenar con
+    cientos de filas toma ~1 segundo y solo ocurre cada 20 operaciones."""
+    try:
+        hist = st.session_state.hist_cache
+        validas = len(nucleo_ia.ops_validas_para_vivo(hist))
+        if validas < nucleo_ia.MIN_OPS_MODELO_VIVO:
+            return
+        info = modelo_vivo_info()
+        entrenadas = info["metricas"]["ejemplos_entrenamiento"] if info else 0
+        if info is not None and validas - entrenadas < nucleo_ia.REENTRENAR_CADA_OPS:
+            return
+        nuevo = nucleo_ia.entrenar_modelo_vivo(hist)
+        if nuevo is not None:
+            nucleo_ia.guardar_modelo(nuevo, ARCHIVO_MODELO_VIVO, "modelo_vivo_metricas.json")
+            modelo_vivo_info.clear()
+    except Exception:
+        pass
 
 # ---------------- Datos de mercado (con cache) ----------------
 
@@ -452,10 +499,19 @@ def analizar_par(codigo_par, tipo="crypto"):
         regimen_nombre = nucleo_ia.nombre_regimen(fv.get("regimen_cod", 0))
         indicadores = {"rsi": rsi, "precio_relativo": float(fila["precio_relativo"])}
 
-        # CON MODELO (solo crypto): elige direccion por probabilidad, SIEMPRE emite
+        # CON MODELO: elige direccion por probabilidad, SIEMPRE emite.
+        # Crypto: modelo de backtest Binance si existe. Forex (y crypto sin
+        # backtest): modelo EN VIVO, aprendido de las operaciones reales
+        # registradas por la propia app (v3.5).
         info_modelo = modelo_v3_info() if tipo == "crypto" else None
-        p_call = nucleo_ia.prob_ganada(info_modelo, vector_base, True) if info_modelo else None
-        p_put = nucleo_ia.prob_ganada(info_modelo, vector_base, False) if info_modelo else None
+        fuente_modelo = "backtest Binance" if info_modelo else ""
+        if info_modelo is None:
+            info_modelo = modelo_vivo_info()
+            if info_modelo is not None:
+                fuente_modelo = f"en vivo: {info_modelo['metricas']['ejemplos_entrenamiento']} operaciones reales"
+        _prob_fn = nucleo_ia.prob_ganada_vivo if fuente_modelo.startswith("en vivo") else nucleo_ia.prob_ganada
+        p_call = _prob_fn(info_modelo, vector_base, True) if info_modelo else None
+        p_put = _prob_fn(info_modelo, vector_base, False) if info_modelo else None
         if p_call is not None and p_put is not None:
             es_call = p_call >= p_put
             direccion = "CALL" if es_call else "PUT"
@@ -478,6 +534,7 @@ def analizar_par(codigo_par, tipo="crypto"):
             if direccion != direccion_puntaje:
                 razones.append(f"La IA elige {direccion} (el puntaje decía {direccion_puntaje})")
             razones.append(f"IA: SUBE {int(round(p_call * 100))}% vs BAJA {int(round(p_put * 100))}%")
+            razones.append(f"Fuente IA: {fuente_modelo}")
             razones.append(f"Régimen: {regimen_nombre} · Confluencia {conf}✓ · Nivel {nivel}")
             return {"señal": direccion, "confianza": confianza, "razon": " | ".join(razones),
                     "indicadores": indicadores, "features": vector_base + [1 if es_call else 0],
@@ -500,7 +557,11 @@ def analizar_par(codigo_par, tipo="crypto"):
         else:
             nivel = "Baja"
         razones.append(f"Régimen: {regimen_nombre} · Confluencia {conf}✓ · Nivel {nivel}")
-        razones.append("Sin modelo IA" + (" (forex)" if tipo != "crypto" else " entrenado"))
+        if tipo != "crypto":
+            _validas = len(nucleo_ia.ops_validas_para_vivo(st.session_state.hist_cache))
+            razones.append(f"Modelo en vivo aprendiendo: {_validas}/{nucleo_ia.MIN_OPS_MODELO_VIVO} operaciones reales")
+        else:
+            razones.append("Sin modelo IA entrenado")
         return {"señal": direccion, "confianza": confianza,
                 "razon": " | ".join(razones), "indicadores": indicadores,
                 "features": vector_base + [1 if direccion == "CALL" else 0],
@@ -755,6 +816,49 @@ elif _info_modelo:
     st.caption(f"🧠 IA v3 activa — modelo entrenado el {_info_modelo['metricas']['fecha_entrenamiento']}")
 
 
+# ---------------- Panel de aprendizaje en vivo (visible para todos) ----------------
+with st.expander("📈 Aprendizaje en vivo — así va aprendiendo la app"):
+    _hist = st.session_state.hist_cache
+    _validas = nucleo_ia.ops_validas_para_vivo(_hist)
+    _n_val = len(_validas)
+    _vivo = modelo_vivo_info()
+    if _vivo:
+        _mv = _vivo["metricas"]
+        st.success(f"🧠 Cerebro en vivo ACTIVO — entrenado con {_mv['ejemplos_entrenamiento']} operaciones reales "
+                   f"({_mv['fecha_entrenamiento']}). En operaciones que no vio al entrenar: acierto "
+                   f"{_mv['winrate_prueba_%']}% en total y {_mv['precision_filtro_0.55_%']}% en las que su "
+                   f"probabilidad fue ≥55%. Se reentrena solo cada {nucleo_ia.REENTRENAR_CADA_OPS} operaciones nuevas.")
+    else:
+        st.info(f"El cerebro en vivo se activa con {nucleo_ia.MIN_OPS_MODELO_VIVO} operaciones reales registradas "
+                f"(cada señal se juzga con el precio de entrada y el de cierre: la app sabe si ganó o perdió, y de eso aprende). "
+                f"Llevas {_n_val}.")
+        st.progress(min(_n_val / nucleo_ia.MIN_OPS_MODELO_VIVO, 1.0))
+    if _n_val:
+        def _tabla_vivo(clave, etiqueta):
+            grupos = {}
+            for _h in _validas:
+                k = _h.get(clave) or "—"
+                a, b = grupos.get(k, (0, 0))
+                grupos[k] = (a + 1, b + (1 if _h["resultado"] == "GANADA" else 0))
+            filas = [{etiqueta: k, "ops": n, "ganadas": g,
+                      "acierto_%": round(g / n * 100, 1) if n else 0.0}
+                     for k, (n, g) in sorted(grupos.items())]
+            return pd.DataFrame(filas)
+        _ganadas = sum(1 for _h in _validas if _h["resultado"] == "GANADA")
+        st.caption(f"Operaciones reales registradas: {_n_val} · Acierto global: {round(_ganadas / _n_val * 100, 1)}% "
+                   f"(con payout 86% en IQ Option necesitas más del 53,8% para ganar dinero).")
+        _c1, _c2 = st.columns(2)
+        with _c1:
+            st.caption("Acierto por par")
+            st.dataframe(_tabla_vivo("par", "par"), use_container_width=True, hide_index=True)
+            st.caption("Acierto por dirección")
+            st.dataframe(_tabla_vivo("señal", "dirección"), use_container_width=True, hide_index=True)
+        with _c2:
+            st.caption("Acierto por nivel de señal")
+            st.dataframe(_tabla_vivo("nivel", "nivel"), use_container_width=True, hide_index=True)
+            st.caption("Acierto por tipo")
+            st.dataframe(_tabla_vivo("tipo", "tipo"), use_container_width=True, hide_index=True)
+
 # ---------------- Helpers de la zona dinamica ----------------
 
 def limpiar_html(html):
@@ -816,7 +920,8 @@ def cerrar_operacion(codigo_op, tipo_op):
         es_call = señal['señal'] == 'CALL'
         if (es_call and precio_actual > entrada) or (not es_call and precio_actual < entrada):
             resultado = 'GANADA'
-    aprender(señal['señal'], resultado, señal.get('indicadores', {}), entrada, señal.get('features'))
+    aprender(señal['señal'], resultado, señal.get('indicadores', {}), entrada, señal.get('features'),
+             par=codigo_op, tipo=tipo_op, nivel=señal.get('nivel'), confianza=señal.get('confianza'))
     st.session_state.resultado_guardado = True
 
 # ---------------- Zona dinamica: fragmento cada 1s ----------------
