@@ -125,7 +125,7 @@ from zoneinfo import ZoneInfo
 import nucleo_ia
 import razonamiento_ia
 
-st.set_page_config(page_title="ZT TRADERS INSTITUTIONAL PRO", layout="centered", page_icon="⚡")
+st.set_page_config(page_title="ZT TRADERS INSTITUTIONAL PRO", layout="wide", page_icon="⚡")
 
 ARCHIVO_HISTORIAL = "historial.json"
 ARCHIVO_PATRONES = "patrones.json"
@@ -881,7 +881,7 @@ CSS = """
 .block-container { padding-top: 10px !important; padding-bottom: 0px !important; padding-left: 10px !important; padding-right: 10px !important; max-width: 100% !important; }
 .stApp { background: radial-gradient(1200px 600px at 50% -10%, #12224a 0%, #070b18 55%, #04060d 100%) !important; }
 body { background: #04060d; color: #eef2ff; font-family: 'Inter', Arial, sans-serif; }
-.main-container { width: 100%; max-width: 460px; margin: 0 auto; display: flex; flex-direction: column; gap: 8px; font-family: 'Inter', Arial, sans-serif; }
+.main-container { width: 100%; max-width: 1560px; margin: 0 auto; display: flex; flex-direction: column; gap: 8px; font-family: 'Inter', Arial, sans-serif; }
 .header { position: relative; background: linear-gradient(160deg, rgba(255,255,255,0.07), rgba(255,255,255,0.02)); padding: 16px 12px 13px; border-radius: 18px; border: 1px solid rgba(140,170,255,0.25); text-align: center; box-shadow: 0 10px 30px rgba(0,0,0,0.45), inset 0 1px 0 rgba(255,255,255,0.08); backdrop-filter: blur(6px); }
 .header h1 { margin: 0; font-size: 21px; font-weight: 900; letter-spacing: 3px; background: linear-gradient(90deg, #7dd3fc, #a5b4fc, #f0abfc); -webkit-background-clip: text; background-clip: text; color: transparent; }
 .header p { color: #8b96b8; margin: 5px 0 0 0; font-size: 10px; letter-spacing: 1.5px; text-transform: uppercase; }
@@ -954,35 +954,40 @@ st.markdown(CSS, unsafe_allow_html=True)
 # ---------------- Parte estatica (ya NO se recarga cada segundo) ----------------
 
 st.markdown('<div class="main-container">', unsafe_allow_html=True)
-st.markdown(f'<div class="header"><span class="badge-version">v3.12</span><h1>⚡ ZT TRADERS PRO</h1><p>User: {st.session_state.usuario_actual} · IA AUTO-APRENDIZAJE</p></div>', unsafe_allow_html=True)
+st.markdown(f'<div class="header"><span class="badge-version">v3.13</span><h1>⚡ ZT TRADERS PRO</h1><p>User: {st.session_state.usuario_actual} · IA AUTO-APRENDIZAJE</p></div>', unsafe_allow_html=True)
 if st.query_params.get("zt_token"):
     st.caption("✅ Este dispositivo está activado: guarda ESTA página en Favoritos o en la pantalla de inicio "
                "(con la dirección completa, tal como está arriba) y la próxima vez entrarás directo, sin escribir la clave.")
 
-col1, col2 = st.columns([3, 1])
-with col1:
-    par_nombre = st.selectbox("", list(PARES.keys()), index=list(PARES.keys()).index(st.session_state.par_sel), label_visibility="collapsed")
-with col2:
-    # v3.10.1 (seguridad): el Reset borra el aprendizaje COMPARTIDO de todos
-    # los usuarios; antes lo veia cualquier cliente con licencia. Ahora es
-    # solo para el Admin Master.
-    if st.session_state.usuario_actual.startswith("👑"):
-        if st.button("🗑️ Reset", key="reset_btn", use_container_width=True):
-            st.session_state.confirmar_reset = True
-        if st.session_state.get("confirmar_reset"):
-            st.warning("⚠️ El Reset borra el historial de aprendizaje y los contadores. "
-                       "Quedará una copia automática de seguridad, pero el aprendizaje vuelve a cero.")
-            _cc1, _cc2 = st.columns(2)
-            with _cc1:
-                if st.button("✅ Sí, borrar todo", key="reset_confirmar", use_container_width=True):
-                    st.session_state.confirmar_reset = False
-                    resetear_memoria()
-                    reiniciar_ciclo()
-                    st.rerun()
-            with _cc2:
-                if st.button("❌ Cancelar", key="reset_cancelar", use_container_width=True):
-                    st.session_state.confirmar_reset = False
-                    st.rerun()
+# v3.13: distribucion ANCHA para PC — a la izquierda el selector de par y
+# el grafico (grande), a la derecha la zona de señales en vivo, lado a
+# lado para ver todo sin bajar. En telefono las columnas se apilan solas
+# (grafico primero, señal debajo), como antes.
+col_izq, col_der = st.columns([1.3, 1], gap="medium")
+with col_izq:
+    col1, col2 = st.columns([3, 1])
+    with col1:
+        par_nombre = st.selectbox("", list(PARES.keys()), index=list(PARES.keys()).index(st.session_state.par_sel), label_visibility="collapsed")
+    with col2:
+        # v3.10.1 (seguridad): el Reset borra el aprendizaje COMPARTIDO de
+        # todos los usuarios; solo lo ve el Admin Master.
+        if st.session_state.usuario_actual.startswith("👑"):
+            if st.button("🗑️ Reset", key="reset_btn", use_container_width=True):
+                st.session_state.confirmar_reset = True
+            if st.session_state.get("confirmar_reset"):
+                st.warning("⚠️ El Reset borra el historial de aprendizaje y los contadores. "
+                           "Quedará una copia automática de seguridad, pero el aprendizaje vuelve a cero.")
+                _cc1, _cc2 = st.columns(2)
+                with _cc1:
+                    if st.button("✅ Sí, borrar todo", key="reset_confirmar", use_container_width=True):
+                        st.session_state.confirmar_reset = False
+                        resetear_memoria()
+                        reiniciar_ciclo()
+                        st.rerun()
+                with _cc2:
+                    if st.button("❌ Cancelar", key="reset_cancelar", use_container_width=True):
+                        st.session_state.confirmar_reset = False
+                        st.rerun()
 
 if par_nombre != st.session_state.par_sel:
     st.session_state.par_sel = par_nombre
@@ -994,19 +999,20 @@ tipo = codigo_info['tipo']
 
 tv_symbol = f"BINANCE:{codigo}" if tipo == 'crypto' else f"FX:{codigo.replace('=X', '')}"
 widget_html = f"""
-<div class="tradingview-widget-container" style="height:180px;width:100%;margin-bottom:6px;">
+<div class="tradingview-widget-container" style="height:340px;width:100%;margin-bottom:6px;">
   <div class="tradingview-widget-container__widget" style="height:100%;width:100%"></div>
   <script type="text/javascript" src="https://s3.tradingview.com/external-embedding/embed-widget-advanced-chart.js" async>
-  {{"width": "100%", "height": "180", "symbol": "{tv_symbol}", "interval": "1", "timezone": "Etc/UTC", "theme": "dark", "style": "1", "locale": "es", "enable_publishing": false, "hide_top_toolbar": true, "hide_legend": true, "save_image": false, "calendar": false, "hide_volume": true, "support_host": "https://www.tradingview.com"}}
+  {{"width": "100%", "height": "340", "symbol": "{tv_symbol}", "interval": "1", "timezone": "Etc/UTC", "theme": "dark", "style": "1", "locale": "es", "enable_publishing": false, "hide_top_toolbar": true, "hide_legend": true, "save_image": false, "calendar": false, "hide_volume": true, "support_host": "https://www.tradingview.com"}}
   </script>
 </div>
 """
-components.html(widget_html, height=185)
+with col_izq:
+    components.html(widget_html, height=345)
 
-# v3.10: la zona de señales en vivo se ancla AQUI, justo debajo del grafico
-# (antes se dibujaba al final de la pagina y habia que bajar mucho para
-# verla). Los paneles de aprendizaje/admin quedan debajo, en expanders.
-slot_zona = st.container()
+# La zona de señales en vivo se ancla en la columna DERECHA (v3.13; en
+# v3.10 iba bajo el grafico). Los paneles quedan debajo, en expanders.
+with col_der:
+    slot_zona = st.container()
 
 # ---------------- Escaneo global de pares (v3.11) ----------------
 # La idea del panel del amigo de Jose (elegir el mejor par del momento),
