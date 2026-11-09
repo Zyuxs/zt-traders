@@ -884,8 +884,8 @@ body { background: #04060d; color: #eef2ff; font-family: 'Inter', Arial, sans-se
 .hora-box span { color: #00e68c; font-size: 23px; font-weight: 800; letter-spacing: 2px; font-variant-numeric: tabular-nums; text-shadow: 0 0 14px rgba(0,230,140,0.55); }
 .signal-box { padding: 14px 10px; border-radius: 16px; text-align: center; font-size: 26px; font-weight: 900; letter-spacing: 3px; margin: 5px 0; }
 @keyframes pulso-suave { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.012); } }
-.signal-call { background: linear-gradient(135deg, #00b359, #00e676); border: 1px solid rgba(0,255,150,0.7); color: #ffffff; box-shadow: 0 8px 28px rgba(0,230,118,0.35), inset 0 1px 0 rgba(255,255,255,0.35); animation: pulso-suave 1.6s ease-in-out infinite; text-shadow: 0 1px 3px rgba(0,60,25,0.5); }
-.signal-put { background: linear-gradient(135deg, #d81b3a, #ff4d5e); border: 1px solid rgba(255,90,110,0.7); color: #ffffff; box-shadow: 0 8px 28px rgba(255,60,90,0.32), inset 0 1px 0 rgba(255,255,255,0.3); animation: pulso-suave 1.6s ease-in-out infinite; text-shadow: 0 1px 3px rgba(70,0,10,0.5); }
+.signal-call { background: linear-gradient(135deg, #00b359, #00e676); border: 1px solid rgba(0,255,150,0.7); color: #ffffff; box-shadow: 0 8px 28px rgba(0,230,118,0.35), inset 0 1px 0 rgba(255,255,255,0.35); text-shadow: 0 1px 3px rgba(0,60,25,0.5); }
+.signal-put { background: linear-gradient(135deg, #d81b3a, #ff4d5e); border: 1px solid rgba(255,90,110,0.7); color: #ffffff; box-shadow: 0 8px 28px rgba(255,60,90,0.32), inset 0 1px 0 rgba(255,255,255,0.3); text-shadow: 0 1px 3px rgba(70,0,10,0.5); }
 .signal-wait { background: linear-gradient(160deg, rgba(255,255,255,0.05), rgba(255,255,255,0.01)); border: 1px solid rgba(250,200,60,0.4); color: #facc15; font-size: 15px; letter-spacing: 1.5px; padding: 11px; }
 .confianza-bar-container { background: linear-gradient(160deg, rgba(255,255,255,0.06), rgba(255,255,255,0.015)); border: 1px solid rgba(255,255,255,0.10); border-radius: 16px; padding: 14px; margin: 9px 0; text-align: center; box-shadow: inset 0 1px 0 rgba(255,255,255,0.06); }
 .confianza-bar-label { color: #aab4d4; font-size: 11px; font-weight: 700; margin-bottom: 8px; text-transform: uppercase; letter-spacing: 2px; }
@@ -944,7 +944,7 @@ st.markdown(CSS, unsafe_allow_html=True)
 # ---------------- Parte estatica (ya NO se recarga cada segundo) ----------------
 
 st.markdown('<div class="main-container">', unsafe_allow_html=True)
-st.markdown(f'<div class="header"><span class="badge-version">v3.11</span><h1>⚡ ZT TRADERS PRO</h1><p>User: {st.session_state.usuario_actual} · IA AUTO-APRENDIZAJE</p></div>', unsafe_allow_html=True)
+st.markdown(f'<div class="header"><span class="badge-version">v3.11.1</span><h1>⚡ ZT TRADERS PRO</h1><p>User: {st.session_state.usuario_actual} · IA AUTO-APRENDIZAJE</p></div>', unsafe_allow_html=True)
 if st.query_params.get("zt_token"):
     st.caption("✅ Este dispositivo está activado: guarda ESTA página en Favoritos o en la pantalla de inicio "
                "(con la dirección completa, tal como está arriba) y la próxima vez entrarás directo, sin escribir la clave.")
@@ -1547,28 +1547,27 @@ def zona_dinamica(codigo_f, tipo_f):
     confianza_actual = int(señal['confianza'])
     segundos_restantes_op = 59 - segundo_actual
 
-    entrada_html = ""
-    if st.session_state.precio_real_entrada:
-        entrada_html = f'<div class="info-panel">Entrada: <strong>{round(st.session_state.precio_real_entrada, 5)}</strong></div>'
-
     # Precio EN VIVO durante la operacion (v3.6.1): la Entrada es la foto
     # del segundo :00 y no se mueve; este precio si se mueve, para que el
     # usuario compare contra IQ Option en el mismo instante y vea si va
-    # ganando o perdiendo y por cuanto.
-    vivo_html = ""
+    # ganando o perdiendo y por cuanto. En v3.11.1 va en filas de datos
+    # junto al radar (misma tarjeta compacta de las fases 1 y 2).
+    _ent = st.session_state.precio_real_entrada
     _precio_ahora = obtener_precio_actual(codigo_f, tipo_f)
-    if _precio_ahora and st.session_state.precio_real_entrada:
-        _ent = float(st.session_state.precio_real_entrada)
-        _dif = float(_precio_ahora) - _ent
+    _vivo_txt = "--.-----"
+    _estado_txt = "--"
+    _estado_clase = ""
+    if _precio_ahora and _ent:
+        _dif = float(_precio_ahora) - float(_ent)
         _va_ganando = (_dif > 0) if es_call else (_dif < 0)
         if tipo_f == "forex":
             _pip = 0.01 if "JPY" in str(codigo_f) else 0.0001
             _dif_txt = f"{_dif / _pip:+.1f} pips"
         else:
-            _dif_txt = f"{_dif / _ent * 100:+.3f}%"
-        vivo_html = (f'<div class="info-panel">Precio ahora: <strong>{round(float(_precio_ahora), 5)}</strong>'
-                     f' · Diferencia: <strong>{_dif_txt}</strong>'
-                     f' · Vas <strong>{"GANANDO" if _va_ganando else "PERDIENDO"}</strong></div>')
+            _dif_txt = f"{_dif / float(_ent) * 100:+.3f}%"
+        _vivo_txt = _fmt_precio(_precio_ahora, codigo_f)
+        _estado_txt = f"{'GANANDO' if _va_ganando else 'PERDIENDO'} · {_dif_txt}"
+        _estado_clase = "verde" if _va_ganando else "rojo"
 
     clase_box = "signal-call" if es_call else "signal-put"
     clase_radar = "radar-green" if es_call else "radar-red"
@@ -1580,9 +1579,15 @@ def zona_dinamica(codigo_f, tipo_f):
         + nivel_html_de(señal)
         + f"""
         <div class="signal-box {clase_box}">{tipo_signal}</div>
-        {entrada_html}
-        {vivo_html}
-        <div class="radar-container"><div class="radar {clase_radar}"><div class="radar-center"><div class="radar-number {clase_numero}">{segundos_restantes_op}</div><div class="radar-label">EXPIRACIÓN</div></div></div></div>
+        <div class="live-grid">
+          <div class="radar-container"><div class="radar {clase_radar}"><div class="radar-center"><div class="radar-number {clase_numero}">{segundos_restantes_op}</div><div class="radar-label">EXPIRACIÓN</div></div></div></div>
+          <div class="data-rows">
+            <div class="data-row"><span>PUNTO DE ENTRADA</span><strong>{_fmt_precio(_ent, codigo_f)}</strong></div>
+            <div class="data-row"><span>● EN VIVO</span><strong>{_vivo_txt}</strong></div>
+            <div class="data-row"><span>Vas</span><strong class="{_estado_clase}">{_estado_txt}</strong></div>
+            <div class="data-row"><span>HORA SEÑAL</span><strong>{hora_actual}</strong></div>
+          </div>
+        </div>
         """,
         unsafe_allow_html=True,
     )
