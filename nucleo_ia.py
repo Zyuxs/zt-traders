@@ -575,6 +575,83 @@ def aplicar_lecciones(nivel, fv, direccion, par, lecciones):
             _baja(f"{par} {direccion} castigado por sus resultados")
     return orden[idx], motivos
 
+# ============================================================
+# CATALOGADOR ZT (v3.14)
+# ============================================================
+# La idea del Catalogador de DAM Trader, en version honesta: catalogar
+# que par x direccion esta funcionando con resultados MEDIDOS (no
+# prometidos), separando etiquetas limpias de sucias y con el filtro
+# "solo con tendencia" de ellos. Estados con muestra minima para no
+# concluir de ruido: OPERABLE exige >=20 ops y acierto >= 53,8% (el
+# punto de equilibrio con payout 86% en IQ Option).
+
+NOMBRES_REGIMEN = {0: "Rango", 1: "Tendencia alcista", 2: "Tendencia bajista", 3: "Volátil"}
+
+
+def _regimen_de(op):
+    f = op.get("features")
+    if f and len(f) > 24:
+        try:
+            return int(round(float(f[24])))
+        except (TypeError, ValueError):
+            return None
+    return None
+
+
+def catalogo(historial, solo_limpias=False, solo_tendencia=False):
+    """Efectividad medida por par x direccion (+ resumen por regimen).
+
+    Devuelve {"total", "filas", "regimenes", "mejor", "peor"}; cada fila:
+    par, direccion, ops, ganadas, perdidas, acierto, limpias, estado."""
+    limpias_set = ("Twelve Data", "Binance")
+    validas = [h for h in (historial or []) if h.get("resultado") in ("GANADA", "PERDIDA")]
+    if solo_limpias:
+        validas = [h for h in validas if h.get("fuente_datos") in limpias_set]
+    if solo_tendencia:
+        validas = [h for h in validas if _regimen_de(h) in (1, 2)]
+
+    grupos = {}
+    for h in validas:
+        k = (h.get("par") or "?", h.get("señal") or "?")
+        g = grupos.setdefault(k, {"ops": 0, "g": 0, "limpias": 0})
+        g["ops"] += 1
+        if h["resultado"] == "GANADA":
+            g["g"] += 1
+        if h.get("fuente_datos") in limpias_set:
+            g["limpias"] += 1
+
+    filas = []
+    for (par, sen), g in grupos.items():
+        ac = (g["g"] / g["ops"] * 100) if g["ops"] else 0.0
+        if g["ops"] < 10:
+            estado = "⚪ SIN MUESTRA"
+        elif ac >= 53.8 and g["ops"] >= 20:
+            estado = "🟢 OPERABLE"
+        elif ac < 45 and g["ops"] >= 15:
+            estado = "🔴 DESCANSAR"
+        else:
+            estado = "🟡 EN OBSERVACIÓN"
+        filas.append({"par": par, "direccion": sen, "ops": g["ops"], "ganadas": g["g"],
+                      "perdidas": g["ops"] - g["g"], "acierto": round(ac, 1),
+                      "limpias": g["limpias"], "estado": estado})
+    filas.sort(key=lambda f: (-f["ops"], -f["acierto"]))
+
+    por_reg = {}
+    for h in validas:
+        r = _regimen_de(h)
+        nombre = NOMBRES_REGIMEN.get(r, "Sin dato")
+        a, b = por_reg.get(nombre, (0, 0))
+        por_reg[nombre] = (a + 1, b + (1 if h["resultado"] == "GANADA" else 0))
+    regimenes = [{"regimen": n, "ops": a, "acierto": round(b / a * 100, 1) if a else 0.0}
+                 for n, (a, b) in sorted(por_reg.items(), key=lambda kv: -kv[1][0])]
+
+    con_muestra = [f for f in filas if f["ops"] >= 10]
+    mejor = max(con_muestra, key=lambda f: f["acierto"]) if con_muestra else None
+    peor = min(con_muestra, key=lambda f: f["acierto"]) if con_muestra else None
+    return {"total": len(validas), "filas": filas, "regimenes": regimenes,
+            "mejor": mejor, "peor": peor}
+
+
 def entrenar_modelo_vivo(historial):
     """Cerebro EN VIVO: aprende de las operaciones reales de la app.
 
