@@ -662,6 +662,16 @@ def analizar_par(codigo_par, tipo="crypto"):
                 nucleo_ia.lecciones_aprendidas(st.session_state.get("hist_cache", [])))
             for _m in _motivos_lec:
                 advertencias.append(f"📓 Lección de la experiencia: {_m} — nivel ajustado")
+            # TERMOMETRO DE TERRENO (v3.15): si el contexto se parece poco
+            # a lo que el cerebro en vivo aprendio (terreno desconocido),
+            # el nivel baja un escalón mas, como con las lecciones.
+            if fuente_modelo.startswith("en vivo"):
+                _dis = nucleo_ia.disimilitud(info_modelo, vector_base)
+                if _dis and _dis["desconocido"]:
+                    _orden_n = ["Baja", "Media", "Alta"]
+                    if nivel in _orden_n:
+                        nivel = _orden_n[max(0, _orden_n.index(nivel) - 1)]
+                    advertencias.append(f"🌡️ Termómetro: contexto poco parecido a lo que el cerebro aprendió (distancia {_dis['distancia']} > {_dis['umbral']}) — nivel ajustado")
             if direccion != direccion_puntaje:
                 razones.append(f"La IA elige {direccion} (el puntaje decía {direccion_puntaje})")
             razones.append(f"IA: SUBE {int(round(p_call * 100))}% vs BAJA {int(round(p_put * 100))}%")
@@ -698,6 +708,16 @@ def analizar_par(codigo_par, tipo="crypto"):
             nucleo_ia.lecciones_aprendidas(st.session_state.get("hist_cache", [])))
         for _m in _motivos_lec:
             advertencias.append(f"📓 Lección de la experiencia: {_m} — nivel ajustado")
+        # TERMOMETRO DE TERRENO (v3.15): tambien aplica cuando manda el
+        # puntaje tecnico (el cerebro observa): el terreno se mide igual.
+        _info_vivo_t = modelo_vivo_info()
+        if _info_vivo_t is not None:
+            _dis = nucleo_ia.disimilitud(_info_vivo_t, vector_base)
+            if _dis and _dis["desconocido"]:
+                _orden_n = ["Baja", "Media", "Alta"]
+                if nivel in _orden_n:
+                    nivel = _orden_n[max(0, _orden_n.index(nivel) - 1)]
+                advertencias.append(f"🌡️ Termómetro: contexto poco parecido a lo que el cerebro aprendió (distancia {_dis['distancia']} > {_dis['umbral']}) — nivel ajustado")
         razones.append(f"Régimen: {regimen_nombre} · Confluencia {conf}✓ · Nivel {nivel}")
         if tipo != "crypto" and modelo_vivo_info() is None:
             _validas = len(nucleo_ia.ops_validas_para_vivo(st.session_state.hist_cache))
@@ -954,7 +974,7 @@ st.markdown(CSS, unsafe_allow_html=True)
 # ---------------- Parte estatica (ya NO se recarga cada segundo) ----------------
 
 st.markdown('<div class="main-container">', unsafe_allow_html=True)
-st.markdown(f'<div class="header"><span class="badge-version">v3.14</span><h1>⚡ ZT TRADERS PRO</h1><p>User: {st.session_state.usuario_actual} · IA AUTO-APRENDIZAJE</p></div>', unsafe_allow_html=True)
+st.markdown(f'<div class="header"><span class="badge-version">v3.15</span><h1>⚡ ZT TRADERS PRO</h1><p>User: {st.session_state.usuario_actual} · IA AUTO-APRENDIZAJE</p></div>', unsafe_allow_html=True)
 if st.query_params.get("zt_token"):
     st.caption("✅ Este dispositivo está activado: guarda ESTA página en Favoritos o en la pantalla de inicio "
                "(con la dirección completa, tal como está arriba) y la próxima vez entrarás directo, sin escribir la clave.")
