@@ -710,8 +710,54 @@ def entrenar_modelo_vivo(historial):
         "cobertura_filtro_0.55_%": round(float(con_filtro.mean()) * 100, 1),
         "brier": round(brier, 4),
     }
+    # TERMOMETRO DE TERRENO (v3.15, idea del indice de disimilitud de
+    # FreqAI de Freqtrade): se guarda como es el terreno con el que el
+    # cerebro aprendio (media y desviacion por variable + la distancia
+    # tipica de sus propios ejemplos), para poder avisar cuando una
+    # señal nueva cae en un contexto que el modelo nunca vio.
+    Xb = np.nan_to_num(np.array([h["features"][:len(FEATURES_BASE)] for h in ops], dtype=float),
+                       nan=0.0, posinf=0.0, neginf=0.0)
+    _media = Xb.mean(axis=0)
+    _desv = Xb.std(axis=0) + 1e-9
+    _dists = np.sqrt((((Xb - _media) / _desv) ** 2).mean(axis=1))
+    terreno = {"media": _media.tolist(), "desv": _desv.tolist(),
+               "umbral": float(np.percentile(_dists, 90))}
     return {"modelo": modelo, "features": FEATURES_VIVO,
-            "metricas": metricas, "tipo": "vivo"}
+            "metricas": metricas, "tipo": "vivo", "terreno": terreno}
+
+
+def disimilitud(info_modelo, vector_base):
+    """Distancia del contexto actual al terreno aprendido por el cerebro
+    en vivo: raiz del promedio de z-scores al cuadrado sobre las 26
+    variables base. Devuelve {"distancia", "umbral", "desconocido"} o
+    None si el modelo no trae estadisticas de terreno (entrenado antes
+    de la v3.15: el termometro se activa en su proximo reentrenamiento,
+    que ocurre solo cada 20 operaciones nuevas)."""
+    if not info_modelo:
+        return None
+    t = info_modelo.get("terreno")
+    if not t:
+        return None
+    try:
+        x = np.nan_to_num(np.array(list(vector_base)[:len(FEATURES_BASE)], dtype=float),
+                          nan=0.0, posinf=0.0, neginf=0.0)
+        media = np.array(t["media"], dtype=float)
+        desv = np.array(t["desv"], dtype=float)
+        z = (x - media) / desv
+        dist = float(np.sqrt((z ** 2).mean()))
+        z_max = float(np.abs(z).max())
+        umbral = float(t["umbral"])
+        # Desconocido si el conjunto se aleja (distancia RMS sobre el
+        # percentil 90 del entrenamiento) O si UNA sola variable esta en
+        # un valor que el entrenamiento practicamente nunca vio
+        # (|z| > 4,5: en ~200 ejemplos x 26 variables ocurre ~0 veces);
+        # sin esta segunda regla, un extremo en una variable se diluye
+        # al promediar las 26.
+        return {"distancia": round(dist, 2), "umbral": round(umbral, 2),
+                "z_max": round(z_max, 1),
+                "desconocido": bool(dist > umbral or z_max > 4.5)}
+    except Exception:
+        return None
 
 def cargar_modelo_vivo(ruta_pkl="modelo_vivo.pkl"):
     """Como cargar_modelo pero para el modelo en vivo (otras variables)."""
