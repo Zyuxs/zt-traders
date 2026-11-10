@@ -954,7 +954,7 @@ st.markdown(CSS, unsafe_allow_html=True)
 # ---------------- Parte estatica (ya NO se recarga cada segundo) ----------------
 
 st.markdown('<div class="main-container">', unsafe_allow_html=True)
-st.markdown(f'<div class="header"><span class="badge-version">v3.13</span><h1>⚡ ZT TRADERS PRO</h1><p>User: {st.session_state.usuario_actual} · IA AUTO-APRENDIZAJE</p></div>', unsafe_allow_html=True)
+st.markdown(f'<div class="header"><span class="badge-version">v3.14</span><h1>⚡ ZT TRADERS PRO</h1><p>User: {st.session_state.usuario_actual} · IA AUTO-APRENDIZAJE</p></div>', unsafe_allow_html=True)
 if st.query_params.get("zt_token"):
     st.caption("✅ Este dispositivo está activado: guarda ESTA página en Favoritos o en la pantalla de inicio "
                "(con la dirección completa, tal como está arriba) y la próxima vez entrarás directo, sin escribir la clave.")
@@ -1296,6 +1296,45 @@ with st.expander("📈 Aprendizaje en vivo — así va aprendiendo la app"):
             st.dataframe(_tabla_vivo("nivel", "nivel"), use_container_width=True, hide_index=True)
             st.caption("Acierto por tipo")
             st.dataframe(_tabla_vivo("tipo", "tipo"), use_container_width=True, hide_index=True)
+
+# ---------------- Catalogador ZT (v3.14) ----------------
+# La idea del panel de DAM Trader en version honesta: efectividad MEDIDA
+# por par x direccion (con las perdidas visibles), filtros de etiquetas
+# limpias y "solo con tendencia", y estados con muestra minima.
+with st.expander("📚 Catalogador ZT — qué está funcionando, medido", expanded=False):
+    _nombres_par = {v["codigo"]: k for k, v in PARES.items()}
+    _cf1, _cf2 = st.columns(2)
+    with _cf1:
+        _cat_limpias = st.checkbox("🧼 Solo etiquetas limpias (Twelve Data/Binance)", value=True, key="cat_solo_limpias")
+    with _cf2:
+        _cat_tend = st.checkbox("📈 Solo con tendencia", value=False, key="cat_solo_tendencia")
+    _cat = nucleo_ia.catalogo(st.session_state.hist_cache, solo_limpias=_cat_limpias, solo_tendencia=_cat_tend)
+    if _cat["total"] < 10:
+        st.caption(f"Muestra insuficiente con estos filtros: {_cat['total']} operaciones. El catálogo se llena solo, operando.")
+    else:
+        _m, _p = _cat["mejor"], _cat["peor"]
+        if _m:
+            _mn = _nombres_par.get(_m["par"], _m["par"])
+            if _m["estado"].startswith("🟢"):
+                st.success(f"🏆 Tu mejor ficha medida: **{_mn} {_m['direccion']}** — {_m['acierto']}% en {_m['ops']} operaciones. Supera el 53,8% de equilibrio.")
+            else:
+                st.info(f"🏆 La ficha menos mala por ahora: **{_mn} {_m['direccion']}** — {_m['acierto']}% en {_m['ops']} operaciones. Ninguna supera aún el 53,8% con muestra suficiente.")
+            if _mn in PARES and st.button(f"🎯 Operar {_mn} ahora", key="cat_operar_mejor", use_container_width=True):
+                st.session_state.par_sel = _mn
+                reiniciar_ciclo()
+                st.rerun()
+        if _p and _p["estado"].startswith("🔴"):
+            st.warning(f"🔴 Para descansar: **{_nombres_par.get(_p['par'], _p['par'])} {_p['direccion']}** — {_p['acierto']}% en {_p['ops']} operaciones.")
+        _filas_cat = [{"Par": _nombres_par.get(f["par"], f["par"]), "Dirección": f["direccion"], "Ops": f["ops"],
+                       "W": f["ganadas"], "L": f["perdidas"], "Acierto %": f["acierto"],
+                       "Limpias": f["limpias"], "Estado": f["estado"]} for f in _cat["filas"]]
+        st.dataframe(pd.DataFrame(_filas_cat), use_container_width=True, hide_index=True)
+        if _cat["regimenes"]:
+            st.caption("Acierto por régimen de mercado (con los mismos filtros):")
+            st.dataframe(pd.DataFrame([{"Régimen": r["regimen"], "Ops": r["ops"], "Acierto %": r["acierto"]} for r in _cat["regimenes"]]),
+                         use_container_width=True, hide_index=True)
+        st.caption("🟢 OPERABLE = ≥20 ops y acierto ≥53,8% · 🔴 DESCANSAR = ≥15 ops y acierto <45% · "
+                   "🟡 EN OBSERVACIÓN = muestra corta o acierto intermedio · ⚪ SIN MUESTRA = <10 ops (no concluir).")
 
 # ---------------- Helpers de la zona dinamica ----------------
 
