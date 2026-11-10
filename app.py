@@ -546,11 +546,53 @@ def obtener_datos_forex(codigo_par):
     dfy = obtener_datos_yahoo(codigo_par)
     return dfy, "Yahoo Finance"
 
-def obtener_precio_actual(codigo_par, tipo="crypto"):
+# ---------------- Finnhub: precio juez forex (v3.16) ----------------
+# El plan gratuito de Finnhub limita por MINUTO (60 llamadas/min), no
+# por dia: no existe el "se acabaron los creditos a mediodia" de Twelve
+# Data. Entra como precio JUEZ (congelar la entrada, linea EN VIVO y
+# precio de cierre); la serie de velas la sigue trayendo Twelve Data.
+# Lleva etiqueta propia "Finnhub": NO cuenta como etiqueta limpia hasta
+# verificar en vivo que su precio va parejo con IQ Option (la prueba de
+# los 0,2 pips que aprobo Twelve Data). Y desde esta version la etiqueta
+# de cada operacion nombra a quien la JUZGO de verdad (antes nombraba
+# la fuente de la serie, que no siempre era la misma que el precio).
+
+def _finnhub_key():
+    return _secret("finnhub_api_key", "FINNHUB_API_KEY")
+
+def _simbolo_finnhub(codigo_yahoo):
+    base = str(codigo_yahoo).replace("=X", "")
+    return f"OANDA:{base[:3]}_{base[3:6]}" if len(base) >= 6 else base
+
+@st.cache_data(ttl=8, show_spinner=False)
+def _precio_finnhub(codigo_yahoo):
+    key = _finnhub_key()
+    if not key:
+        return None
+    try:
+        r = sesion_http().get(
+            "https://finnhub.io/api/v1/quote",
+            params={"symbol": _simbolo_finnhub(codigo_yahoo), "token": key},
+            timeout=8)
+        c = r.json().get("c")
+        return float(c) if c else None
+    except Exception:
+        return None
+
+def obtener_precio_actual_con_fuente(codigo_par, tipo="crypto"):
+    """(precio, fuente): la fuente nombra a quien dio el precio de verdad."""
     if tipo == "crypto":
-        return _precio_binance(codigo_par)
+        return _precio_binance(codigo_par), "Binance"
+    precio = _precio_finnhub(codigo_par)
+    if precio is not None:
+        return precio, "Finnhub"
     precio = _precio_twelvedata(codigo_par)
-    return precio if precio is not None else _precio_yahoo(codigo_par)
+    if precio is not None:
+        return precio, "Twelve Data"
+    return _precio_yahoo(codigo_par), "Yahoo Finance"
+
+def obtener_precio_actual(codigo_par, tipo="crypto"):
+    return obtener_precio_actual_con_fuente(codigo_par, tipo)[0]
 
 # ---------------- Analisis de señal (por puntaje) ----------------
 
@@ -974,7 +1016,7 @@ st.markdown(CSS, unsafe_allow_html=True)
 # ---------------- Parte estatica (ya NO se recarga cada segundo) ----------------
 
 st.markdown('<div class="main-container">', unsafe_allow_html=True)
-st.markdown(f'<div class="header"><span class="badge-version">v3.15</span><h1>⚡ ZT TRADERS PRO</h1><p>User: {st.session_state.usuario_actual} · IA AUTO-APRENDIZAJE</p></div>', unsafe_allow_html=True)
+st.markdown(f'<div class="header"><span class="badge-version">v3.16</span><h1>⚡ ZT TRADERS PRO</h1><p>User: {st.session_state.usuario_actual} · IA AUTO-APRENDIZAJE</p></div>', unsafe_allow_html=True)
 if st.query_params.get("zt_token"):
     st.caption("✅ Este dispositivo está activado: guarda ESTA página en Favoritos o en la pantalla de inicio "
                "(con la dirección completa, tal como está arriba) y la próxima vez entrarás directo, sin escribir la clave.")
@@ -1181,6 +1223,8 @@ if st.session_state.usuario_actual.startswith("👑"):
         if _uso_td and _uso_td[0] is not None:
             st.caption(f"📊 Créditos Twelve Data usados hoy: {_uso_td[0]} de {_uso_td[1]}. "
                        f"Si se acaban, la app cae a Yahoo (precio retrasado) hasta el día siguiente.")
+        st.caption("📡 Finnhub (precio juez forex): " + ("clave configurada ✓ — juzga entradas y cierres sin gastar créditos Twelve."
+                   if _finnhub_key() else "sin clave en Secrets (finnhub_api_key); el precio juez sigue siendo Twelve/Yahoo."))
         if os.path.exists("historial_respaldo_auto.json"):
             with open("historial_respaldo_auto.json", "r", encoding="utf-8") as _f:
                 st.download_button("🛟 Descargar copia automática pre-Reset (historial)",
@@ -1277,6 +1321,11 @@ with st.expander("📈 Aprendizaje en vivo — así va aprendiendo la app"):
         st.caption(f"🎯 Operaciones con etiqueta limpia (juzgadas con precio sincronizado de Twelve Data o Binance): "
                    f"{_limpias} de {_n_val}. Al llegar a {nucleo_ia.MIN_OPS_MODELO_VIVO} limpias, el cerebro entrenará solo con esas "
                    f"y dejará fuera las que se juzgaron con el precio retrasado de Yahoo.")
+        _n_finnhub = sum(1 for _h in _validas if _h.get("fuente_datos") == "Finnhub")
+        if _n_finnhub:
+            st.caption(f"📡 Operaciones juzgadas por Finnhub (precio en vivo sin techo diario): {_n_finnhub} de {_n_val}. "
+                       f"Su etiqueta está EN VERIFICACIÓN: contará como limpia cuando se confirme en vivo que su precio "
+                       f"va parejo con IQ Option (como se hizo con Twelve Data).")
         _postura, _post_wr, _post_n = nucleo_ia.postura_sesion(_hist)
         if _postura == "REDUCIR":
             st.warning(f"🧭 Postura de la sesión: **REDUCIR** — el acierto reciente es {_post_wr}% en las últimas {_post_n} operaciones. "
@@ -1422,7 +1471,7 @@ def cerrar_operacion(codigo_op, tipo_op):
     if señal is None or señal.get('señal') == 'ESPERA' or not entrada or st.session_state.resultado_guardado:
         st.session_state.resultado_guardado = True
         return
-    precio_actual = obtener_precio_actual(codigo_op, tipo_op)
+    precio_actual, _fuente_precio = obtener_precio_actual_con_fuente(codigo_op, tipo_op)
     resultado = 'PERDIDA'
     if precio_actual is not None:
         # EMPATE (v3.9.1): si el cierre es IGUAL a la entrada, en IQ Option
@@ -1439,7 +1488,7 @@ def cerrar_operacion(codigo_op, tipo_op):
                 resultado = 'GANADA'
     aprender(señal['señal'], resultado, señal.get('indicadores', {}), entrada, señal.get('features'),
              par=codigo_op, tipo=tipo_op, nivel=señal.get('nivel'), confianza=señal.get('confianza'),
-             fuente=señal.get('fuente'))
+             fuente=(_fuente_precio or señal.get('fuente')))
     st.session_state.resultado_guardado = True
 
 # ---------------- Zona dinamica: fragmento cada 1s ----------------
