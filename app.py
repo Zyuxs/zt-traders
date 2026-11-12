@@ -917,6 +917,10 @@ def ia_configurar_desde_secrets():
             api_key=_secret("ia_api_key", "IA_API_KEY") or "",
             modelo=_secret("ia_modelo", "IA_MODELO"),
             base_url=_secret("ia_base_url", "IA_BASE_URL"),
+            proveedor_respaldo=_secret("ia_proveedor_respaldo", "IA_PROVEEDOR_RESPALDO"),
+            api_key_respaldo=_secret("ia_api_key_respaldo", "IA_API_KEY_RESPALDO"),
+            modelo_respaldo=_secret("ia_modelo_respaldo", "IA_MODELO_RESPALDO"),
+            base_url_respaldo=_secret("ia_base_url_respaldo", "IA_BASE_URL_RESPALDO"),
         )
         return razonamiento_ia.disponible()
     except Exception:
@@ -1082,7 +1086,7 @@ st.markdown(CSS, unsafe_allow_html=True)
 # ---------------- Parte estatica (ya NO se recarga cada segundo) ----------------
 
 st.markdown('<div class="main-container">', unsafe_allow_html=True)
-st.markdown(f'<div class="header"><span class="badge-version">v3.17.5</span><h1>⚡ ZT TRADERS PRO</h1><p>User: {st.session_state.usuario_actual} · IA AUTO-APRENDIZAJE</p></div>', unsafe_allow_html=True)
+st.markdown(f'<div class="header"><span class="badge-version">v3.17.6</span><h1>⚡ ZT TRADERS PRO</h1><p>User: {st.session_state.usuario_actual} · IA AUTO-APRENDIZAJE</p></div>', unsafe_allow_html=True)
 if st.query_params.get("zt_token"):
     st.caption("✅ Este dispositivo está activado: guarda ESTA página en Favoritos o en la pantalla de inicio "
                "(con la dirección completa, tal como está arriba) y la próxima vez entrarás directo, sin escribir la clave.")
@@ -1233,6 +1237,12 @@ if st.session_state.usuario_actual.startswith("👑"):
             st.info("Sin clave de IA configurada. En los Secrets de Streamlit agrega: ia_api_key = \"tu clave gratis\" e ia_proveedor = \"gemini\" (o \"groq\" / \"openrouter\"). Claves gratis: Google AI Studio (aistudio.google.com) o Groq (console.groq.com).")
         else:
             st.caption(f"IA conectada (proveedor: {_secret('ia_proveedor', 'IA_PROVEEDOR') or 'gemini'}). Segunda opinión por señal: {'ACTIVADA' if _ia_bool('ia_segunda_opinion') else 'apagada — actívala con ia_segunda_opinion = true en Secrets'}. Clima de sesión: {'ACTIVADO' if _ia_bool('ia_clima') else 'apagado — ia_clima = true'}.")
+            try:
+                _hay_respaldo = razonamiento_ia.respaldo_configurado()
+            except Exception:
+                _hay_respaldo = False
+            if _hay_respaldo:
+                st.caption("Respaldo IA configurado: si el proveedor principal llega al límite, la app sigue con el segundo proveedor sin interrumpirse.")
             if st.button("🧠 Analizar mi historial con IA", width="stretch"):
                 _hist = st.session_state.hist_cache
                 _tot = len(_hist)
@@ -1267,6 +1277,12 @@ if st.session_state.usuario_actual.startswith("👑"):
                     _informe = razonamiento_ia.analizar_historial("\n".join(_lineas))
                 if _informe:
                     st.markdown(_informe)
+                    try:
+                        _prov_usado = razonamiento_ia.ultimo_proveedor()
+                    except Exception:
+                        _prov_usado = ""
+                    if _prov_usado:
+                        st.caption(f"Informe generado con {_prov_usado}.")
                 else:
                     # v3.17.5: el modulo ahora dice LA CAUSA (sobrecarga,
                     # limite, clave...). Si el modulo del repo es viejo y no
