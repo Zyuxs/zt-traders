@@ -116,6 +116,31 @@
 #     mide. La primera foto se guarda al llegar a 50 validas (o con el
 #     boton "Guardar foto ahora"); evolucion.json se descarga desde Respaldo
 #     y se respalda solo antes de un Reset, como el historial.
+# --- v3.18: MEMORIA DE PATRONES + CALIBRACION EMPIRICA (pedido de Jose:
+#     "que aprenda de todas las perdidas y ganancias mirando las velas") ---
+# 31) Memoria de patrones en nucleo_ia: mide el acierto de cada contexto de
+#     accion del precio (pin bar, envolvente, ruptura, gatillo de rechazo,
+#     distancia a niveles, mecha, inside bar) con las operaciones reales y
+#     mueve el nivel de la señal nueva como maximo un escalon. Sin reglas
+#     fijas de libro: lo que midio, con muestra minima (20+) y suavizado.
+# 32) Calibracion empirica: el nivel sale del acierto MEDIDO del tramo de
+#     confianza mostrada cuando el tramo tiene muestra; si no, las reglas
+#     de siempre. El numero de confianza guardado no se toca (calibrarlo
+#     realimentaria la tabla). El panel muestra ambas tablas.
+# 33) Lecciones con evidencia: ya no nacen de la autopsia de perdidas
+#     (volumen != riesgo) sino de comparar aciertos con muestra minima;
+#     la leccion de rango sin gatillo y la contra-tendencia quedan
+#     dormidas hasta que la evidencia las respalde (hoy no la tienen).
+# 34) Espejo hacia adelante: espejo_inicio.json marca el punto de partida
+#     y el panel mide el espejo SOLO con operaciones nuevas desde v3.18.
+# --- v3.18.1: INDICADOR DEL JUEZ EN VIVO (confusion de Jose 22:21/22:25:
+#     la app decia GANANDO con precio retrasado y no se veia la fuente) ---
+# 35) La tarjeta de la operacion en curso muestra una fila nueva, JUEZ DEL
+#     PRECIO, con la fuente que esta dando el precio EN VIVO en ese
+#     instante (Finnhub / Twelve Data / Binance / Yahoo Finance). Si es
+#     Yahoo lleva "⚠️ retrasado". No cuesta llamadas extra: la linea EN
+#     VIVO ya usaba la misma cadena con cache; ahora tambien se muestra
+#     la fuente que esa cadena devuelve.
 # ============================================================
 import streamlit as st
 import streamlit.components.v1 as components
@@ -137,6 +162,7 @@ import razonamiento_ia
 st.set_page_config(page_title="ZT TRADERS INSTITUTIONAL PRO", layout="wide", page_icon="⚡")
 
 ARCHIVO_HISTORIAL = "historial.json"
+ARCHIVO_ESPEJO = "espejo_inicio.json"  # marca de inicio del espejo hacia adelante (v3.18)
 ARCHIVO_EVOLUCION = "evolucion.json"  # fotos del Panel de Evolucion (v3.17)
 ARCHIVO_PATRONES = "patrones.json"
 ARCHIVO_LICENCIAS = "licencias.json"
@@ -754,7 +780,15 @@ def analizar_par(codigo_par, tipo="crypto"):
                 advertencias += [f"Bloqueo: {b}" for b in bloqueos]
             if conf < 2:
                 advertencias.append(f"Confluencia baja ({conf}/2)")
-            if p >= 0.58 and conf >= 2 and not bloqueos:
+            # CALIBRACION EMPIRICA (v3.18): si el tramo de confianza de esta
+            # señal tiene muestra suficiente, el nivel sale del acierto
+            # MEDIDO de ese tramo en operaciones reales, no de la regla.
+            _nivel_cal, _nota_cal = nucleo_ia.nivel_calibrado(
+                confianza, st.session_state.get("hist_cache", []))
+            if _nivel_cal is not None:
+                nivel = _nivel_cal
+                razones.append(_nota_cal)
+            elif p >= 0.58 and conf >= 2 and not bloqueos:
                 nivel = "Alta"
             elif p >= 0.54:
                 nivel = "Media"
@@ -767,6 +801,13 @@ def analizar_par(codigo_par, tipo="crypto"):
                 nucleo_ia.lecciones_aprendidas(st.session_state.get("hist_cache", [])))
             for _m in _motivos_lec:
                 advertencias.append(f"📓 Lección de la experiencia: {_m} — nivel ajustado")
+            # MEMORIA DE PATRONES (v3.18): el contexto de accion del precio
+            # de esta vela (pin bar, ruptura, nivel...) sube o baja el nivel
+            # segun lo que MIDIO en las operaciones reales de la app.
+            _mem = nucleo_ia.memoria_patrones(st.session_state.get("hist_cache", []))
+            nivel, _motivos_mem = nucleo_ia.aplicar_memoria(nivel, fv, direccion, _mem)
+            for _m in _motivos_mem:
+                advertencias.append(f"📊 Memoria de patrones: {_m}")
             # TERMOMETRO DE TERRENO (v3.15): si el contexto se parece poco
             # a lo que el cerebro en vivo aprendio (terreno desconocido),
             # el nivel baja un escalón mas, como con las lecciones.
@@ -802,7 +843,13 @@ def analizar_par(codigo_par, tipo="crypto"):
             advertencias += [f"Bloqueo: {b}" for b in bloqueos]
         if conf < 2:
             advertencias.append(f"Confluencia baja ({conf}/2)")
-        if confianza >= 70 and conf >= 2 and not bloqueos:
+        # CALIBRACION EMPIRICA (v3.18): igual que en la rama con modelo.
+        _nivel_cal, _nota_cal = nucleo_ia.nivel_calibrado(
+            confianza, st.session_state.get("hist_cache", []))
+        if _nivel_cal is not None:
+            nivel = _nivel_cal
+            razones.append(_nota_cal)
+        elif confianza >= 70 and conf >= 2 and not bloqueos:
             nivel = "Alta"
         elif confianza >= 58:
             nivel = "Media"
@@ -813,6 +860,11 @@ def analizar_par(codigo_par, tipo="crypto"):
             nucleo_ia.lecciones_aprendidas(st.session_state.get("hist_cache", [])))
         for _m in _motivos_lec:
             advertencias.append(f"📓 Lección de la experiencia: {_m} — nivel ajustado")
+        # MEMORIA DE PATRONES (v3.18): igual que en la rama con modelo.
+        _mem = nucleo_ia.memoria_patrones(st.session_state.get("hist_cache", []))
+        nivel, _motivos_mem = nucleo_ia.aplicar_memoria(nivel, fv, direccion, _mem)
+        for _m in _motivos_mem:
+            advertencias.append(f"📊 Memoria de patrones: {_m}")
         # TERMOMETRO DE TERRENO (v3.15): tambien aplica cuando manda el
         # puntaje tecnico (el cerebro observa): el terreno se mide igual.
         _info_vivo_t = modelo_vivo_info()
@@ -1086,7 +1138,7 @@ st.markdown(CSS, unsafe_allow_html=True)
 # ---------------- Parte estatica (ya NO se recarga cada segundo) ----------------
 
 st.markdown('<div class="main-container">', unsafe_allow_html=True)
-st.markdown(f'<div class="header"><span class="badge-version">v3.17.6</span><h1>⚡ ZT TRADERS PRO</h1><p>User: {st.session_state.usuario_actual} · IA AUTO-APRENDIZAJE</p></div>', unsafe_allow_html=True)
+st.markdown(f'<div class="header"><span class="badge-version">v3.18.1</span><h1>⚡ ZT TRADERS PRO</h1><p>User: {st.session_state.usuario_actual} · IA AUTO-APRENDIZAJE</p></div>', unsafe_allow_html=True)
 if st.query_params.get("zt_token"):
     st.caption("✅ Este dispositivo está activado: guarda ESTA página en Favoritos o en la pantalla de inicio "
                "(con la dirección completa, tal como está arriba) y la próxima vez entrarás directo, sin escribir la clave.")
@@ -1484,13 +1536,55 @@ if st.session_state.usuario_actual.startswith("👑"):
                 st.dataframe(pd.DataFrame(_filas_aut), width="stretch", hide_index=True)
             _lecciones = nucleo_ia.lecciones_aprendidas(_hist)
             if _lecciones:
-                st.caption("📓 Lecciones de la experiencia — lo que la app aprendió de sus propias pérdidas. "
-                           "Ya se aplican solas a las señales nuevas (bajan el nivel en los contextos que castigan):")
+                st.caption("📓 Lecciones de la experiencia — lo que la app aprendió de sus victorias Y derrotas, "
+                           "comparando aciertos con muestra suficiente. Ya se aplican solas a las señales nuevas "
+                           "(bajan el nivel en los contextos que midieron peor):")
                 for _l in _lecciones:
                     st.info(f"**{_l['titulo']}**\n\n🔍 Evidencia: {_l['evidencia']}.\n\n🛠 Ajuste activo: {_l['efecto']}")
-            elif _n_perdidas >= 10:
-                st.caption("📓 Todavía sin lecciones automáticas: se activan cuando una causa de pérdida domina "
-                           "con 20+ pérdidas registradas (muestra suficiente para no aprender de ruido).")
+            elif _n_val >= 30:
+                st.caption("📓 Todavía sin lecciones automáticas: ninguna diferencia de acierto (régimen, "
+                           "contra-tendencia o dirección) tiene todavía evidencia suficiente con muestra mínima. "
+                           "La app no inventa reglas de ruido.")
+            # v3.18: MEMORIA DE PATRONES — que contextos de accion del precio
+            # ganaron y cuales perdieron, medido con las operaciones reales.
+            _memoria = nucleo_ia.memoria_patrones(_hist)
+            if _memoria["contextos"]:
+                st.caption(f"📊 Memoria de patrones — acción del precio medida con {_memoria['n_ops']} ops "
+                           f"(acierto global {_memoria['global']}%). Solo hablan los contextos con 20+ operaciones; "
+                           f"el 'ajustado' suaviza hacia el global para no concluir de pocas operaciones:")
+                _filas_mem = [{"patrón": f"{k[0]}: {k[1]}", "ops": c["n"], "ganadas": c["ganadas"],
+                               "acierto %": c["acierto"], "ajustado %": c["ajustado"],
+                               "habla": "sí" if c["habla"] else "muestra chica"}
+                              for k, c in sorted(_memoria["contextos"].items())]
+                st.dataframe(pd.DataFrame(_filas_mem), width="stretch", hide_index=True)
+            # v3.18: CALIBRACION DE LA CONFIANZA — lo que gano cada tramo.
+            _calib = nucleo_ia.calibracion_confianza(_hist)
+            if _calib["tramos"]:
+                st.caption("🎯 Calibración de la confianza — lo que realmente ganó cada tramo de confianza mostrada. "
+                           "El nivel de las señales nuevas sale de esta tabla cuando el tramo tiene 20+ operaciones:")
+                _filas_cal = [{"confianza mostrada": t, "ops": c["n"], "ganadas": c["ganadas"],
+                               "acierto %": c["acierto"], "ajustado %": c["ajustado"],
+                               "habla": "sí" if c["habla"] else "muestra chica"}
+                              for t, c in _calib["tramos"].items()]
+                st.dataframe(pd.DataFrame(_filas_cal), width="stretch", hide_index=True)
+            # v3.18: ESPEJO HACIA ADELANTE — se mide SOLO con operaciones
+            # nuevas desde esta version, sin mezclar el pasado. La marca se
+            # crea sola en la primera carga y sobrevive a reinicios.
+            _marca_espejo = leer_json(ARCHIVO_ESPEJO, None)
+            if not isinstance(_marca_espejo, dict) or _marca_espejo.get("ops", 0) > len(_hist):
+                _marca_espejo = {"ops": len(_hist), "desde": ahora_local().strftime("%Y-%m-%d %H:%M")}
+                guardar_json_atomico(ARCHIVO_ESPEJO, _marca_espejo)
+            _ops_nuevas = [h for h in _hist[_marca_espejo["ops"]:]
+                           if h.get("resultado") in ("GANADA", "PERDIDA")]
+            if _ops_nuevas:
+                _esp_g = sum(1 for h in _ops_nuevas if h["resultado"] == "PERDIDA")
+                _esp_wr = round(_esp_g / len(_ops_nuevas) * 100, 1)
+                st.caption(f"🔁 Espejo hacia adelante (solo operaciones nuevas desde v3.18, {_marca_espejo['desde']}): "
+                           f"haciendo lo contrario, el acierto sería {_esp_wr}% en {len(_ops_nuevas)} ops. "
+                           f"Es una hipótesis en validación: con menos de 100 operaciones nuevas no concluye nada.")
+            else:
+                st.caption("🔁 Espejo hacia adelante: se medirá solo con operaciones nuevas desde esta versión, "
+                           "sin mezclar el pasado. Todavía no hay operaciones nuevas registradas.")
             _c1, _c2 = st.columns(2)
             with _c1:
                 st.caption("Acierto por par")
@@ -1893,10 +1987,16 @@ def zona_dinamica(codigo_f, tipo_f):
     # ganando o perdiendo y por cuanto. En v3.11.1 va en filas de datos
     # junto al radar (misma tarjeta compacta de las fases 1 y 2).
     _ent = st.session_state.precio_real_entrada
-    _precio_ahora = obtener_precio_actual(codigo_f, tipo_f)
+    # v3.18.1: la linea EN VIVO ya usaba esta misma cadena (con cache), asi
+    # que pedir tambien la fuente no cuesta ni una llamada extra: solo se
+    # muestra quien esta juzgando el precio en este instante.
+    _precio_ahora, _fuente_vivo = obtener_precio_actual_con_fuente(codigo_f, tipo_f)
     _vivo_txt = "--.-----"
     _estado_txt = "--"
     _estado_clase = ""
+    _juez_txt = _fuente_vivo or "—"
+    if _fuente_vivo == "Yahoo Finance":
+        _juez_txt = "Yahoo Finance ⚠️ retrasado"
     if _precio_ahora and _ent:
         _dif = float(_precio_ahora) - float(_ent)
         _va_ganando = (_dif > 0) if es_call else (_dif < 0)
@@ -1924,6 +2024,7 @@ def zona_dinamica(codigo_f, tipo_f):
           <div class="data-rows">
             <div class="data-row"><span>PUNTO DE ENTRADA</span><strong>{_fmt_precio(_ent, codigo_f)}</strong></div>
             <div class="data-row"><span>● EN VIVO</span><strong>{_vivo_txt}</strong></div>
+            <div class="data-row"><span>JUEZ DEL PRECIO</span><strong>{_juez_txt}</strong></div>
             <div class="data-row"><span>Vas</span><strong class="{_estado_clase}">{_estado_txt}</strong></div>
             <div class="data-row"><span>HORA SEÑAL</span><strong>{hora_actual}</strong></div>
           </div>
