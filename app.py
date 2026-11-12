@@ -1082,7 +1082,7 @@ st.markdown(CSS, unsafe_allow_html=True)
 # ---------------- Parte estatica (ya NO se recarga cada segundo) ----------------
 
 st.markdown('<div class="main-container">', unsafe_allow_html=True)
-st.markdown(f'<div class="header"><span class="badge-version">v3.17.4</span><h1>⚡ ZT TRADERS PRO</h1><p>User: {st.session_state.usuario_actual} · IA AUTO-APRENDIZAJE</p></div>', unsafe_allow_html=True)
+st.markdown(f'<div class="header"><span class="badge-version">v3.17.5</span><h1>⚡ ZT TRADERS PRO</h1><p>User: {st.session_state.usuario_actual} · IA AUTO-APRENDIZAJE</p></div>', unsafe_allow_html=True)
 if st.query_params.get("zt_token"):
     st.caption("✅ Este dispositivo está activado: guarda ESTA página en Favoritos o en la pantalla de inicio "
                "(con la dirección completa, tal como está arriba) y la próxima vez entrarás directo, sin escribir la clave.")
@@ -1268,7 +1268,15 @@ if st.session_state.usuario_actual.startswith("👑"):
                 if _informe:
                     st.markdown(_informe)
                 else:
-                    st.error("La IA no respondió. Revisa tu clave de API o inténtalo de nuevo.")
+                    # v3.17.5: el modulo ahora dice LA CAUSA (sobrecarga,
+                    # limite, clave...). Si el modulo del repo es viejo y no
+                    # trae ultimo_error(), se muestra el mensaje de siempre.
+                    _motivo = ""
+                    try:
+                        _motivo = razonamiento_ia.ultimo_error() or ""
+                    except Exception:
+                        _motivo = ""
+                    st.error(_motivo or "La IA no respondió. Revisa tu clave de API o inténtalo de nuevo.")
     with st.expander("💾 Respaldo del aprendizaje — guarda tus operaciones"):
         st.caption("El historial y el cerebro en vivo viven solo en el servidor de Streamlit y se pueden perder al reiniciar o volver a subir la app. Descarga una copia antes de subir una versión nueva y guárdala junto a los archivos de la app: si se pierde, subir ese archivo con la app lo restaura.")
         _hist_respaldo = st.session_state.hist_cache
