@@ -107,9 +107,17 @@
 #     reiniciar o volver a subir la app; con la copia guardada, subir ese
 #     archivo junto a la app lo restaura (el cerebro en vivo se reentrena
 #     solo desde el historial restaurado al llegar a 60 operaciones).
+# --- v3.17: PANEL DE EVOLUCION (pregunta de Jose: "como se si la app esta evolucionando?") ---
+# 30) La app guarda sola una "foto" de los indicadores cada 50 operaciones
+#     validas (acierto, espejo, precision del cerebro en datos no vistos,
+#     etiquetas limpias, juzgadas por Finnhub y postura) en evolucion.json,
+#     y el panel nuevo muestra la tabla de fotos y el antes vs ahora con
+#     los cambios en puntos. No toca señales, modelo ni aprendizaje: solo
+#     mide. La primera foto se guarda al llegar a 50 validas (o con el
+#     boton "Guardar foto ahora"); evolucion.json se descarga desde Respaldo
+#     y se respalda solo antes de un Reset, como el historial.
 # ============================================================
 import streamlit as st
-import streamlit.components.v1 as components
 import pandas as pd
 import requests
 import yfinance as yf
@@ -128,6 +136,7 @@ import razonamiento_ia
 st.set_page_config(page_title="ZT TRADERS INSTITUTIONAL PRO", layout="wide", page_icon="⚡")
 
 ARCHIVO_HISTORIAL = "historial.json"
+ARCHIVO_EVOLUCION = "evolucion.json"  # fotos del Panel de Evolucion (v3.17)
 ARCHIVO_PATRONES = "patrones.json"
 ARCHIVO_LICENCIAS = "licencias.json"
 ZONA_HORARIA = ZoneInfo("America/Caracas")
@@ -232,7 +241,7 @@ if not st.session_state.licencia_activa:
     st.markdown('<div class="login-container"><div class="login-title">⚡ ZT TRADERS</div><div style="color:#aaa; font-size:11px;">Sistema de Acceso Privado</div>', unsafe_allow_html=True)
     with st.form("login_form"):
         key_input = st.text_input("License Key", type="password")
-        submit_key = st.form_submit_button("🚀 CONECTAR", use_container_width=True)
+        submit_key = st.form_submit_button("🚀 CONECTAR", width="stretch")
         if submit_key:
             claves_master = master_keys_configuradas()
             if claves_master and key_input in claves_master:
@@ -286,7 +295,8 @@ def resetear_memoria():
     # un Reset accidental se pueda deshacer desde el panel de Respaldo.
     import shutil
     for archivo, copia in ((ARCHIVO_HISTORIAL, "historial_respaldo_auto.json"),
-                           (ARCHIVO_PATRONES, "patrones_respaldo_auto.json")):
+                           (ARCHIVO_PATRONES, "patrones_respaldo_auto.json"),
+                           (ARCHIVO_EVOLUCION, "evolucion_respaldo_auto.json")):
         if os.path.exists(archivo):
             try:
                 shutil.copy(archivo, copia)
@@ -321,6 +331,58 @@ def aprender(señal, resultado, indicadores, precio_real_entrada, features=None,
     guardar_json_atomico(ARCHIVO_HISTORIAL, hist)
     guardar_json_atomico(ARCHIVO_PATRONES, pesos)
     quizas_entrenar_vivo()
+    guardar_foto_evolucion_si_toca()  # v3.17: foto cada 50 ops validas
+
+# ---------------- Panel de Evolucion (v3.17): fotos automaticas ----------------
+# Responde la pregunta de Jose ("como se si la app esta evolucionando?")
+# con numeros guardados por la propia app, sin depender de Muse ni de
+# capturas: cada 50 operaciones validas se congela una foto de los 6
+# indicadores que ya se miran en "Aprendizaje en vivo". La precision del
+# cerebro se lee DESPUES del reentrenamiento (por eso este gancho va
+# despues de quizas_entrenar_vivo() en aprender()): la foto refleja el
+# cerebro nuevo, no el viejo.
+
+def foto_evolucion_actual():
+    """Foto de los indicadores de evolucion con el historial actual.
+    Devuelve None si aun no hay operaciones validas para medir."""
+    hist = st.session_state.hist_cache
+    validas = nucleo_ia.ops_validas_para_vivo(hist)
+    n = len(validas)
+    if not n:
+        return None
+    ganadas = sum(1 for h in validas if h["resultado"] == "GANADA")
+    precision = None
+    vivo = modelo_vivo_info()
+    if vivo:
+        try:
+            precision = float(vivo["metricas"]["winrate_prueba_%"])
+        except Exception:
+            precision = None
+    return {"fecha": ahora_local().strftime("%Y-%m-%d %H:%M"),
+            "ops": n,
+            "acierto_%": round(ganadas / n * 100, 1),
+            "espejo_%": round((n - ganadas) / n * 100, 1),
+            "precision_no_visto_%": precision,
+            "limpias": sum(1 for h in validas if h.get("fuente_datos") in ("Twelve Data", "Binance")),
+            "finnhub": sum(1 for h in validas if h.get("fuente_datos") == "Finnhub"),
+            "postura": nucleo_ia.postura_sesion(hist)[0]}
+
+def guardar_foto_evolucion_si_toca():
+    """Guarda una foto cuando se cruza un multiplo de 50 operaciones
+    validas (50, 100, 150...). Una foto por tramo: si el historial ya
+    tiene una foto de ese tramo, no duplica. Nunca rompe el registro de
+    la operacion: cualquier error aqui se traga en silencio."""
+    try:
+        foto = foto_evolucion_actual()
+        if not foto or foto["ops"] < 50:
+            return
+        fotos = leer_json(ARCHIVO_EVOLUCION, [])
+        if fotos and fotos[-1].get("ops", 0) // 50 >= foto["ops"] // 50:
+            return
+        fotos.append(foto)
+        guardar_json_atomico(ARCHIVO_EVOLUCION, fotos)
+    except Exception:
+        pass
 
 # ---------------- Modelo IA v3 (entrenado con backtesting) ----------------
 
@@ -895,7 +957,7 @@ def reproducir_voz(mensaje):
     }})();
     </script>
     """
-    components.html(js_code, height=0, width=0)
+    st.html(js_code)
 
 PARES = {
     'Bitcoin': {'codigo': 'BTCUSDT', 'tipo': 'crypto'}, 'Ethereum': {'codigo': 'ETHUSDT', 'tipo': 'crypto'},
@@ -1016,7 +1078,7 @@ st.markdown(CSS, unsafe_allow_html=True)
 # ---------------- Parte estatica (ya NO se recarga cada segundo) ----------------
 
 st.markdown('<div class="main-container">', unsafe_allow_html=True)
-st.markdown(f'<div class="header"><span class="badge-version">v3.16</span><h1>⚡ ZT TRADERS PRO</h1><p>User: {st.session_state.usuario_actual} · IA AUTO-APRENDIZAJE</p></div>', unsafe_allow_html=True)
+st.markdown(f'<div class="header"><span class="badge-version">v3.17.1</span><h1>⚡ ZT TRADERS PRO</h1><p>User: {st.session_state.usuario_actual} · IA AUTO-APRENDIZAJE</p></div>', unsafe_allow_html=True)
 if st.query_params.get("zt_token"):
     st.caption("✅ Este dispositivo está activado: guarda ESTA página en Favoritos o en la pantalla de inicio "
                "(con la dirección completa, tal como está arriba) y la próxima vez entrarás directo, sin escribir la clave.")
@@ -1029,25 +1091,27 @@ col_izq, col_der = st.columns([1.3, 1], gap="medium")
 with col_izq:
     col1, col2 = st.columns([3, 1])
     with col1:
-        par_nombre = st.selectbox("", list(PARES.keys()), index=list(PARES.keys()).index(st.session_state.par_sel), label_visibility="collapsed")
+        _nombres_pares = list(PARES.keys())
+        _idx_par = _nombres_pares.index(st.session_state.par_sel) if st.session_state.get("par_sel") in _nombres_pares else 0
+        par_nombre = st.selectbox("Par", _nombres_pares, index=_idx_par, label_visibility="collapsed")
     with col2:
         # v3.10.1 (seguridad): el Reset borra el aprendizaje COMPARTIDO de
         # todos los usuarios; solo lo ve el Admin Master.
         if st.session_state.usuario_actual.startswith("👑"):
-            if st.button("🗑️ Reset", key="reset_btn", use_container_width=True):
+            if st.button("🗑️ Reset", key="reset_btn", width="stretch"):
                 st.session_state.confirmar_reset = True
             if st.session_state.get("confirmar_reset"):
                 st.warning("⚠️ El Reset borra el historial de aprendizaje y los contadores. "
                            "Quedará una copia automática de seguridad, pero el aprendizaje vuelve a cero.")
                 _cc1, _cc2 = st.columns(2)
                 with _cc1:
-                    if st.button("✅ Sí, borrar todo", key="reset_confirmar", use_container_width=True):
+                    if st.button("✅ Sí, borrar todo", key="reset_confirmar", width="stretch"):
                         st.session_state.confirmar_reset = False
                         resetear_memoria()
                         reiniciar_ciclo()
                         st.rerun()
                 with _cc2:
-                    if st.button("❌ Cancelar", key="reset_cancelar", use_container_width=True):
+                    if st.button("❌ Cancelar", key="reset_cancelar", width="stretch"):
                         st.session_state.confirmar_reset = False
                         st.rerun()
 
@@ -1069,7 +1133,7 @@ widget_html = f"""
 </div>
 """
 with col_izq:
-    components.html(widget_html, height=345)
+    st.html(widget_html)
 
 # La zona de señales en vivo se ancla en la columna DERECHA (v3.13; en
 # v3.10 iba bajo el grafico). Los paneles quedan debajo, en expanders.
@@ -1084,7 +1148,7 @@ with st.expander("🌐 Escaneo global — ¿qué par conviene operar ahora?"):
                "hasta soporte/resistencia, confluencia y bloqueos). 🟢 ARMÓNICO = condiciones limpias · "
                "🟡 NEUTRO = operable con cuidado · 🔴 EVITAR = volátil, pegado a un nivel o con bloqueo. "
                "Escanear forex consume créditos de Twelve Data (1 por par): úsalo cuando lo necesites.")
-    if st.button("🔍 Escanear los 24 pares ahora", use_container_width=True):
+    if st.button("🔍 Escanear los 24 pares ahora", width="stretch"):
         _resultados = []
         _barra = st.progress(0.0)
         for _i, (_nombre, _info) in enumerate(PARES.items()):
@@ -1109,10 +1173,10 @@ with st.expander("🌐 Escaneo global — ¿qué par conviene operar ahora?"):
             st.success(f"🏆 Mejor par ahora: {_mejor['Par']} — {_mejor['Estado']} (índice {_mejor['Índice']}) · "
                        f"señal tentativa {_mejor['Señal tentativa']} · {_mejor['Lectura']} · escaneo de las {st.session_state.get('escaneo_ts', '')}")
         _orden = sorted(_esc, key=lambda r: (r["Índice"] is None, -(r["Índice"] or 0)))
-        st.dataframe(pd.DataFrame(_orden), use_container_width=True, hide_index=True)
+        st.dataframe(pd.DataFrame(_orden), width="stretch", hide_index=True)
         _c1, _c2 = st.columns([3, 1])
         _ir = _c1.selectbox("Ir a operar en:", [r["Par"] for r in _orden], key="escaneo_ir")
-        if _c2.button("➡️ Cambiar par", use_container_width=True):
+        if _c2.button("➡️ Cambiar par", width="stretch"):
             st.session_state.par_sel = _ir
             st.rerun()
 
@@ -1123,10 +1187,10 @@ if st.session_state.usuario_actual.startswith("👑"):
         if _info_modelo:
             _m = _info_modelo["metricas"]
             st.success(f"Modelo activo — entrenado el {_m['fecha_entrenamiento']} con {_m['ejemplos_entrenamiento']} ejemplos. Brier: {_m['brier']}")
-            st.dataframe(pd.DataFrame(_m["por_umbral"]), use_container_width=True, hide_index=True)
+            st.dataframe(pd.DataFrame(_m["por_umbral"]), width="stretch", hide_index=True)
             if _m.get("por_regimen"):
                 st.caption("Precisión por régimen de mercado (umbral 0.62):")
-                st.dataframe(pd.DataFrame(_m["por_regimen"]), use_container_width=True, hide_index=True)
+                st.dataframe(pd.DataFrame(_m["por_regimen"]), width="stretch", hide_index=True)
             st.caption("Precisión = % de acierto de las señales emitidas en datos que el modelo nunca vio. Cobertura = % de ciclos en los que sí emite señal.")
         else:
             st.info("Todavía no hay modelo entrenado. Sin modelo, la app usa solo el filtro de puntaje técnico.")
@@ -1134,7 +1198,7 @@ if st.session_state.usuario_actual.startswith("👑"):
         _sel = st.multiselect("Pares crypto para el backtest", _codigos_crypto,
                               default=["BTCUSDT", "ETHUSDT", "SOLUSDT"])
         _dias = st.slider("Días de historial (velas 1m)", 7, 30, 14)
-        if st.button("🚀 Entrenar modelo con backtest", use_container_width=True):
+        if st.button("🚀 Entrenar modelo con backtest", width="stretch"):
             try:
                 with st.status("Entrenando modelo v3...", expanded=True) as _estado:
                     _dfs = []
@@ -1152,9 +1216,9 @@ if st.session_state.usuario_actual.startswith("👑"):
                     nucleo_ia.guardar_modelo(_info, ARCHIVO_MODELO_V3, "modelo_v3_metricas.json")
                     modelo_v3_info.clear()
                     _estado.update(label="✅ Modelo v3 entrenado y guardado", state="complete")
-                st.dataframe(pd.DataFrame(_info["metricas"]["por_umbral"]), use_container_width=True, hide_index=True)
+                st.dataframe(pd.DataFrame(_info["metricas"]["por_umbral"]), width="stretch", hide_index=True)
                 if _info["metricas"].get("por_regimen"):
-                    st.dataframe(pd.DataFrame(_info["metricas"]["por_regimen"]), use_container_width=True, hide_index=True)
+                    st.dataframe(pd.DataFrame(_info["metricas"]["por_regimen"]), width="stretch", hide_index=True)
                 st.success("Modelo activo. A partir de ahora las señales crypto se filtran con su probabilidad calibrada (mínimo 62%).")
             except Exception as _e:
                 st.error(f"No se pudo entrenar: {_e}")
@@ -1163,7 +1227,7 @@ if st.session_state.usuario_actual.startswith("👑"):
             st.info("Sin clave de IA configurada. En los Secrets de Streamlit agrega: ia_api_key = \"tu clave gratis\" e ia_proveedor = \"gemini\" (o \"groq\" / \"openrouter\"). Claves gratis: Google AI Studio (aistudio.google.com) o Groq (console.groq.com).")
         else:
             st.caption(f"IA conectada (proveedor: {_secret('ia_proveedor', 'IA_PROVEEDOR') or 'gemini'}). Segunda opinión por señal: {'ACTIVADA' if _ia_bool('ia_segunda_opinion') else 'apagada — actívala con ia_segunda_opinion = true en Secrets'}. Clima de sesión: {'ACTIVADO' if _ia_bool('ia_clima') else 'apagado — ia_clima = true'}.")
-            if st.button("🧠 Analizar mi historial con IA", use_container_width=True):
+            if st.button("🧠 Analizar mi historial con IA", width="stretch"):
                 _hist = st.session_state.hist_cache
                 _tot = len(_hist)
                 _gan = sum(1 for h in _hist if h.get("resultado") == "GANADA")
@@ -1205,17 +1269,24 @@ if st.session_state.usuario_actual.startswith("👑"):
         st.download_button("⬇️ Descargar historial.json (operaciones reales)",
                            data=json.dumps(_hist_respaldo, indent=2, ensure_ascii=False),
                            file_name=f"historial_{ahora_local().strftime('%Y%m%d_%H%M')}.json",
-                           mime="application/json", use_container_width=True)
+                           mime="application/json", width="stretch")
         st.download_button("⬇️ Descargar patrones.json (contadores)",
                            data=json.dumps(st.session_state.pesos, indent=2, ensure_ascii=False),
                            file_name=f"patrones_{ahora_local().strftime('%Y%m%d_%H%M')}.json",
-                           mime="application/json", use_container_width=True)
+                           mime="application/json", width="stretch")
+        if os.path.exists(ARCHIVO_EVOLUCION):
+            with open(ARCHIVO_EVOLUCION, "r", encoding="utf-8") as _f:
+                st.download_button("⬇️ Descargar evolucion.json (fotos del Panel de Evolución)",
+                                   data=_f.read(),
+                                   file_name=f"evolucion_{ahora_local().strftime('%Y%m%d_%H%M')}.json",
+                                   mime="application/json", width="stretch")
+            st.caption("Si evolucion.json se pierde, el panel vuelve a empezar desde la próxima foto; el historial y el cerebro no se pierden.")
         if os.path.exists(ARCHIVO_MODELO_VIVO):
             with open(ARCHIVO_MODELO_VIVO, "rb") as _f:
                 st.download_button("⬇️ Descargar modelo_vivo.pkl (cerebro en vivo)",
                                    data=_f.read(),
                                    file_name=f"modelo_vivo_{ahora_local().strftime('%Y%m%d_%H%M')}.pkl",
-                                   mime="application/octet-stream", use_container_width=True)
+                                   mime="application/octet-stream", width="stretch")
         else:
             st.caption("Todavía no hay modelo en vivo (se crea solo al llegar a 60 operaciones reales).")
         st.caption(f"Operaciones en el historial ahora: {len(_hist_respaldo)}.")
@@ -1225,12 +1296,33 @@ if st.session_state.usuario_actual.startswith("👑"):
                        f"Si se acaban, la app cae a Yahoo (precio retrasado) hasta el día siguiente.")
         st.caption("📡 Finnhub (precio juez forex): " + ("clave configurada ✓ — juzga entradas y cierres sin gastar créditos Twelve."
                    if _finnhub_key() else "sin clave en Secrets (finnhub_api_key); el precio juez sigue siendo Twelve/Yahoo."))
+        # Prueba de fuentes (v3.16.1): un toque y la app muestra el precio
+        # del par seleccionado segun las tres fuentes, casi al mismo
+        # instante, con las diferencias en pips. Es la prueba de los
+        # 0,2 pips sin salir de la app: Jose compara esos numeros con el
+        # precio de IQ Option en el mismo momento.
+        _par_prueba = PARES.get(st.session_state.get("par_sel", ""), {})
+        _cod_prueba = _par_prueba.get("codigo", "EURUSD=X")
+        if _par_prueba.get("tipo", "forex") == "forex" and st.button(
+                "🧪 Probar Finnhub contra Twelve y Yahoo (par seleccionado)", width="stretch"):
+            _pf = _precio_finnhub(_cod_prueba)
+            _pt = _precio_twelvedata(_cod_prueba)
+            _py = _precio_yahoo(_cod_prueba)
+            _pip = 0.01 if "JPY" in _cod_prueba else 0.0001
+            def _fmt(v):
+                return f"{v:.5f}" if v else "sin respuesta"
+            def _dif(a, b):
+                return f"{abs(a - b) / _pip:.1f} pips" if (a and b) else "—"
+            st.caption(f"🧪 {st.session_state.get('par_sel', '')} · {ahora_local().strftime('%H:%M:%S')} — "
+                       f"Finnhub: {_fmt(_pf)} · Twelve Data: {_fmt(_pt)} · Yahoo: {_fmt(_py)} · "
+                       f"Finnhub↔Twelve: {_dif(_pf, _pt)} · Finnhub↔Yahoo: {_dif(_pf, _py)}. "
+                       f"Compáralos con IQ Option en este mismo momento: la fuente buena queda a 1 pip o menos de IQ.")
         if os.path.exists("historial_respaldo_auto.json"):
             with open("historial_respaldo_auto.json", "r", encoding="utf-8") as _f:
                 st.download_button("🛟 Descargar copia automática pre-Reset (historial)",
                                    data=_f.read(),
                                    file_name="historial_respaldo_auto.json",
-                                   mime="application/json", use_container_width=True)
+                                   mime="application/json", width="stretch")
             st.caption("Esa copia se guardó sola justo antes del último Reset. Para deshacerlo: "
                        "renómbrala como historial.json, súbela junto a los archivos de la app y reinicia la app.")
     with st.expander("🔐 Seguridad y licencias — crear claves y revocar accesos"):
@@ -1238,7 +1330,7 @@ if st.session_state.usuario_actual.startswith("👑"):
                    "empieza a contar desde hoy. Si el enlace personal de un cliente se filtra (una captura, un "
                    "reenvio), revoca su dispositivo: ese enlace muere y el cliente vuelve a entrar con su clave.")
         _dias_lic = st.slider("Días de vigencia de la nueva licencia", 7, 365, 30)
-        if st.button("🎫 Generar licencia nueva", use_container_width=True):
+        if st.button("🎫 Generar licencia nueva", width="stretch"):
             import secrets as _secrets
             _alf = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"
             _nueva = "ZT-" + "-".join("".join(_secrets.choice(_alf) for _ in range(6)) for _ in range(3))
@@ -1272,6 +1364,13 @@ elif _info_modelo:
 # ---------------- Panel de aprendizaje en vivo (visible para todos) ----------------
 with st.expander("📈 Aprendizaje en vivo — así va aprendiendo la app"):
     _hist = st.session_state.hist_cache
+    # v3.17.1: la descarga del historial solo existia en el Respaldo, que
+    # solo se muestra con sesion de Admin Master; con sesion de licencia
+    # no se veia. Ahora tambien esta aqui, visible para todos.
+    st.download_button("⬇️ Descargar historial.json (operaciones reales)",
+                       data=json.dumps(_hist, indent=2, ensure_ascii=False),
+                       file_name=f"historial_{ahora_local().strftime('%Y%m%d_%H%M')}.json",
+                       mime="application/json", width="stretch")
     _validas = nucleo_ia.ops_validas_para_vivo(_hist)
     _n_val = len(_validas)
     _vivo = modelo_vivo_info()
@@ -1344,7 +1443,7 @@ with st.expander("📈 Aprendizaje en vivo — así va aprendiendo la app"):
             else:
                 _filas_aut = [{"causa probable": c, "pérdidas": n,
                                "%": "muestra chica"} for c, n in _autopsia.items()]
-            st.dataframe(pd.DataFrame(_filas_aut), use_container_width=True, hide_index=True)
+            st.dataframe(pd.DataFrame(_filas_aut), width="stretch", hide_index=True)
         _lecciones = nucleo_ia.lecciones_aprendidas(_hist)
         if _lecciones:
             st.caption("📓 Lecciones de la experiencia — lo que la app aprendió de sus propias pérdidas. "
@@ -1357,14 +1456,76 @@ with st.expander("📈 Aprendizaje en vivo — así va aprendiendo la app"):
         _c1, _c2 = st.columns(2)
         with _c1:
             st.caption("Acierto por par")
-            st.dataframe(_tabla_vivo("par", "par"), use_container_width=True, hide_index=True)
+            st.dataframe(_tabla_vivo("par", "par"), width="stretch", hide_index=True)
             st.caption("Acierto por dirección")
-            st.dataframe(_tabla_vivo("señal", "dirección"), use_container_width=True, hide_index=True)
+            st.dataframe(_tabla_vivo("señal", "dirección"), width="stretch", hide_index=True)
         with _c2:
             st.caption("Acierto por nivel de señal")
-            st.dataframe(_tabla_vivo("nivel", "nivel"), use_container_width=True, hide_index=True)
+            st.dataframe(_tabla_vivo("nivel", "nivel"), width="stretch", hide_index=True)
             st.caption("Acierto por tipo")
-            st.dataframe(_tabla_vivo("tipo", "tipo"), use_container_width=True, hide_index=True)
+            st.dataframe(_tabla_vivo("tipo", "tipo"), width="stretch", hide_index=True)
+
+# ---------------- Panel de Evolucion (v3.17) ----------------
+# La evolucion no se siente, se mide: tabla de fotos cada 50 ops y el
+# antes vs ahora con los cambios en puntos. Visible para todos (no solo
+# Admin): es el tablero que Jose pidio para no depender de Muse.
+with st.expander("📈 Panel de Evolución — antes vs ahora (v3.17)", expanded=False):
+    st.caption("Cada 50 operaciones válidas la app guarda sola una foto de los indicadores "
+               "(acierto, espejo, precisión del cerebro en datos no vistos, etiquetas limpias, "
+               "juzgadas por Finnhub y postura). La primera foto es 'hoy'; a partir de ahí el "
+               "'antes vs ahora' se construye solo. Metas: precisión no visto 55% · acierto "
+               "limpio 53,8% (IQ Option) / 51,3% (Exnova).")
+    _fotos_ev = leer_json(ARCHIVO_EVOLUCION, [])
+    if st.button("📸 Guardar foto ahora", width="stretch", key="evo_foto_ahora"):
+        _f_ahora = foto_evolucion_actual()
+        if not _f_ahora or _f_ahora["ops"] < 50:
+            st.info("Todavía no hay 50 operaciones válidas para la primera foto.")
+        elif _fotos_ev and _fotos_ev[-1].get("ops", 0) // 50 >= _f_ahora["ops"] // 50:
+            st.info("Ya hay una foto de este tramo de 50 operaciones; la próxima se guarda sola al cruzar el siguiente múltiplo de 50.")
+        else:
+            _fotos_ev.append(_f_ahora)
+            guardar_json_atomico(ARCHIVO_EVOLUCION, _fotos_ev)
+            st.success(f"Foto guardada: {_f_ahora['ops']} operaciones, acierto {_f_ahora['acierto_%']}%.")
+        _fotos_ev = leer_json(ARCHIVO_EVOLUCION, [])
+    if _fotos_ev:
+        _filas_ev = [{"fecha": f.get("fecha", "—"), "operaciones": f.get("ops", "—"),
+                      "acierto %": f.get("acierto_%", "—"), "espejo %": f.get("espejo_%", "—"),
+                      "precisión cerebro (no visto) %": f.get("precision_no_visto_%", "—"),
+                      "limpias": f.get("limpias", "—"), "Finnhub": f.get("finnhub", "—"),
+                      "postura": f.get("postura", "—")} for f in _fotos_ev]
+        st.dataframe(pd.DataFrame(_filas_ev), width="stretch", hide_index=True)
+        if len(_fotos_ev) >= 2:
+            _prim, _ult = _fotos_ev[0], _fotos_ev[-1]
+            def _cambio(clave, bueno_subir=True, unidad="%"):
+                _a, _b = _prim.get(clave), _ult.get(clave)
+                if _a is None or _b is None:
+                    return "sin dato"
+                _d = round(_b - _a, 1)
+                _signo = "+" if _d > 0 else ""
+                _bien = "✅" if (_d > 0) == bueno_subir and _d != 0 else ("⚠️" if _d != 0 else "＝")
+                return f"{_a}{unidad} → {_b}{unidad} ({_signo}{_d} pts) {_bien}"
+            st.caption(f"📊 Antes vs ahora — de {_prim.get('fecha')} ({_prim.get('ops')} ops) a {_ult.get('fecha')} ({_ult.get('ops')} ops):")
+            st.caption(f"· Acierto: {_cambio('acierto_%', True)}")
+            st.caption(f"· Espejo (bajar es bueno): {_cambio('espejo_%', False)}")
+            st.caption(f"· Precisión del cerebro en datos no vistos: {_cambio('precision_no_visto_%', True)}")
+            st.caption(f"· Etiquetas limpias: {_cambio('limpias', True, '')}")
+            _sube_acierto = (_ult.get("acierto_%") or 0) > (_prim.get("acierto_%") or 0)
+            _sube_cerebro = (_ult.get("precision_no_visto_%") is not None and _prim.get("precision_no_visto_%") is not None
+                             and _ult["precision_no_visto_%"] > _prim["precision_no_visto_%"])
+            if _sube_acierto and _sube_cerebro:
+                st.success("✅ Evolucionando: suben a la vez el acierto y la precisión del cerebro en datos que nunca vio. Eso es aprendizaje real, no suerte de una sesión.")
+            elif _sube_acierto or _sube_cerebro:
+                st.info("🟡 A medias: uno de los dos sube y el otro no. Mira cuál se mueve cuando lleguen 50 operaciones más.")
+            else:
+                st.warning("⚠️ Estancada por ahora: ni el acierto ni la precisión del cerebro suben entre fotos. Si las limpias tampoco crecen, el freno es la falta de datos limpios, no la estrategia.")
+        else:
+            st.caption("Con una sola foto todavía no hay 'antes vs ahora': la comparación aparece sola cuando se guarde la segunda foto (al cruzar el siguiente múltiplo de 50 operaciones).")
+    else:
+        _f_ahora = foto_evolucion_actual()
+        if _f_ahora and _f_ahora["ops"] >= 50:
+            st.caption(f"Ya llevas {_f_ahora['ops']} operaciones válidas y aún no hay fotos: pulsa 'Guardar foto ahora' para tomar la primera, y las siguientes se guardan solas cada 50.")
+        else:
+            st.caption("Aún no hay fotos: la primera se guarda sola al llegar a 50 operaciones válidas.")
 
 # ---------------- Catalogador ZT (v3.14) ----------------
 # La idea del panel de DAM Trader en version honesta: efectividad MEDIDA
@@ -1388,7 +1549,7 @@ with st.expander("📚 Catalogador ZT — qué está funcionando, medido", expan
                 st.success(f"🏆 Tu mejor ficha medida: **{_mn} {_m['direccion']}** — {_m['acierto']}% en {_m['ops']} operaciones. Supera el 53,8% de equilibrio.")
             else:
                 st.info(f"🏆 La ficha menos mala por ahora: **{_mn} {_m['direccion']}** — {_m['acierto']}% en {_m['ops']} operaciones. Ninguna supera aún el 53,8% con muestra suficiente.")
-            if _mn in PARES and st.button(f"🎯 Operar {_mn} ahora", key="cat_operar_mejor", use_container_width=True):
+            if _mn in PARES and st.button(f"🎯 Operar {_mn} ahora", key="cat_operar_mejor", width="stretch"):
                 st.session_state.par_sel = _mn
                 reiniciar_ciclo()
                 st.rerun()
@@ -1397,11 +1558,11 @@ with st.expander("📚 Catalogador ZT — qué está funcionando, medido", expan
         _filas_cat = [{"Par": _nombres_par.get(f["par"], f["par"]), "Dirección": f["direccion"], "Ops": f["ops"],
                        "W": f["ganadas"], "L": f["perdidas"], "Acierto %": f["acierto"],
                        "Limpias": f["limpias"], "Estado": f["estado"]} for f in _cat["filas"]]
-        st.dataframe(pd.DataFrame(_filas_cat), use_container_width=True, hide_index=True)
+        st.dataframe(pd.DataFrame(_filas_cat), width="stretch", hide_index=True)
         if _cat["regimenes"]:
             st.caption("Acierto por régimen de mercado (con los mismos filtros):")
             st.dataframe(pd.DataFrame([{"Régimen": r["regimen"], "Ops": r["ops"], "Acierto %": r["acierto"]} for r in _cat["regimenes"]]),
-                         use_container_width=True, hide_index=True)
+                         width="stretch", hide_index=True)
         st.caption("🟢 OPERABLE = ≥20 ops y acierto ≥53,8% · 🔴 DESCANSAR = ≥15 ops y acierto <45% · "
                    "🟡 EN OBSERVACIÓN = muestra corta o acierto intermedio · ⚪ SIN MUESTRA = <10 ops (no concluir).")
 
