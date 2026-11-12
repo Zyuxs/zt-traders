@@ -492,39 +492,67 @@ def _gatillo_rechazo(fv, es_call):
             or float(fv.get("mecha_sup", 0)) >= 0.5)
 
 def lecciones_aprendidas(historial):
-    """LECCIONES DE LA EXPERIENCIA (v3.12): convierte la autopsia de
-    perdidas en reglas correctivas ACTIVAS, como el diario de un trader
-    profesional que revisa sus perdidas y se escribe reglas. Cada leccion
-    nace de una causa dominante con muestra suficiente (20+ perdidas) y
-    declara su evidencia y su efecto. Devuelve [{id, titulo, evidencia,
-    efecto, castigadas?}]."""
-    aut = autopsia_perdidas(historial)
-    total_perd = sum(aut.values())
+    """LECCIONES DE LA EXPERIENCIA (v3.12; reglas con evidencia en v3.18):
+    convierte los RESULTADOS (victorias Y derrotas) en reglas correctivas
+    ACTIVAS. La v3.12 las sacaba de la autopsia de perdidas: 'esta causa
+    acumula muchas perdidas'. Eso confunde VOLUMEN con RIESGO: el rango
+    acumulaba el 41% de las perdidas porque acumulaba el 46% de las
+    operaciones, y sin embargo era el regimen que MAS ganaba (45%). Y la
+    leccion contra-tendencia castigaba el comportamiento principal de la
+    app (87% de las señales en tendencia van contra ella) sin evidencia
+    de que a favor rindiera mejor. Desde v3.18 cada leccion nace de
+    comparar ACIERTOS (contexto contra global o contra su opuesto) con
+    muestra minima; si la evidencia no alcanza, la leccion NO existe y
+    el panel lo dice. Devuelve [{id, titulo, evidencia, efecto,
+    castigadas?}]."""
+    ops = _decisivas_para_aprender(historial)
     lecciones = []
-    if total_perd >= 20:
-        n_rango = aut.get("En rango, sin confirmación", 0)
-        if n_rango / total_perd >= 0.40:
-            lecciones.append({
-                "id": "RANGO_SIN_GATILLO",
-                "titulo": "En rango sin gatillo de rechazo, no confiar",
-                "evidencia": f"{n_rango} de {total_perd} pérdidas fueron en rango sin confirmación",
-                "efecto": "En régimen de rango, si la vela no muestra rechazo (pin bar, envolvente o mecha larga a favor), el nivel de la señal baja un escalón."})
-        n_vol = aut.get("En volatilidad extrema", 0)
-        if n_vol / total_perd >= 0.25:
+    if len(ops) >= 30:
+        wr_global = (sum(1 for h in ops if h["resultado"] == "GANADA")
+                     / len(ops) * 100)
+
+        def _wr(filtro):
+            sub = [h for h in ops if filtro(h)]
+            if not sub:
+                return 0.0, 0
+            return (sum(1 for h in sub if h["resultado"] == "GANADA")
+                    / len(sub) * 100), len(sub)
+
+        wr_vol, n_vol = _wr(lambda h: _regimen_de(h) == 3)
+        if n_vol >= 30 and wr_vol < wr_global - 5:
             lecciones.append({
                 "id": "VOLATILIDAD",
                 "titulo": "En volatilidad extrema, vara más alta",
-                "evidencia": f"{n_vol} de {total_perd} pérdidas fueron en volatilidad extrema",
+                "evidencia": f"En régimen volátil el acierto fue {wr_vol:.1f}% en {n_vol} ops, contra {wr_global:.1f}% global",
                 "efecto": "En régimen volátil el nivel de la señal baja un escalón."})
-        n_contra = aut.get("Contra la tendencia del régimen", 0)
-        if n_contra / total_perd >= 0.20:
+        wr_rango, n_rango = _wr(lambda h: _regimen_de(h) == 0)
+        if n_rango >= 30 and wr_rango < wr_global - 5:
+            lecciones.append({
+                "id": "RANGO_FLOJO",
+                "titulo": "En rango el acierto cae: vara más alta",
+                "evidencia": f"En régimen de rango el acierto fue {wr_rango:.1f}% en {n_rango} ops, contra {wr_global:.1f}% global",
+                "efecto": "En régimen de rango el nivel de la señal baja un escalón."})
+
+        def _es_contra(h):
+            f = h["features"]
+            return ((int(f[24]) == 1 and f[-1] != 1)
+                    or (int(f[24]) == 2 and f[-1] == 1))
+
+        def _es_favor(h):
+            f = h["features"]
+            return ((int(f[24]) == 1 and f[-1] == 1)
+                    or (int(f[24]) == 2 and f[-1] != 1))
+
+        wr_contra, n_contra = _wr(_es_contra)
+        wr_favor, n_favor = _wr(_es_favor)
+        if n_favor >= 30 and n_contra >= 20 and wr_contra < wr_favor - 5:
             lecciones.append({
                 "id": "CONTRA_TENDENCIA",
-                "titulo": "Contra la tendencia se pierde: castigo extra",
-                "evidencia": f"{n_contra} de {total_perd} pérdidas fueron contra la tendencia del régimen",
+                "titulo": "Contra la tendencia rinde menos que a favor",
+                "evidencia": f"Contra la tendencia: {wr_contra:.1f}% en {n_contra} ops; a favor: {wr_favor:.1f}% en {n_favor} ops",
                 "efecto": "Las señales contra la tendencia del régimen bajan un escalón de nivel adicional."})
     por_pd = {}
-    for h in ops_validas_para_vivo(historial):
+    for h in ops:
         clave = (h.get("par"), h.get("señal"))
         n, g = por_pd.get(clave, (0, 0))
         por_pd[clave] = (n + 1, g + (1 if h["resultado"] == "GANADA" else 0))
@@ -562,12 +590,12 @@ def aplicar_lecciones(nivel, fv, direccion, par, lecciones):
             idx -= 1
             motivos.append(motivo)
 
-    if "RANGO_SIN_GATILLO" in ids and regimen == 0 and not _gatillo_rechazo(fv, es_call):
-        _baja("rango sin gatillo de rechazo (pin bar/envolvente/mecha)")
+    if "RANGO_FLOJO" in ids and regimen == 0:
+        _baja("régimen de rango con acierto medido bajo el global")
     if "VOLATILIDAD" in ids and regimen == 3:
-        _baja("régimen volátil castigado por las pérdidas")
+        _baja("régimen volátil con acierto medido bajo el global")
     if "CONTRA_TENDENCIA" in ids and ((regimen == 1 and not es_call) or (regimen == 2 and es_call)):
-        _baja("contra la tendencia del régimen")
+        _baja("contra la tendencia del régimen (medido peor que a favor)")
     for l in lecciones:
         if l["id"] == "DIRECCION_CASTIGADA" and any(
                 c.startswith(f"{par} {direccion} ") or c.startswith(f"{par} {direccion}(")
@@ -844,3 +872,212 @@ def descargar_historico_binance(symbol, dias, sesion=None):
         df[col] = pd.to_numeric(df[col], errors="coerce")
     df.index = pd.to_datetime(df["timestamp"], unit="ms", utc=True)
     return df[["open", "high", "low", "close", "volume"]].dropna()
+
+# ============================================================
+# MEMORIA DE PATRONES + CALIBRACION EMPIRICA (v3.18)
+# ============================================================
+# Lo que Jose pidio el 2026-11-11: que la app aprenda de TODAS las
+# perdidas Y ganancias mirando la accion del precio que enseñan los
+# cursos de trading: rompimientos, velas martillo (pin bar), respeto
+# del nivel anterior, envolventes, mechas de rechazo. Esas variables YA
+# se guardan con cada operacion (v3.2); lo que faltaba era MEDIR que
+# contextos precedieron victorias y cuales precedieron derrotas, y
+# dejar que esa medida mueva el nivel de las señales nuevas.
+# La medida del historial real (995 ops, 2026-11-11) sorprendio: los
+# patrones de rechazo A FAVOR perdian mucho (pin bar a favor 20,0% en
+# 30 ops; gatillo de rechazo 22,6% en 53 ops; mecha larga a favor
+# 20,5% en 44 ops), mientras el pin bar EN CONTRA ganaba 79,2% (24
+# ops). En velas de 1 minuto el rechazo clasico se comporta al reves:
+# el impulso manda. Por eso la memoria NO trae reglas fijas de libro:
+# trae lo que MIDIO en las operaciones de ESTA app, con muestra minima
+# y suavizado hacia el acierto global, y se corrige sola si el
+# comportamiento cambia al acumular mas operaciones.
+
+MIN_MUESTRA_CONTEXTO = 20   # un contexto "habla" solo con 20+ ops decisivas
+K_SUAVIZADO = 20            # el acierto global pesa como 20 ops previas
+UMBRAL_SUBE_MEMORIA = 53.8  # punto de equilibrio IQ Option (payout 86%)
+UMBRAL_BAJA_MEMORIA = 40.0  # por debajo de esto, el contexto castiga
+
+
+def _decisivas_para_aprender(historial):
+    """Decisivas con variables completas; prefiere etiquetas limpias
+    cuando hay >=60 (la misma regla del modelo en vivo, v3.8)."""
+    ops = ops_validas_para_vivo(historial)
+    limpias = [h for h in ops if h.get("fuente_datos") in ("Twelve Data", "Binance")]
+    return limpias if len(limpias) >= MIN_OPS_MODELO_VIVO else ops
+
+
+def _fv_de_op(h):
+    """(dict de variables por nombre, es_call) de una operacion guardada."""
+    f = h["features"]
+    fv = dict(zip(FEATURES_BASE, f[:len(FEATURES_BASE)]))
+    return fv, f[-1] == 1
+
+
+def _contextos_de(fv, es_call):
+    """Contextos de accion del precio de la vela actual. Las claves son
+    estables: la misma funcion clasifica el historial guardado y la
+    señal nueva, asi la memoria y la aplicacion nunca discrepan."""
+    s = 1.0 if es_call else -1.0
+    pin = float(fv.get("pin_bar", 0) or 0)
+    env = float(fv.get("envolvente", 0) or 0)
+    rup = float(fv.get("ruptura", 0) or 0)
+    mecha_sup = float(fv.get("mecha_sup", 0) or 0)
+    mecha_inf = float(fv.get("mecha_inf", 0) or 0)
+    # OJO: distancia 0.0 = precio PEGADO al nivel; no usar "or 99" porque
+    # 0.0 es falsy y lo mandaria a "lejos". Solo None (sin dato) es 99.
+    d_res = fv.get("dist_resistencia", 99)
+    d_res = 99.0 if d_res is None else float(d_res)
+    d_sop = fv.get("dist_soporte", 99)
+    d_sop = 99.0 if d_sop is None else float(d_sop)
+    inside = float(fv.get("inside_bar", 0) or 0)
+
+    def _lado(v):
+        return "a favor" if v * s > 0 else ("en contra" if v * s < 0 else "ausente")
+
+    dmin = min(d_res, d_sop)
+    mecha_fav = mecha_inf if es_call else mecha_sup
+    if dmin <= 0.5:
+        nivel = "cerca + rechazo" if mecha_fav >= 0.5 else "cerca sin rechazo"
+    elif dmin >= 1.5:
+        nivel = "lejos de niveles"
+    else:
+        nivel = "distancia media"
+    return {
+        "pin bar": _lado(pin),
+        "envolvente": _lado(env),
+        "ruptura": _lado(rup),
+        "gatillo": "con gatillo" if _gatillo_rechazo(fv, es_call) else "sin gatillo",
+        "nivel": nivel,
+        "mecha": "mecha larga a favor" if mecha_fav >= 0.5 else "sin mecha larga",
+        "inside": "inside bar" if inside == 1 else "no inside",
+    }
+
+
+def memoria_patrones(historial):
+    """Tabla contexto -> {n, ganadas, acierto, ajustado, habla}.
+
+    El acierto AJUSTADO suaviza hacia el acierto global (prior de
+    K_SUAVIZADO operaciones): un contexto con pocas operaciones no
+    puede disparar un ajuste por si solo, y uno con muchas manda.
+    Devuelve {"global", "n_ops", "contextos"}; las claves de contextos
+    son tuplas (nombre, clave). Solo se calcula en memoria, nunca se
+    guarda: siempre refleja el historial actual."""
+    ops = _decisivas_para_aprender(historial)
+    if not ops:
+        return {"global": None, "n_ops": 0, "contextos": {}}
+    ganadas = sum(1 for h in ops if h["resultado"] == "GANADA")
+    wr_global = ganadas / len(ops)
+    celdas = {}
+    for h in ops:
+        fv, es_call = _fv_de_op(h)
+        for nombre, clave in _contextos_de(fv, es_call).items():
+            c = celdas.setdefault((nombre, clave), [0, 0])
+            c[0] += 1
+            c[1] += 1 if h["resultado"] == "GANADA" else 0
+    contextos = {}
+    for k, (n, wins) in celdas.items():
+        ajustado = (wins + K_SUAVIZADO * wr_global) / (n + K_SUAVIZADO)
+        contextos[k] = {"n": n, "ganadas": wins,
+                        "acierto": round(wins / n * 100, 1),
+                        "ajustado": round(ajustado * 100, 1),
+                        "habla": n >= MIN_MUESTRA_CONTEXTO}
+    return {"global": round(wr_global * 100, 1), "n_ops": len(ops),
+            "contextos": contextos}
+
+
+def aplicar_memoria(nivel, fv, direccion, memoria):
+    """Ajusta el nivel de una señal nueva segun la memoria de patrones:
+    como maximo UN escalon, en un solo sentido (el contexto mas extremo
+    que hable). Nunca bloquea ni cambia la direccion. Devuelve
+    (nivel_ajustado, [motivos])."""
+    if not memoria or not memoria.get("contextos") or nivel not in ("Baja", "Media", "Alta"):
+        return nivel, []
+    orden = ["Baja", "Media", "Alta"]
+    idx = orden.index(nivel)
+    ctx = _contextos_de(fv, direccion == "CALL")
+    peor = None
+    mejor = None
+    for nombre, clave in ctx.items():
+        celda = memoria["contextos"].get((nombre, clave))
+        if not celda or not celda["habla"]:
+            continue
+        aj = celda["ajustado"]
+        if peor is None or aj < peor[0]:
+            peor = (aj, nombre, clave, celda)
+        if mejor is None or aj > mejor[0]:
+            mejor = (aj, nombre, clave, celda)
+    motivos = []
+    if peor is not None and peor[0] <= UMBRAL_BAJA_MEMORIA:
+        if idx > 0:
+            idx -= 1
+            motivos.append(f"{peor[1]} '{peor[2]}' ganó {peor[3]['acierto']}% en {peor[3]['n']} ops reales")
+    elif mejor is not None and mejor[0] >= UMBRAL_SUBE_MEMORIA:
+        if idx < 2:
+            idx += 1
+            motivos.append(f"{mejor[1]} '{mejor[2]}' ganó {mejor[3]['acierto']}% en {mejor[3]['n']} ops reales")
+    return orden[idx], motivos
+
+
+# Tramos de la confianza MOSTRADA (la que ve Jose en la tarjeta). La
+# calibracion responde: "las señales que mostraron X% ¿cuanto ganaron
+# de verdad?" Mezcla las dos procedencias (probabilidad del modelo y
+# puntaje) a proposito: calibra el numero que ve el usuario.
+TRAMOS_CONFIANZA = [(0, 50, "<50"), (50, 55, "50-54"), (55, 60, "55-59"),
+                    (60, 65, "60-64"), (65, 70, "65-69"), (70, 101, "70+")]
+
+
+def _tramo_de(confianza):
+    try:
+        c = int(float(confianza))
+    except (TypeError, ValueError):
+        c = 50
+    for lo, hi, etiqueta in TRAMOS_CONFIANZA:
+        if lo <= c < hi:
+            return etiqueta
+    return "70+"
+
+
+def calibracion_confianza(historial):
+    """Tramo de confianza mostrada -> acierto medido (con suavizado).
+    Devuelve {"global", "n_ops", "tramos"}; cada tramo trae n, ganadas,
+    acierto, ajustado y habla (20+ ops)."""
+    ops = _decisivas_para_aprender(historial)
+    if not ops:
+        return {"global": None, "n_ops": 0, "tramos": {}}
+    ganadas = sum(1 for h in ops if h["resultado"] == "GANADA")
+    wr_global = ganadas / len(ops)
+    celdas = {}
+    for h in ops:
+        etiqueta = _tramo_de(h.get("confianza"))
+        c = celdas.setdefault(etiqueta, [0, 0])
+        c[0] += 1
+        c[1] += 1 if h["resultado"] == "GANADA" else 0
+    tramos = {}
+    for etiqueta, (n, wins) in celdas.items():
+        ajustado = (wins + K_SUAVIZADO * wr_global) / (n + K_SUAVIZADO)
+        tramos[etiqueta] = {"n": n, "ganadas": wins,
+                            "acierto": round(wins / n * 100, 1),
+                            "ajustado": round(ajustado * 100, 1),
+                            "habla": n >= MIN_MUESTRA_CONTEXTO}
+    return {"global": round(wr_global * 100, 1), "n_ops": len(ops),
+            "tramos": tramos}
+
+
+def nivel_calibrado(confianza, historial):
+    """Nivel desde el acierto MEDIDO del tramo de confianza, o (None, "")
+    si el tramo no tiene muestra suficiente (entonces la app usa sus
+    reglas de siempre). Alta = el tramo gano >=53,8% (equilibrio);
+    Media = >=45%; si no, Baja. El numero de confianza que se muestra
+    y se guarda NO se toca: calibrar el numero guardado realimentaria
+    la tabla y la corromperia."""
+    cal = calibracion_confianza(historial)
+    etiqueta = _tramo_de(confianza)
+    celda = cal["tramos"].get(etiqueta)
+    if not celda or not celda["habla"]:
+        return None, ""
+    aj = celda["ajustado"]
+    nivel = "Alta" if aj >= 53.8 else ("Media" if aj >= 45 else "Baja")
+    nota = (f"Calibrado: las señales con confianza {etiqueta}% ganaron "
+            f"{celda['acierto']}% en {celda['n']} ops reales")
+    return nivel, nota
