@@ -37,6 +37,8 @@ Nada en este modulo lanza excepciones hacia la app.
 """
 
 import json
+import time
+
 import requests
 
 PRESETS = {
@@ -55,6 +57,39 @@ PRESETS = {
 }
 
 _CONFIG = {"proveedor": "gemini", "api_key": "", "modelo": "", "base_url": ""}
+
+# v3.17.5: causa del ultimo fallo, para que la app pueda decirle al
+# usuario QUE paso (sobrecarga, limite, clave, modelo...) en vez de un
+# "no respondio" generico que no permite hacer nada. Nunca guarda la clave.
+_ULTIMO_ERROR = {"estado": None, "detalle": ""}
+
+
+def ultimo_error():
+    """Frase en español con la causa del último fallo del LLM ("" si no hubo)."""
+    e = _ULTIMO_ERROR["estado"]
+    if e is None:
+        return ""
+    if e == 503:
+        return ("Gemini está sobrecargado en este momento (nivel gratuito). "
+                "No es tu clave: inténtalo de nuevo en unos minutos.")
+    if e == 429:
+        return ("Se alcanzó el límite de uso del nivel gratuito. "
+                "Espera unos minutos e inténtalo de nuevo.")
+    if e in (401, 403):
+        return ("La clave de API no fue aceptada. Revisa ia_api_key en Secrets: "
+                "debe ser la clave vigente, sin espacios ni caracteres de más.")
+    if e == 404:
+        return ("El modelo de IA no está disponible en este momento. "
+                "Avísale a Muse para actualizarlo.")
+    if e == "timeout":
+        return "La IA tardó demasiado en responder. Inténtalo de nuevo."
+    if e == "sin_respuesta":
+        return "La IA respondió pero sin texto aprovechable. Inténtalo de nuevo."
+    if e in ("sin_clave", "sin_config"):
+        return "No hay clave de IA configurada. Revisa ia_api_key en Secrets."
+    if e == "error":
+        return "No se pudo conectar con la IA (red). Inténtalo de nuevo."
+    return f"La IA no respondió (error {e}). Inténtalo de nuevo."
 
 SISTEMA = (
     "Eres un trader profesional senior especializado en opciones binarias de "
@@ -106,8 +141,15 @@ def _chat(mensajes, max_tokens=220, timeout=14):
     Gemini usa su endpoint NATIVO (generateContent con x-goog-api-key):
     verificado con clave real; su ruta compatible-OpenAI respondia con
     timeouts. Los demas proveedores usan chat/completions estilo OpenAI.
+
+    v3.17.5: cada fallo queda registrado en _ULTIMO_ERROR (ver
+    ultimo_error()) y las llamadas LARGAS (Diario, timeout>=30) reintentan
+    UNA vez tras 15 s ante 503/429, que es la sobrecarga tipica del nivel
+    gratuito de Gemini. Las llamadas por señal (timeout corto) no reintentan:
+    no deben frenar el ciclo de 2 minutos.
     """
     if not disponible():
+        _ULTIMO_ERROR.update(estado="sin_clave", detalle="")
         return None
     sistema = ""
     usuario = ""
@@ -116,42 +158,75 @@ def _chat(mensajes, max_tokens=220, timeout=14):
             sistema = m.get("content", "")
         elif m.get("role") == "user":
             usuario = m.get("content", "")
+    intentos = 2 if timeout >= 30 else 1
     if _CONFIG["proveedor"] == "gemini" and not _CONFIG["base_url"]:
         modelo = _CONFIG["modelo"] or PRESETS["gemini"]["modelo"]
-        try:
-            r = requests.post(
-                f"https://generativelanguage.googleapis.com/v1beta/models/{modelo}:generateContent",
-                headers={"x-goog-api-key": _CONFIG["api_key"],
-                         "Content-Type": "application/json"},
-                json={"system_instruction": {"parts": [{"text": sistema}]},
-                      "contents": [{"role": "user", "parts": [{"text": usuario}]}],
-                      "generationConfig": {"temperature": 0.2,
-                                           "maxOutputTokens": max_tokens}},
-                timeout=timeout,
-            )
-            if r.status_code != 200:
+        for intento in range(intentos):
+            try:
+                r = requests.post(
+                    f"https://generativelanguage.googleapis.com/v1beta/models/{modelo}:generateContent",
+                    headers={"x-goog-api-key": _CONFIG["api_key"],
+                             "Content-Type": "application/json"},
+                    json={"system_instruction": {"parts": [{"text": sistema}]},
+                          "contents": [{"role": "user", "parts": [{"text": usuario}]}],
+                          "generationConfig": {"temperature": 0.2,
+                                               "maxOutputTokens": max_tokens}},
+                    timeout=timeout,
+                )
+            except requests.exceptions.Timeout:
+                _ULTIMO_ERROR.update(estado="timeout", detalle="")
                 return None
-            partes = r.json()["candidates"][0]["content"]["parts"]
+            except Exception as exc:
+                _ULTIMO_ERROR.update(estado="error", detalle=type(exc).__name__)
+                return None
+            if r.status_code != 200:
+                _ULTIMO_ERROR.update(estado=r.status_code, detalle=str(r.text)[:120])
+                if r.status_code in (503, 429) and intento + 1 < intentos:
+                    time.sleep(15)
+                    continue
+                return None
+            try:
+                partes = r.json()["candidates"][0]["content"]["parts"]
+            except (KeyError, IndexError, TypeError, ValueError):
+                _ULTIMO_ERROR.update(estado="sin_respuesta", detalle="")
+                return None
+            _ULTIMO_ERROR.update(estado=None, detalle="")
             return "".join(p.get("text", "") for p in partes)
-        except Exception:
-            return None
+        return None
     url, modelo = _endpoint_y_modelo()
     if not url or not modelo:
+        _ULTIMO_ERROR.update(estado="sin_config", detalle="")
         return None
-    try:
-        r = requests.post(
-            url,
-            headers={"Authorization": f"Bearer {_CONFIG['api_key']}",
-                     "Content-Type": "application/json"},
-            json={"model": modelo, "messages": mensajes,
-                  "temperature": 0.2, "max_tokens": max_tokens},
-            timeout=timeout,
-        )
-        if r.status_code != 200:
+    for intento in range(intentos):
+        try:
+            r = requests.post(
+                url,
+                headers={"Authorization": f"Bearer {_CONFIG['api_key']}",
+                         "Content-Type": "application/json"},
+                json={"model": modelo, "messages": mensajes,
+                      "temperature": 0.2, "max_tokens": max_tokens},
+                timeout=timeout,
+            )
+        except requests.exceptions.Timeout:
+            _ULTIMO_ERROR.update(estado="timeout", detalle="")
             return None
-        return r.json()["choices"][0]["message"]["content"]
-    except Exception:
-        return None
+        except Exception as exc:
+            _ULTIMO_ERROR.update(estado="error", detalle=type(exc).__name__)
+            return None
+        if r.status_code != 200:
+            _ULTIMO_ERROR.update(estado=r.status_code, detalle=str(r.text)[:120])
+            if r.status_code in (503, 429) and intento + 1 < intentos:
+                time.sleep(15)
+                continue
+            return None
+        try:
+            texto = r.json()["choices"][0]["message"]["content"]
+        except (KeyError, IndexError, TypeError, ValueError):
+            _ULTIMO_ERROR.update(estado="sin_respuesta", detalle="")
+            return None
+        _ULTIMO_ERROR.update(estado=None, detalle="")
+        return texto
+    return None
 
 
 def _extraer_json(texto):
