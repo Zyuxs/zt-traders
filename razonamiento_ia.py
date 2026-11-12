@@ -31,6 +31,16 @@ se cambia de proveedor/modelo SOLO desde los Secrets, sin tocar codigo:
   ia_modelo    = "..."           (opcional: usa el del preset)
   ia_base_url  = "https://..."   (solo para "personalizado")
 
+Respaldo automatico (v3.17.6): si el proveedor principal devuelve 429
+(limite) o 503 (sobrecarga) o falla, la capa reintenta con un SEGUNDO
+proveedor sin que la app se entere. Cada proveedor tiene su propio cupo
+gratuito, asi que el limite de uno no tumba la capa. Para Qwen por Groq
+(gratis, console.groq.com, registro solo con correo):
+  ia_proveedor_respaldo = "groq"
+  ia_api_key_respaldo   = "gsk_..."      (la clave de Groq)
+  ia_modelo_respaldo    = "qwen3-32b"   (opcional: Qwen 3 de 32B en Groq)
+Sin respaldo configurado, la capa se comporta como antes.
+
 Si no hay clave, o la API falla, o responde tarde: TODO devuelve
 None / "" y la app sigue funcionando exactamente igual sin esta capa.
 Nada en este modulo lanza excepciones hacia la app.
@@ -56,7 +66,10 @@ PRESETS = {
     },
 }
 
-_CONFIG = {"proveedor": "gemini", "api_key": "", "modelo": "", "base_url": ""}
+_CONFIG = {"proveedor": "gemini", "api_key": "", "modelo": "", "base_url": "",
+           "proveedor_respaldo": "", "api_key_respaldo": "",
+           "modelo_respaldo": "", "base_url_respaldo": ""}
+_ULTIMO_PROVEEDOR = {"nombre": ""}
 
 # v3.17.5: causa del ultimo fallo, para que la app pueda decirle al
 # usuario QUE paso (sobrecarga, limite, clave, modelo...) en vez de un
@@ -112,7 +125,9 @@ SISTEMA = (
 )
 
 
-def configurar(proveedor=None, api_key=None, modelo=None, base_url=None):
+def configurar(proveedor=None, api_key=None, modelo=None, base_url=None,
+               proveedor_respaldo=None, api_key_respaldo=None,
+               modelo_respaldo=None, base_url_respaldo=None):
     """Recibe los valores de los Secrets de Streamlit (los pasa la app)."""
     if proveedor:
         _CONFIG["proveedor"] = str(proveedor).strip().lower()
@@ -122,33 +137,119 @@ def configurar(proveedor=None, api_key=None, modelo=None, base_url=None):
         _CONFIG["modelo"] = str(modelo).strip()
     if base_url:
         _CONFIG["base_url"] = str(base_url).strip().rstrip("/")
+    if proveedor_respaldo:
+        _CONFIG["proveedor_respaldo"] = str(proveedor_respaldo).strip().lower()
+    if api_key_respaldo is not None:
+        _CONFIG["api_key_respaldo"] = str(api_key_respaldo).strip()
+    if modelo_respaldo:
+        _CONFIG["modelo_respaldo"] = str(modelo_respaldo).strip()
+    if base_url_respaldo:
+        _CONFIG["base_url_respaldo"] = str(base_url_respaldo).strip().rstrip("/")
+
+
+def _perfiles():
+    """Perfiles utilizables en orden: principal y, si hay clave, respaldo."""
+    lista = []
+    if _CONFIG["api_key"]:
+        lista.append({"proveedor": _CONFIG["proveedor"],
+                      "api_key": _CONFIG["api_key"],
+                      "modelo": _CONFIG["modelo"],
+                      "base_url": _CONFIG["base_url"]})
+    if _CONFIG["api_key_respaldo"]:
+        lista.append({"proveedor": _CONFIG["proveedor_respaldo"] or "groq",
+                      "api_key": _CONFIG["api_key_respaldo"],
+                      "modelo": _CONFIG["modelo_respaldo"],
+                      "base_url": _CONFIG["base_url_respaldo"]})
+    return lista
 
 
 def disponible():
-    return bool(_CONFIG["api_key"])
+    return bool(_perfiles())
 
 
-def _endpoint_y_modelo():
-    preset = PRESETS.get(_CONFIG["proveedor"], {})
-    base = _CONFIG["base_url"] or preset.get("base_url", "")
-    modelo = _CONFIG["modelo"] or preset.get("modelo", "")
-    return (base.rstrip("/") + "/chat/completions") if base else "", modelo
+def respaldo_configurado():
+    """True si hay un segundo proveedor con clave listo para relevar."""
+    return len(_perfiles()) > 1
+
+
+def ultimo_proveedor():
+    """Proveedor que respondio la ultima llamada exitosa ("" si ninguno)."""
+    return _ULTIMO_PROVEEDOR["nombre"]
+
+
+def _intentar(perfil, sistema, usuario, mensajes, max_tokens, timeout):
+    """Un intento contra UN perfil. Devuelve (texto|None, estado).
+
+    Gemini usa su endpoint NATIVO (generateContent con x-goog-api-key):
+    verificado con clave real; su ruta compatible-OpenAI respondia con
+    timeouts. Los demas proveedores usan chat/completions estilo OpenAI.
+    """
+    proveedor = perfil["proveedor"]
+    preset = PRESETS.get(proveedor, {})
+    base = (perfil["base_url"] or preset.get("base_url", "")).rstrip("/")
+    modelo = perfil["modelo"] or preset.get("modelo", "")
+    if proveedor == "gemini" and not perfil["base_url"]:
+        try:
+            r = requests.post(
+                f"https://generativelanguage.googleapis.com/v1beta/models/{modelo}:generateContent",
+                headers={"x-goog-api-key": perfil["api_key"],
+                         "Content-Type": "application/json"},
+                json={"system_instruction": {"parts": [{"text": sistema}]},
+                      "contents": [{"role": "user", "parts": [{"text": usuario}]}],
+                      "generationConfig": {"temperature": 0.2,
+                                           "maxOutputTokens": max_tokens}},
+                timeout=timeout,
+            )
+        except requests.exceptions.Timeout:
+            return None, "timeout"
+        except Exception:
+            return None, "error"
+        if r.status_code != 200:
+            return None, r.status_code
+        try:
+            partes = r.json()["candidates"][0]["content"]["parts"]
+        except (KeyError, IndexError, TypeError, ValueError):
+            return None, "sin_respuesta"
+        return "".join(p.get("text", "") for p in partes), None
+    url = (base + "/chat/completions") if base else ""
+    if not url or not modelo:
+        return None, "sin_config"
+    try:
+        r = requests.post(
+            url,
+            headers={"Authorization": f"Bearer {perfil['api_key']}",
+                     "Content-Type": "application/json"},
+            json={"model": modelo, "messages": mensajes,
+                  "temperature": 0.2, "max_tokens": max_tokens},
+            timeout=timeout,
+        )
+    except requests.exceptions.Timeout:
+        return None, "timeout"
+    except Exception:
+        return None, "error"
+    if r.status_code != 200:
+        return None, r.status_code
+    try:
+        texto = r.json()["choices"][0]["message"]["content"]
+    except (KeyError, IndexError, TypeError, ValueError):
+        return None, "sin_respuesta"
+    return texto, None
 
 
 def _chat(mensajes, max_tokens=220, timeout=14):
     """Una llamada al LLM; devuelve el texto o None ante cualquier fallo.
 
-    Gemini usa su endpoint NATIVO (generateContent con x-goog-api-key):
-    verificado con clave real; su ruta compatible-OpenAI respondia con
-    timeouts. Los demas proveedores usan chat/completions estilo OpenAI.
-
     v3.17.5: cada fallo queda registrado en _ULTIMO_ERROR (ver
-    ultimo_error()) y las llamadas LARGAS (Diario, timeout>=30) reintentan
-    UNA vez tras 15 s ante 503/429, que es la sobrecarga tipica del nivel
-    gratuito de Gemini. Las llamadas por señal (timeout corto) no reintentan:
-    no deben frenar el ciclo de 2 minutos.
+    ultimo_error()).
+    v3.17.6: relevo automatico — si un perfil falla (429, 503, clave,
+    red...), se intenta con el siguiente perfil SIN esperar: cada proveedor
+    tiene su propio cupo gratuito. Solo el ULTIMO perfil, y solo en llamadas
+    LARGAS (Diario, timeout>=30), reintenta una vez tras 15 s ante 503/429.
+    Las llamadas por señal (timeout corto) no duermen: no deben frenar el
+    ciclo de 2 minutos.
     """
-    if not disponible():
+    perfiles = _perfiles()
+    if not perfiles:
         _ULTIMO_ERROR.update(estado="sin_clave", detalle="")
         return None
     sistema = ""
@@ -158,74 +259,21 @@ def _chat(mensajes, max_tokens=220, timeout=14):
             sistema = m.get("content", "")
         elif m.get("role") == "user":
             usuario = m.get("content", "")
-    intentos = 2 if timeout >= 30 else 1
-    if _CONFIG["proveedor"] == "gemini" and not _CONFIG["base_url"]:
-        modelo = _CONFIG["modelo"] or PRESETS["gemini"]["modelo"]
+    for idx, perfil in enumerate(perfiles):
+        es_ultimo = idx == len(perfiles) - 1
+        intentos = 2 if (timeout >= 30 and es_ultimo) else 1
         for intento in range(intentos):
-            try:
-                r = requests.post(
-                    f"https://generativelanguage.googleapis.com/v1beta/models/{modelo}:generateContent",
-                    headers={"x-goog-api-key": _CONFIG["api_key"],
-                             "Content-Type": "application/json"},
-                    json={"system_instruction": {"parts": [{"text": sistema}]},
-                          "contents": [{"role": "user", "parts": [{"text": usuario}]}],
-                          "generationConfig": {"temperature": 0.2,
-                                               "maxOutputTokens": max_tokens}},
-                    timeout=timeout,
-                )
-            except requests.exceptions.Timeout:
-                _ULTIMO_ERROR.update(estado="timeout", detalle="")
-                return None
-            except Exception as exc:
-                _ULTIMO_ERROR.update(estado="error", detalle=type(exc).__name__)
-                return None
-            if r.status_code != 200:
-                _ULTIMO_ERROR.update(estado=r.status_code, detalle=str(r.text)[:120])
-                if r.status_code in (503, 429) and intento + 1 < intentos:
-                    time.sleep(15)
-                    continue
-                return None
-            try:
-                partes = r.json()["candidates"][0]["content"]["parts"]
-            except (KeyError, IndexError, TypeError, ValueError):
-                _ULTIMO_ERROR.update(estado="sin_respuesta", detalle="")
-                return None
-            _ULTIMO_ERROR.update(estado=None, detalle="")
-            return "".join(p.get("text", "") for p in partes)
-        return None
-    url, modelo = _endpoint_y_modelo()
-    if not url or not modelo:
-        _ULTIMO_ERROR.update(estado="sin_config", detalle="")
-        return None
-    for intento in range(intentos):
-        try:
-            r = requests.post(
-                url,
-                headers={"Authorization": f"Bearer {_CONFIG['api_key']}",
-                         "Content-Type": "application/json"},
-                json={"model": modelo, "messages": mensajes,
-                      "temperature": 0.2, "max_tokens": max_tokens},
-                timeout=timeout,
-            )
-        except requests.exceptions.Timeout:
-            _ULTIMO_ERROR.update(estado="timeout", detalle="")
-            return None
-        except Exception as exc:
-            _ULTIMO_ERROR.update(estado="error", detalle=type(exc).__name__)
-            return None
-        if r.status_code != 200:
-            _ULTIMO_ERROR.update(estado=r.status_code, detalle=str(r.text)[:120])
-            if r.status_code in (503, 429) and intento + 1 < intentos:
+            texto, estado = _intentar(perfil, sistema, usuario, mensajes,
+                                      max_tokens, timeout)
+            if texto is not None:
+                _ULTIMO_ERROR.update(estado=None, detalle="")
+                _ULTIMO_PROVEEDOR["nombre"] = perfil["proveedor"]
+                return texto
+            _ULTIMO_ERROR.update(estado=estado, detalle="")
+            if estado in (503, 429) and intento + 1 < intentos:
                 time.sleep(15)
                 continue
-            return None
-        try:
-            texto = r.json()["choices"][0]["message"]["content"]
-        except (KeyError, IndexError, TypeError, ValueError):
-            _ULTIMO_ERROR.update(estado="sin_respuesta", detalle="")
-            return None
-        _ULTIMO_ERROR.update(estado=None, detalle="")
-        return texto
+            break
     return None
 
 
