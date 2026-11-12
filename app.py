@@ -141,6 +141,15 @@
 #     Yahoo lleva "⚠️ retrasado". No cuesta llamadas extra: la linea EN
 #     VIVO ya usaba la misma cadena con cache; ahora tambien se muestra
 #     la fuente que esa cadena devuelve.
+# --- v3.18.2: CRONOMETRO PEGADO EN 02 (reporte de Jose: el conteo de
+#     expiracion se congelaba en 02 varias veces) ---
+# 36) Causa: el cierre corre en el segundo :57 y quizas_entrenar_vivo()
+#     entrenaba el cerebro EN ESE MISMO MOMENTO (cada 20 ops), bloqueando
+#     el fragmento por segundos; el navegador se quedaba con el ultimo
+#     cuadro, que siempre decia 02. Ahora el cierre solo MARCA el
+#     reentrenamiento como pendiente y entrenar_vivo_pendiente() lo corre
+#     en el minuto par (fase 1), fuera de la ventana de expiracion. El
+#     juicio y el registro no cambian: solo se mueve el entrenamiento.
 # ============================================================
 import streamlit as st
 import streamlit.components.v1 as components
@@ -431,9 +440,12 @@ def modelo_vivo_info():
     return nucleo_ia.cargar_modelo_vivo(ARCHIVO_MODELO_VIVO)
 
 def quizas_entrenar_vivo():
-    """Reentrena el modelo en vivo cuando hay operaciones nuevas
-    suficientes. Se llama tras registrar cada operacion; entrenar con
-    cientos de filas toma ~1 segundo y solo ocurre cada 20 operaciones."""
+    """Marca el reentrenamiento del modelo en vivo como pendiente cuando
+    hay operaciones nuevas suficientes. Se llama tras registrar cada
+    operacion. Desde v3.18.2 NO entrena aqui: entrenar en el cierre
+    (segundo :57) bloqueaba el fragmento y congelaba el cronometro de
+    expiracion en 02. El entrenamiento real lo corre
+    entrenar_vivo_pendiente() en el minuto par (fase 1)."""
     try:
         hist = st.session_state.hist_cache
         validas = len(nucleo_ia.ops_validas_para_vivo(hist))
@@ -443,7 +455,21 @@ def quizas_entrenar_vivo():
         entrenadas = info["metricas"]["ejemplos_entrenamiento"] if info else 0
         if info is not None and validas - entrenadas < nucleo_ia.REENTRENAR_CADA_OPS:
             return
-        nuevo = nucleo_ia.entrenar_modelo_vivo(hist)
+        st.session_state.reentrenar_pendiente = True
+    except Exception:
+        pass
+
+def entrenar_vivo_pendiente():
+    """Corre el reentrenamiento marcado como pendiente. Solo se llama en
+    minutos pares (fase 1), nunca en el minuto de la operacion: el
+    cronometro de expiracion no debe congelarse por el entrenamiento.
+    Si la sesion muere con la marca puesta, no se pierde nada: el
+    proximo cierre vuelve a evaluar la condicion desde el disco."""
+    if not st.session_state.get("reentrenar_pendiente"):
+        return
+    st.session_state.reentrenar_pendiente = False
+    try:
+        nuevo = nucleo_ia.entrenar_modelo_vivo(st.session_state.hist_cache)
         if nuevo is not None:
             nucleo_ia.guardar_modelo(nuevo, ARCHIVO_MODELO_VIVO, "modelo_vivo_metricas.json")
             modelo_vivo_info.clear()
@@ -1138,7 +1164,7 @@ st.markdown(CSS, unsafe_allow_html=True)
 # ---------------- Parte estatica (ya NO se recarga cada segundo) ----------------
 
 st.markdown('<div class="main-container">', unsafe_allow_html=True)
-st.markdown(f'<div class="header"><span class="badge-version">v3.18.1</span><h1>⚡ ZT TRADERS PRO</h1><p>User: {st.session_state.usuario_actual} · IA AUTO-APRENDIZAJE</p></div>', unsafe_allow_html=True)
+st.markdown(f'<div class="header"><span class="badge-version">v3.18.2</span><h1>⚡ ZT TRADERS PRO</h1><p>User: {st.session_state.usuario_actual} · IA AUTO-APRENDIZAJE</p></div>', unsafe_allow_html=True)
 if st.query_params.get("zt_token"):
     st.caption("✅ Este dispositivo está activado: guarda ESTA página en Favoritos o en la pantalla de inicio "
                "(con la dirección completa, tal como está arriba) y la próxima vez entrarás directo, sin escribir la clave.")
@@ -1804,6 +1830,13 @@ def zona_dinamica(codigo_f, tipo_f):
     # (ventana de cierre perdida), se cierra ahora con el precio actual.
     if minuto_es_par and st.session_state.estado == 'operando' and not st.session_state.resultado_guardado:
         cerrar_operacion(codigo_f, tipo_f)
+
+    # v3.18.2: el reentrenamiento pendiente corre en minuto par (fase 1),
+    # nunca en el minuto de la operacion. Antes corria dentro del cierre
+    # (segundo :57) y el cronometro de expiracion se quedaba pegado en 02
+    # mientras el cerebro entrenaba.
+    if minuto_es_par:
+        entrenar_vivo_pendiente()
 
     # Estadisticas + reloj (v3.17.3: marcador y estadisticas solo los ve
     # el Admin Master; los clientes ven solo el indicador EN VIVO).
