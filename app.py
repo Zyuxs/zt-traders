@@ -118,6 +118,7 @@
 #     y se respalda solo antes de un Reset, como el historial.
 # ============================================================
 import streamlit as st
+import streamlit.components.v1 as components
 import pandas as pd
 import requests
 import yfinance as yf
@@ -957,7 +958,10 @@ def reproducir_voz(mensaje):
     }})();
     </script>
     """
-    st.html(js_code)
+    # v3.17.4: components.html, NO st.html — st.html no ejecuta <script> y
+    # la voz moria en silencio (igual que el grafico). El aviso de
+    # deprecacion en el log es solo eso, un aviso: el iframe sigue andando.
+    components.html(js_code, height=0, width=0)
 
 PARES = {
     'Bitcoin': {'codigo': 'BTCUSDT', 'tipo': 'crypto'}, 'Ethereum': {'codigo': 'ETHUSDT', 'tipo': 'crypto'},
@@ -1078,7 +1082,7 @@ st.markdown(CSS, unsafe_allow_html=True)
 # ---------------- Parte estatica (ya NO se recarga cada segundo) ----------------
 
 st.markdown('<div class="main-container">', unsafe_allow_html=True)
-st.markdown(f'<div class="header"><span class="badge-version">v3.17.3</span><h1>⚡ ZT TRADERS PRO</h1><p>User: {st.session_state.usuario_actual} · IA AUTO-APRENDIZAJE</p></div>', unsafe_allow_html=True)
+st.markdown(f'<div class="header"><span class="badge-version">v3.17.4</span><h1>⚡ ZT TRADERS PRO</h1><p>User: {st.session_state.usuario_actual} · IA AUTO-APRENDIZAJE</p></div>', unsafe_allow_html=True)
 if st.query_params.get("zt_token"):
     st.caption("✅ Este dispositivo está activado: guarda ESTA página en Favoritos o en la pantalla de inicio "
                "(con la dirección completa, tal como está arriba) y la próxima vez entrarás directo, sin escribir la clave.")
@@ -1133,7 +1137,9 @@ widget_html = f"""
 </div>
 """
 with col_izq:
-    st.html(widget_html)
+    # v3.17.4: el widget de TradingView necesita su <script> y st.html no
+    # ejecuta scripts: por eso el grafico salia en blanco. Vuelve al iframe.
+    components.html(widget_html, height=345)
 
 # La zona de señales en vivo se ancla en la columna DERECHA (v3.13; en
 # v3.10 iba bajo el grafico). Los paneles quedan debajo, en expanders.
