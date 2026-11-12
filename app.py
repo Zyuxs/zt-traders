@@ -1078,7 +1078,7 @@ st.markdown(CSS, unsafe_allow_html=True)
 # ---------------- Parte estatica (ya NO se recarga cada segundo) ----------------
 
 st.markdown('<div class="main-container">', unsafe_allow_html=True)
-st.markdown(f'<div class="header"><span class="badge-version">v3.17.2</span><h1>⚡ ZT TRADERS PRO</h1><p>User: {st.session_state.usuario_actual} · IA AUTO-APRENDIZAJE</p></div>', unsafe_allow_html=True)
+st.markdown(f'<div class="header"><span class="badge-version">v3.17.3</span><h1>⚡ ZT TRADERS PRO</h1><p>User: {st.session_state.usuario_actual} · IA AUTO-APRENDIZAJE</p></div>', unsafe_allow_html=True)
 if st.query_params.get("zt_token"):
     st.caption("✅ Este dispositivo está activado: guarda ESTA página en Favoritos o en la pantalla de inicio "
                "(con la dirección completa, tal como está arriba) y la próxima vez entrarás directo, sin escribir la clave.")
@@ -1303,8 +1303,12 @@ if st.session_state.usuario_actual.startswith("👑"):
         # precio de IQ Option en el mismo momento.
         _par_prueba = PARES.get(st.session_state.get("par_sel", ""), {})
         _cod_prueba = _par_prueba.get("codigo", "EURUSD=X")
-        if _par_prueba.get("tipo", "forex") == "forex" and st.button(
-                "🧪 Probar Finnhub contra Twelve y Yahoo (par seleccionado)", width="stretch"):
+        _nombre_prueba = st.session_state.get("par_sel", "")
+        if _par_prueba.get("tipo", "forex") != "forex":
+            # v3.17.3: el boton ya no se esconde en cripto; la prueba usa EUR/USD.
+            _cod_prueba = "EURUSD=X"
+            _nombre_prueba = "EUR/USD (prueba)"
+        if st.button("🧪 Probar Finnhub contra Twelve y Yahoo (par seleccionado)", width="stretch"):
             _pf = _precio_finnhub(_cod_prueba)
             _pt = _precio_twelvedata(_cod_prueba)
             _py = _precio_yahoo(_cod_prueba)
@@ -1313,7 +1317,7 @@ if st.session_state.usuario_actual.startswith("👑"):
                 return f"{v:.5f}" if v else "sin respuesta"
             def _dif(a, b):
                 return f"{abs(a - b) / _pip:.1f} pips" if (a and b) else "—"
-            st.caption(f"🧪 {st.session_state.get('par_sel', '')} · {ahora_local().strftime('%H:%M:%S')} — "
+            st.caption(f"🧪 {_nombre_prueba} · {ahora_local().strftime('%H:%M:%S')} — "
                        f"Finnhub: {_fmt(_pf)} · Twelve Data: {_fmt(_pt)} · Yahoo: {_fmt(_py)} · "
                        f"Finnhub↔Twelve: {_dif(_pf, _pt)} · Finnhub↔Yahoo: {_dif(_pf, _py)}. "
                        f"Compáralos con IQ Option en este mismo momento: la fuente buena queda a 1 pip o menos de IQ.")
@@ -1362,211 +1366,217 @@ elif _info_modelo:
 
 
 # ---------------- Panel de aprendizaje en vivo (visible para todos) ----------------
-with st.expander("📈 Aprendizaje en vivo — así va aprendiendo la app"):
-    _hist = st.session_state.hist_cache
-    # v3.17.1: la descarga del historial solo existia en el Respaldo, que
-    # solo se muestra con sesion de Admin Master; con sesion de licencia
-    # no se veia. Ahora tambien esta aqui, visible para todos.
-    # v3.17.2: key distinta obligatoria — sin ella, en sesion Admin este
-    # boton chocaba con el identico del Respaldo (StreamlitDuplicateElementId).
-    st.download_button("⬇️ Descargar historial.json (operaciones reales)",
-                       data=json.dumps(_hist, indent=2, ensure_ascii=False),
-                       file_name=f"historial_{ahora_local().strftime('%Y%m%d_%H%M')}.json",
-                       mime="application/json", width="stretch", key="dl_historial_aprendizaje")
-    _validas = nucleo_ia.ops_validas_para_vivo(_hist)
-    _n_val = len(_validas)
-    _vivo = modelo_vivo_info()
-    if _vivo:
-        _mv = _vivo["metricas"]
-        st.success(f"🧠 Cerebro en vivo ACTIVO — entrenado con {_mv['ejemplos_entrenamiento']} operaciones reales "
-                   f"({_mv['fecha_entrenamiento']}). En operaciones que no vio al entrenar: acierto "
-                   f"{_mv['winrate_prueba_%']}% en total y {_mv['precision_filtro_0.55_%']}% en las que su "
-                   f"probabilidad fue ≥55%. Se reentrena solo cada {nucleo_ia.REENTRENAR_CADA_OPS} operaciones nuevas.")
-    else:
-        st.info(f"El cerebro en vivo se activa con {nucleo_ia.MIN_OPS_MODELO_VIVO} operaciones reales registradas "
-                f"(cada señal se juzga con el precio de entrada y el de cierre: la app sabe si ganó o perdió, y de eso aprende). "
-                f"Llevas {_n_val}.")
-        st.progress(min(_n_val / nucleo_ia.MIN_OPS_MODELO_VIVO, 1.0))
-    if _n_val:
-        def _tabla_vivo(clave, etiqueta):
-            grupos = {}
-            for _h in _validas:
-                k = _h.get(clave) or "—"
-                a, b = grupos.get(k, (0, 0))
-                grupos[k] = (a + 1, b + (1 if _h["resultado"] == "GANADA" else 0))
-            filas = [{etiqueta: k, "ops": n, "ganadas": g,
-                      "acierto_%": round(g / n * 100, 1) if n else 0.0}
-                     for k, (n, g) in sorted(grupos.items())]
-            return pd.DataFrame(filas)
-        _ganadas = sum(1 for _h in _validas if _h["resultado"] == "GANADA")
-        st.caption(f"Operaciones reales registradas: {_n_val} · Acierto global: {round(_ganadas / _n_val * 100, 1)}% "
-                   f"(con payout 86% en IQ Option necesitas más del 53,8% para ganar dinero).")
-        _n_empates = sum(1 for _h in _hist if _h.get("resultado") == "EMPATE")
-        if _n_empates:
-            st.caption(f"↔️ Empates (el precio de cierre fue igual al de entrada; en IQ Option te devuelven el monto): "
-                       f"{_n_empates}. No cuentan como pérdida ni entran al aprendizaje del cerebro.")
-        if _n_val >= 20:
-            _espejo = round((_n_val - _ganadas) / _n_val * 100, 1)
-            st.caption(f"🔁 Señal espejo: operando TODO al revés de lo que dijo la app, el acierto habría sido {_espejo}%. "
-                       f"Si el espejo supera al derecho por mucho, hay un sesgo que corregir, no mala suerte.")
-            for _dir in ("CALL", "PUT"):
-                _sub = [_h for _h in _validas if _h.get("señal") == _dir]
-                if len(_sub) >= 20:
-                    _wr = sum(1 for _h in _sub if _h["resultado"] == "GANADA") / len(_sub) * 100
-                    if _wr < 40:
-                        st.warning(f"⚠️ Sesgo {_dir}: solo {_wr:.1f}% de acierto en {len(_sub)} operaciones. "
-                                   f"Esa dirección está rindiendo muy por debajo del azar; el cerebro lo tiene en cuenta al entrenar.")
-                    elif _wr >= 58:
-                        st.success(f"✅ {_dir} viene fuerte: {_wr:.1f}% de acierto en {len(_sub)} operaciones.")
-        _limpias = sum(1 for _h in _validas if _h.get("fuente_datos") in ("Twelve Data", "Binance"))
-        st.caption(f"🎯 Operaciones con etiqueta limpia (juzgadas con precio sincronizado de Twelve Data o Binance): "
-                   f"{_limpias} de {_n_val}. Al llegar a {nucleo_ia.MIN_OPS_MODELO_VIVO} limpias, el cerebro entrenará solo con esas "
-                   f"y dejará fuera las que se juzgaron con el precio retrasado de Yahoo.")
-        _n_finnhub = sum(1 for _h in _validas if _h.get("fuente_datos") == "Finnhub")
-        if _n_finnhub:
-            st.caption(f"📡 Operaciones juzgadas por Finnhub (precio en vivo sin techo diario): {_n_finnhub} de {_n_val}. "
-                       f"Su etiqueta está EN VERIFICACIÓN: contará como limpia cuando se confirme en vivo que su precio "
-                       f"va parejo con IQ Option (como se hizo con Twelve Data).")
-        _postura, _post_wr, _post_n = nucleo_ia.postura_sesion(_hist)
-        if _postura == "REDUCIR":
-            st.warning(f"🧭 Postura de la sesión: **REDUCIR** — el acierto reciente es {_post_wr}% en las últimas {_post_n} operaciones. "
-                       f"La recomendación del entrenador de exposición: opera solo señales de Nivel Alta o descansa el par un rato.")
-        elif _postura == "NEUTRA":
-            st.info(f"🧭 Postura de la sesión: **NEUTRA** — acierto reciente {_post_wr}% en las últimas {_post_n} operaciones. Sé selectivo: prioriza Nivel Alta y Media.")
-        elif _postura == "PLENA":
-            st.success(f"🧭 Postura de la sesión: **PLENA** — acierto reciente {_post_wr}% en las últimas {_post_n} operaciones. El sistema viene rindiendo; mantén la disciplina igual.")
-        _autopsia = nucleo_ia.autopsia_perdidas(_hist)
-        _n_perdidas = sum(_autopsia.values())
-        if _n_perdidas:
-            st.caption("🔬 Autopsia de pérdidas — de qué están muriendo las operaciones:")
-            if _n_perdidas >= 10:
-                _filas_aut = [{"causa probable": c, "pérdidas": n,
-                               "%": round(n / _n_perdidas * 100, 1)} for c, n in _autopsia.items()]
-            else:
-                _filas_aut = [{"causa probable": c, "pérdidas": n,
-                               "%": "muestra chica"} for c, n in _autopsia.items()]
-            st.dataframe(pd.DataFrame(_filas_aut), width="stretch", hide_index=True)
-        _lecciones = nucleo_ia.lecciones_aprendidas(_hist)
-        if _lecciones:
-            st.caption("📓 Lecciones de la experiencia — lo que la app aprendió de sus propias pérdidas. "
-                       "Ya se aplican solas a las señales nuevas (bajan el nivel en los contextos que castigan):")
-            for _l in _lecciones:
-                st.info(f"**{_l['titulo']}**\n\n🔍 Evidencia: {_l['evidencia']}.\n\n🛠 Ajuste activo: {_l['efecto']}")
-        elif _n_perdidas >= 10:
-            st.caption("📓 Todavía sin lecciones automáticas: se activan cuando una causa de pérdida domina "
-                       "con 20+ pérdidas registradas (muestra suficiente para no aprender de ruido).")
-        _c1, _c2 = st.columns(2)
-        with _c1:
-            st.caption("Acierto por par")
-            st.dataframe(_tabla_vivo("par", "par"), width="stretch", hide_index=True)
-            st.caption("Acierto por dirección")
-            st.dataframe(_tabla_vivo("señal", "dirección"), width="stretch", hide_index=True)
-        with _c2:
-            st.caption("Acierto por nivel de señal")
-            st.dataframe(_tabla_vivo("nivel", "nivel"), width="stretch", hide_index=True)
-            st.caption("Acierto por tipo")
-            st.dataframe(_tabla_vivo("tipo", "tipo"), width="stretch", hide_index=True)
+# v3.17.3: Aprendizaje en vivo solo lo ve el Admin Master; los clientes no ven conteos ni rendimiento.
+if st.session_state.usuario_actual.startswith("👑"):
+    with st.expander("📈 Aprendizaje en vivo — así va aprendiendo la app"):
+        _hist = st.session_state.hist_cache
+        # v3.17.1: la descarga del historial solo existia en el Respaldo, que
+        # solo se muestra con sesion de Admin Master; con sesion de licencia
+        # no se veia. Ahora tambien esta aqui, visible para todos.
+        # v3.17.2: key distinta obligatoria — sin ella, en sesion Admin este
+        # boton chocaba con el identico del Respaldo (StreamlitDuplicateElementId).
+        st.download_button("⬇️ Descargar historial.json (operaciones reales)",
+                           data=json.dumps(_hist, indent=2, ensure_ascii=False),
+                           file_name=f"historial_{ahora_local().strftime('%Y%m%d_%H%M')}.json",
+                           mime="application/json", width="stretch", key="dl_historial_aprendizaje")
+        _validas = nucleo_ia.ops_validas_para_vivo(_hist)
+        _n_val = len(_validas)
+        _vivo = modelo_vivo_info()
+        if _vivo:
+            _mv = _vivo["metricas"]
+            st.success(f"🧠 Cerebro en vivo ACTIVO — entrenado con {_mv['ejemplos_entrenamiento']} operaciones reales "
+                       f"({_mv['fecha_entrenamiento']}). En operaciones que no vio al entrenar: acierto "
+                       f"{_mv['winrate_prueba_%']}% en total y {_mv['precision_filtro_0.55_%']}% en las que su "
+                       f"probabilidad fue ≥55%. Se reentrena solo cada {nucleo_ia.REENTRENAR_CADA_OPS} operaciones nuevas.")
+        else:
+            st.info(f"El cerebro en vivo se activa con {nucleo_ia.MIN_OPS_MODELO_VIVO} operaciones reales registradas "
+                    f"(cada señal se juzga con el precio de entrada y el de cierre: la app sabe si ganó o perdió, y de eso aprende). "
+                    f"Llevas {_n_val}.")
+            st.progress(min(_n_val / nucleo_ia.MIN_OPS_MODELO_VIVO, 1.0))
+        if _n_val:
+            def _tabla_vivo(clave, etiqueta):
+                grupos = {}
+                for _h in _validas:
+                    k = _h.get(clave) or "—"
+                    a, b = grupos.get(k, (0, 0))
+                    grupos[k] = (a + 1, b + (1 if _h["resultado"] == "GANADA" else 0))
+                filas = [{etiqueta: k, "ops": n, "ganadas": g,
+                          "acierto_%": round(g / n * 100, 1) if n else 0.0}
+                         for k, (n, g) in sorted(grupos.items())]
+                return pd.DataFrame(filas)
+            _ganadas = sum(1 for _h in _validas if _h["resultado"] == "GANADA")
+            st.caption(f"Operaciones reales registradas: {_n_val} · Acierto global: {round(_ganadas / _n_val * 100, 1)}% "
+                       f"(con payout 86% en IQ Option necesitas más del 53,8% para ganar dinero).")
+            _n_empates = sum(1 for _h in _hist if _h.get("resultado") == "EMPATE")
+            if _n_empates:
+                st.caption(f"↔️ Empates (el precio de cierre fue igual al de entrada; en IQ Option te devuelven el monto): "
+                           f"{_n_empates}. No cuentan como pérdida ni entran al aprendizaje del cerebro.")
+            if _n_val >= 20:
+                _espejo = round((_n_val - _ganadas) / _n_val * 100, 1)
+                st.caption(f"🔁 Señal espejo: operando TODO al revés de lo que dijo la app, el acierto habría sido {_espejo}%. "
+                           f"Si el espejo supera al derecho por mucho, hay un sesgo que corregir, no mala suerte.")
+                for _dir in ("CALL", "PUT"):
+                    _sub = [_h for _h in _validas if _h.get("señal") == _dir]
+                    if len(_sub) >= 20:
+                        _wr = sum(1 for _h in _sub if _h["resultado"] == "GANADA") / len(_sub) * 100
+                        if _wr < 40:
+                            st.warning(f"⚠️ Sesgo {_dir}: solo {_wr:.1f}% de acierto en {len(_sub)} operaciones. "
+                                       f"Esa dirección está rindiendo muy por debajo del azar; el cerebro lo tiene en cuenta al entrenar.")
+                        elif _wr >= 58:
+                            st.success(f"✅ {_dir} viene fuerte: {_wr:.1f}% de acierto en {len(_sub)} operaciones.")
+            _limpias = sum(1 for _h in _validas if _h.get("fuente_datos") in ("Twelve Data", "Binance"))
+            st.caption(f"🎯 Operaciones con etiqueta limpia (juzgadas con precio sincronizado de Twelve Data o Binance): "
+                       f"{_limpias} de {_n_val}. Al llegar a {nucleo_ia.MIN_OPS_MODELO_VIVO} limpias, el cerebro entrenará solo con esas "
+                       f"y dejará fuera las que se juzgaron con el precio retrasado de Yahoo.")
+            _n_finnhub = sum(1 for _h in _validas if _h.get("fuente_datos") == "Finnhub")
+            if _n_finnhub:
+                st.caption(f"📡 Operaciones juzgadas por Finnhub (precio en vivo sin techo diario): {_n_finnhub} de {_n_val}. "
+                           f"Su etiqueta está EN VERIFICACIÓN: contará como limpia cuando se confirme en vivo que su precio "
+                           f"va parejo con IQ Option (como se hizo con Twelve Data).")
+            _postura, _post_wr, _post_n = nucleo_ia.postura_sesion(_hist)
+            if _postura == "REDUCIR":
+                st.warning(f"🧭 Postura de la sesión: **REDUCIR** — el acierto reciente es {_post_wr}% en las últimas {_post_n} operaciones. "
+                           f"La recomendación del entrenador de exposición: opera solo señales de Nivel Alta o descansa el par un rato.")
+            elif _postura == "NEUTRA":
+                st.info(f"🧭 Postura de la sesión: **NEUTRA** — acierto reciente {_post_wr}% en las últimas {_post_n} operaciones. Sé selectivo: prioriza Nivel Alta y Media.")
+            elif _postura == "PLENA":
+                st.success(f"🧭 Postura de la sesión: **PLENA** — acierto reciente {_post_wr}% en las últimas {_post_n} operaciones. El sistema viene rindiendo; mantén la disciplina igual.")
+            _autopsia = nucleo_ia.autopsia_perdidas(_hist)
+            _n_perdidas = sum(_autopsia.values())
+            if _n_perdidas:
+                st.caption("🔬 Autopsia de pérdidas — de qué están muriendo las operaciones:")
+                if _n_perdidas >= 10:
+                    _filas_aut = [{"causa probable": c, "pérdidas": n,
+                                   "%": round(n / _n_perdidas * 100, 1)} for c, n in _autopsia.items()]
+                else:
+                    _filas_aut = [{"causa probable": c, "pérdidas": n,
+                                   "%": "muestra chica"} for c, n in _autopsia.items()]
+                st.dataframe(pd.DataFrame(_filas_aut), width="stretch", hide_index=True)
+            _lecciones = nucleo_ia.lecciones_aprendidas(_hist)
+            if _lecciones:
+                st.caption("📓 Lecciones de la experiencia — lo que la app aprendió de sus propias pérdidas. "
+                           "Ya se aplican solas a las señales nuevas (bajan el nivel en los contextos que castigan):")
+                for _l in _lecciones:
+                    st.info(f"**{_l['titulo']}**\n\n🔍 Evidencia: {_l['evidencia']}.\n\n🛠 Ajuste activo: {_l['efecto']}")
+            elif _n_perdidas >= 10:
+                st.caption("📓 Todavía sin lecciones automáticas: se activan cuando una causa de pérdida domina "
+                           "con 20+ pérdidas registradas (muestra suficiente para no aprender de ruido).")
+            _c1, _c2 = st.columns(2)
+            with _c1:
+                st.caption("Acierto por par")
+                st.dataframe(_tabla_vivo("par", "par"), width="stretch", hide_index=True)
+                st.caption("Acierto por dirección")
+                st.dataframe(_tabla_vivo("señal", "dirección"), width="stretch", hide_index=True)
+            with _c2:
+                st.caption("Acierto por nivel de señal")
+                st.dataframe(_tabla_vivo("nivel", "nivel"), width="stretch", hide_index=True)
+                st.caption("Acierto por tipo")
+                st.dataframe(_tabla_vivo("tipo", "tipo"), width="stretch", hide_index=True)
 
 # ---------------- Panel de Evolucion (v3.17) ----------------
 # La evolucion no se siente, se mide: tabla de fotos cada 50 ops y el
-# antes vs ahora con los cambios en puntos. Visible para todos (no solo
-# Admin): es el tablero que Jose pidio para no depender de Muse.
-with st.expander("📈 Panel de Evolución — antes vs ahora (v3.17)", expanded=False):
-    st.caption("Cada 50 operaciones válidas la app guarda sola una foto de los indicadores "
-               "(acierto, espejo, precisión del cerebro en datos no vistos, etiquetas limpias, "
-               "juzgadas por Finnhub y postura). La primera foto es 'hoy'; a partir de ahí el "
-               "'antes vs ahora' se construye solo. Metas: precisión no visto 55% · acierto "
-               "limpio 53,8% (IQ Option) / 51,3% (Exnova).")
-    _fotos_ev = leer_json(ARCHIVO_EVOLUCION, [])
-    if st.button("📸 Guardar foto ahora", width="stretch", key="evo_foto_ahora"):
-        _f_ahora = foto_evolucion_actual()
-        if not _f_ahora or _f_ahora["ops"] < 50:
-            st.info("Todavía no hay 50 operaciones válidas para la primera foto.")
-        elif _fotos_ev and _fotos_ev[-1].get("ops", 0) // 50 >= _f_ahora["ops"] // 50:
-            st.info("Ya hay una foto de este tramo de 50 operaciones; la próxima se guarda sola al cruzar el siguiente múltiplo de 50.")
-        else:
-            _fotos_ev.append(_f_ahora)
-            guardar_json_atomico(ARCHIVO_EVOLUCION, _fotos_ev)
-            st.success(f"Foto guardada: {_f_ahora['ops']} operaciones, acierto {_f_ahora['acierto_%']}%.")
+# antes vs ahora con los cambios en puntos. Desde v3.17.3 solo lo ve el
+# Admin Master: los clientes no ven conteos ni rendimiento.
+# v3.17.3: Panel de Evolucion solo lo ve el Admin Master; los clientes no ven conteos ni rendimiento.
+if st.session_state.usuario_actual.startswith("👑"):
+    with st.expander("📈 Panel de Evolución — antes vs ahora (v3.17)", expanded=False):
+        st.caption("Cada 50 operaciones válidas la app guarda sola una foto de los indicadores "
+                   "(acierto, espejo, precisión del cerebro en datos no vistos, etiquetas limpias, "
+                   "juzgadas por Finnhub y postura). La primera foto es 'hoy'; a partir de ahí el "
+                   "'antes vs ahora' se construye solo. Metas: precisión no visto 55% · acierto "
+                   "limpio 53,8% (IQ Option) / 51,3% (Exnova).")
         _fotos_ev = leer_json(ARCHIVO_EVOLUCION, [])
-    if _fotos_ev:
-        _filas_ev = [{"fecha": f.get("fecha", "—"), "operaciones": f.get("ops", "—"),
-                      "acierto %": f.get("acierto_%", "—"), "espejo %": f.get("espejo_%", "—"),
-                      "precisión cerebro (no visto) %": f.get("precision_no_visto_%", "—"),
-                      "limpias": f.get("limpias", "—"), "Finnhub": f.get("finnhub", "—"),
-                      "postura": f.get("postura", "—")} for f in _fotos_ev]
-        st.dataframe(pd.DataFrame(_filas_ev), width="stretch", hide_index=True)
-        if len(_fotos_ev) >= 2:
-            _prim, _ult = _fotos_ev[0], _fotos_ev[-1]
-            def _cambio(clave, bueno_subir=True, unidad="%"):
-                _a, _b = _prim.get(clave), _ult.get(clave)
-                if _a is None or _b is None:
-                    return "sin dato"
-                _d = round(_b - _a, 1)
-                _signo = "+" if _d > 0 else ""
-                _bien = "✅" if (_d > 0) == bueno_subir and _d != 0 else ("⚠️" if _d != 0 else "＝")
-                return f"{_a}{unidad} → {_b}{unidad} ({_signo}{_d} pts) {_bien}"
-            st.caption(f"📊 Antes vs ahora — de {_prim.get('fecha')} ({_prim.get('ops')} ops) a {_ult.get('fecha')} ({_ult.get('ops')} ops):")
-            st.caption(f"· Acierto: {_cambio('acierto_%', True)}")
-            st.caption(f"· Espejo (bajar es bueno): {_cambio('espejo_%', False)}")
-            st.caption(f"· Precisión del cerebro en datos no vistos: {_cambio('precision_no_visto_%', True)}")
-            st.caption(f"· Etiquetas limpias: {_cambio('limpias', True, '')}")
-            _sube_acierto = (_ult.get("acierto_%") or 0) > (_prim.get("acierto_%") or 0)
-            _sube_cerebro = (_ult.get("precision_no_visto_%") is not None and _prim.get("precision_no_visto_%") is not None
-                             and _ult["precision_no_visto_%"] > _prim["precision_no_visto_%"])
-            if _sube_acierto and _sube_cerebro:
-                st.success("✅ Evolucionando: suben a la vez el acierto y la precisión del cerebro en datos que nunca vio. Eso es aprendizaje real, no suerte de una sesión.")
-            elif _sube_acierto or _sube_cerebro:
-                st.info("🟡 A medias: uno de los dos sube y el otro no. Mira cuál se mueve cuando lleguen 50 operaciones más.")
+        if st.button("📸 Guardar foto ahora", width="stretch", key="evo_foto_ahora"):
+            _f_ahora = foto_evolucion_actual()
+            if not _f_ahora or _f_ahora["ops"] < 50:
+                st.info("Todavía no hay 50 operaciones válidas para la primera foto.")
+            elif _fotos_ev and _fotos_ev[-1].get("ops", 0) // 50 >= _f_ahora["ops"] // 50:
+                st.info("Ya hay una foto de este tramo de 50 operaciones; la próxima se guarda sola al cruzar el siguiente múltiplo de 50.")
             else:
-                st.warning("⚠️ Estancada por ahora: ni el acierto ni la precisión del cerebro suben entre fotos. Si las limpias tampoco crecen, el freno es la falta de datos limpios, no la estrategia.")
+                _fotos_ev.append(_f_ahora)
+                guardar_json_atomico(ARCHIVO_EVOLUCION, _fotos_ev)
+                st.success(f"Foto guardada: {_f_ahora['ops']} operaciones, acierto {_f_ahora['acierto_%']}%.")
+            _fotos_ev = leer_json(ARCHIVO_EVOLUCION, [])
+        if _fotos_ev:
+            _filas_ev = [{"fecha": f.get("fecha", "—"), "operaciones": f.get("ops", "—"),
+                          "acierto %": f.get("acierto_%", "—"), "espejo %": f.get("espejo_%", "—"),
+                          "precisión cerebro (no visto) %": f.get("precision_no_visto_%", "—"),
+                          "limpias": f.get("limpias", "—"), "Finnhub": f.get("finnhub", "—"),
+                          "postura": f.get("postura", "—")} for f in _fotos_ev]
+            st.dataframe(pd.DataFrame(_filas_ev), width="stretch", hide_index=True)
+            if len(_fotos_ev) >= 2:
+                _prim, _ult = _fotos_ev[0], _fotos_ev[-1]
+                def _cambio(clave, bueno_subir=True, unidad="%"):
+                    _a, _b = _prim.get(clave), _ult.get(clave)
+                    if _a is None or _b is None:
+                        return "sin dato"
+                    _d = round(_b - _a, 1)
+                    _signo = "+" if _d > 0 else ""
+                    _bien = "✅" if (_d > 0) == bueno_subir and _d != 0 else ("⚠️" if _d != 0 else "＝")
+                    return f"{_a}{unidad} → {_b}{unidad} ({_signo}{_d} pts) {_bien}"
+                st.caption(f"📊 Antes vs ahora — de {_prim.get('fecha')} ({_prim.get('ops')} ops) a {_ult.get('fecha')} ({_ult.get('ops')} ops):")
+                st.caption(f"· Acierto: {_cambio('acierto_%', True)}")
+                st.caption(f"· Espejo (bajar es bueno): {_cambio('espejo_%', False)}")
+                st.caption(f"· Precisión del cerebro en datos no vistos: {_cambio('precision_no_visto_%', True)}")
+                st.caption(f"· Etiquetas limpias: {_cambio('limpias', True, '')}")
+                _sube_acierto = (_ult.get("acierto_%") or 0) > (_prim.get("acierto_%") or 0)
+                _sube_cerebro = (_ult.get("precision_no_visto_%") is not None and _prim.get("precision_no_visto_%") is not None
+                                 and _ult["precision_no_visto_%"] > _prim["precision_no_visto_%"])
+                if _sube_acierto and _sube_cerebro:
+                    st.success("✅ Evolucionando: suben a la vez el acierto y la precisión del cerebro en datos que nunca vio. Eso es aprendizaje real, no suerte de una sesión.")
+                elif _sube_acierto or _sube_cerebro:
+                    st.info("🟡 A medias: uno de los dos sube y el otro no. Mira cuál se mueve cuando lleguen 50 operaciones más.")
+                else:
+                    st.warning("⚠️ Estancada por ahora: ni el acierto ni la precisión del cerebro suben entre fotos. Si las limpias tampoco crecen, el freno es la falta de datos limpios, no la estrategia.")
+            else:
+                st.caption("Con una sola foto todavía no hay 'antes vs ahora': la comparación aparece sola cuando se guarde la segunda foto (al cruzar el siguiente múltiplo de 50 operaciones).")
         else:
-            st.caption("Con una sola foto todavía no hay 'antes vs ahora': la comparación aparece sola cuando se guarde la segunda foto (al cruzar el siguiente múltiplo de 50 operaciones).")
-    else:
-        _f_ahora = foto_evolucion_actual()
-        if _f_ahora and _f_ahora["ops"] >= 50:
-            st.caption(f"Ya llevas {_f_ahora['ops']} operaciones válidas y aún no hay fotos: pulsa 'Guardar foto ahora' para tomar la primera, y las siguientes se guardan solas cada 50.")
-        else:
-            st.caption("Aún no hay fotos: la primera se guarda sola al llegar a 50 operaciones válidas.")
+            _f_ahora = foto_evolucion_actual()
+            if _f_ahora and _f_ahora["ops"] >= 50:
+                st.caption(f"Ya llevas {_f_ahora['ops']} operaciones válidas y aún no hay fotos: pulsa 'Guardar foto ahora' para tomar la primera, y las siguientes se guardan solas cada 50.")
+            else:
+                st.caption("Aún no hay fotos: la primera se guarda sola al llegar a 50 operaciones válidas.")
 
 # ---------------- Catalogador ZT (v3.14) ----------------
 # La idea del panel de DAM Trader en version honesta: efectividad MEDIDA
 # por par x direccion (con las perdidas visibles), filtros de etiquetas
 # limpias y "solo con tendencia", y estados con muestra minima.
-with st.expander("📚 Catalogador ZT — qué está funcionando, medido", expanded=False):
-    _nombres_par = {v["codigo"]: k for k, v in PARES.items()}
-    _cf1, _cf2 = st.columns(2)
-    with _cf1:
-        _cat_limpias = st.checkbox("🧼 Solo etiquetas limpias (Twelve Data/Binance)", value=True, key="cat_solo_limpias")
-    with _cf2:
-        _cat_tend = st.checkbox("📈 Solo con tendencia", value=False, key="cat_solo_tendencia")
-    _cat = nucleo_ia.catalogo(st.session_state.hist_cache, solo_limpias=_cat_limpias, solo_tendencia=_cat_tend)
-    if _cat["total"] < 10:
-        st.caption(f"Muestra insuficiente con estos filtros: {_cat['total']} operaciones. El catálogo se llena solo, operando.")
-    else:
-        _m, _p = _cat["mejor"], _cat["peor"]
-        if _m:
-            _mn = _nombres_par.get(_m["par"], _m["par"])
-            if _m["estado"].startswith("🟢"):
-                st.success(f"🏆 Tu mejor ficha medida: **{_mn} {_m['direccion']}** — {_m['acierto']}% en {_m['ops']} operaciones. Supera el 53,8% de equilibrio.")
-            else:
-                st.info(f"🏆 La ficha menos mala por ahora: **{_mn} {_m['direccion']}** — {_m['acierto']}% en {_m['ops']} operaciones. Ninguna supera aún el 53,8% con muestra suficiente.")
-            if _mn in PARES and st.button(f"🎯 Operar {_mn} ahora", key="cat_operar_mejor", width="stretch"):
-                st.session_state.par_sel = _mn
-                reiniciar_ciclo()
-                st.rerun()
-        if _p and _p["estado"].startswith("🔴"):
-            st.warning(f"🔴 Para descansar: **{_nombres_par.get(_p['par'], _p['par'])} {_p['direccion']}** — {_p['acierto']}% en {_p['ops']} operaciones.")
-        _filas_cat = [{"Par": _nombres_par.get(f["par"], f["par"]), "Dirección": f["direccion"], "Ops": f["ops"],
-                       "W": f["ganadas"], "L": f["perdidas"], "Acierto %": f["acierto"],
-                       "Limpias": f["limpias"], "Estado": f["estado"]} for f in _cat["filas"]]
-        st.dataframe(pd.DataFrame(_filas_cat), width="stretch", hide_index=True)
-        if _cat["regimenes"]:
-            st.caption("Acierto por régimen de mercado (con los mismos filtros):")
-            st.dataframe(pd.DataFrame([{"Régimen": r["regimen"], "Ops": r["ops"], "Acierto %": r["acierto"]} for r in _cat["regimenes"]]),
-                         width="stretch", hide_index=True)
-        st.caption("🟢 OPERABLE = ≥20 ops y acierto ≥53,8% · 🔴 DESCANSAR = ≥15 ops y acierto <45% · "
-                   "🟡 EN OBSERVACIÓN = muestra corta o acierto intermedio · ⚪ SIN MUESTRA = <10 ops (no concluir).")
+# v3.17.3: Catalogador ZT solo lo ve el Admin Master; los clientes no ven conteos ni rendimiento.
+if st.session_state.usuario_actual.startswith("👑"):
+    with st.expander("📚 Catalogador ZT — qué está funcionando, medido", expanded=False):
+        _nombres_par = {v["codigo"]: k for k, v in PARES.items()}
+        _cf1, _cf2 = st.columns(2)
+        with _cf1:
+            _cat_limpias = st.checkbox("🧼 Solo etiquetas limpias (Twelve Data/Binance)", value=True, key="cat_solo_limpias")
+        with _cf2:
+            _cat_tend = st.checkbox("📈 Solo con tendencia", value=False, key="cat_solo_tendencia")
+        _cat = nucleo_ia.catalogo(st.session_state.hist_cache, solo_limpias=_cat_limpias, solo_tendencia=_cat_tend)
+        if _cat["total"] < 10:
+            st.caption(f"Muestra insuficiente con estos filtros: {_cat['total']} operaciones. El catálogo se llena solo, operando.")
+        else:
+            _m, _p = _cat["mejor"], _cat["peor"]
+            if _m:
+                _mn = _nombres_par.get(_m["par"], _m["par"])
+                if _m["estado"].startswith("🟢"):
+                    st.success(f"🏆 Tu mejor ficha medida: **{_mn} {_m['direccion']}** — {_m['acierto']}% en {_m['ops']} operaciones. Supera el 53,8% de equilibrio.")
+                else:
+                    st.info(f"🏆 La ficha menos mala por ahora: **{_mn} {_m['direccion']}** — {_m['acierto']}% en {_m['ops']} operaciones. Ninguna supera aún el 53,8% con muestra suficiente.")
+                if _mn in PARES and st.button(f"🎯 Operar {_mn} ahora", key="cat_operar_mejor", width="stretch"):
+                    st.session_state.par_sel = _mn
+                    reiniciar_ciclo()
+                    st.rerun()
+            if _p and _p["estado"].startswith("🔴"):
+                st.warning(f"🔴 Para descansar: **{_nombres_par.get(_p['par'], _p['par'])} {_p['direccion']}** — {_p['acierto']}% en {_p['ops']} operaciones.")
+            _filas_cat = [{"Par": _nombres_par.get(f["par"], f["par"]), "Dirección": f["direccion"], "Ops": f["ops"],
+                           "W": f["ganadas"], "L": f["perdidas"], "Acierto %": f["acierto"],
+                           "Limpias": f["limpias"], "Estado": f["estado"]} for f in _cat["filas"]]
+            st.dataframe(pd.DataFrame(_filas_cat), width="stretch", hide_index=True)
+            if _cat["regimenes"]:
+                st.caption("Acierto por régimen de mercado (con los mismos filtros):")
+                st.dataframe(pd.DataFrame([{"Régimen": r["regimen"], "Ops": r["ops"], "Acierto %": r["acierto"]} for r in _cat["regimenes"]]),
+                             width="stretch", hide_index=True)
+            st.caption("🟢 OPERABLE = ≥20 ops y acierto ≥53,8% · 🔴 DESCANSAR = ≥15 ops y acierto <45% · "
+                       "🟡 EN OBSERVACIÓN = muestra corta o acierto intermedio · ⚪ SIN MUESTRA = <10 ops (no concluir).")
 
 # ---------------- Helpers de la zona dinamica ----------------
 
@@ -1671,19 +1681,23 @@ def zona_dinamica(codigo_f, tipo_f):
     if minuto_es_par and st.session_state.estado == 'operando' and not st.session_state.resultado_guardado:
         cerrar_operacion(codigo_f, tipo_f)
 
-    # Estadisticas + reloj
+    # Estadisticas + reloj (v3.17.3: marcador y estadisticas solo los ve
+    # el Admin Master; los clientes ven solo el indicador EN VIVO).
     pesos = st.session_state.pesos
-    _hw = sum(1 for _h in st.session_state.hist_cache if _h.get('resultado') == 'GANADA')
-    _hl = sum(1 for _h in st.session_state.hist_cache if _h.get('resultado') == 'PERDIDA')
-    st.markdown(f'<div class="brand-bar"><span class="pill-record">🔥 {_hw}W - {_hl}L</span><span class="pill-live">● EN VIVO</span></div>', unsafe_allow_html=True)
-    st.markdown(f"""
-    <div class="stats-row">
-        <div class="stat-box"><strong>Winrate</strong><span>{round(pesos['winrate'], 1)}%</span></div>
-        <div class="stat-box"><strong>Ops</strong><span>{pesos['total_ops']}</span></div>
-        <div class="stat-box"><strong>Win</strong><span>{pesos['total_ganadas']}</span></div>
-        <div class="stat-box"><strong>ML</strong><span style="font-size:11px;">{len(st.session_state.hist_cache)} ops</span></div>
-    </div>
-    """, unsafe_allow_html=True)
+    if st.session_state.usuario_actual.startswith("👑"):
+        _hw = sum(1 for _h in st.session_state.hist_cache if _h.get('resultado') == 'GANADA')
+        _hl = sum(1 for _h in st.session_state.hist_cache if _h.get('resultado') == 'PERDIDA')
+        st.markdown(f'<div class="brand-bar"><span class="pill-record">🔥 {_hw}W - {_hl}L</span><span class="pill-live">● EN VIVO</span></div>', unsafe_allow_html=True)
+        st.markdown(f"""
+        <div class="stats-row">
+            <div class="stat-box"><strong>Winrate</strong><span>{round(pesos['winrate'], 1)}%</span></div>
+            <div class="stat-box"><strong>Ops</strong><span>{pesos['total_ops']}</span></div>
+            <div class="stat-box"><strong>Win</strong><span>{pesos['total_ganadas']}</span></div>
+            <div class="stat-box"><strong>ML</strong><span style="font-size:11px;">{len(st.session_state.hist_cache)} ops</span></div>
+        </div>
+        """, unsafe_allow_html=True)
+    else:
+        st.markdown('<div class="brand-bar"><span class="pill-live">● EN VIVO</span></div>', unsafe_allow_html=True)
     st.markdown(f'<div class="hora-box"><span>🕐 {hora_actual}</span></div>', unsafe_allow_html=True)
 
     contenedor = ContenedorLimpio(st.empty())
