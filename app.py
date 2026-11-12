@@ -1078,7 +1078,7 @@ st.markdown(CSS, unsafe_allow_html=True)
 # ---------------- Parte estatica (ya NO se recarga cada segundo) ----------------
 
 st.markdown('<div class="main-container">', unsafe_allow_html=True)
-st.markdown(f'<div class="header"><span class="badge-version">v3.17.1</span><h1>⚡ ZT TRADERS PRO</h1><p>User: {st.session_state.usuario_actual} · IA AUTO-APRENDIZAJE</p></div>', unsafe_allow_html=True)
+st.markdown(f'<div class="header"><span class="badge-version">v3.17.2</span><h1>⚡ ZT TRADERS PRO</h1><p>User: {st.session_state.usuario_actual} · IA AUTO-APRENDIZAJE</p></div>', unsafe_allow_html=True)
 if st.query_params.get("zt_token"):
     st.caption("✅ Este dispositivo está activado: guarda ESTA página en Favoritos o en la pantalla de inicio "
                "(con la dirección completa, tal como está arriba) y la próxima vez entrarás directo, sin escribir la clave.")
@@ -1269,7 +1269,7 @@ if st.session_state.usuario_actual.startswith("👑"):
         st.download_button("⬇️ Descargar historial.json (operaciones reales)",
                            data=json.dumps(_hist_respaldo, indent=2, ensure_ascii=False),
                            file_name=f"historial_{ahora_local().strftime('%Y%m%d_%H%M')}.json",
-                           mime="application/json", width="stretch")
+                           mime="application/json", width="stretch", key="dl_historial_respaldo")
         st.download_button("⬇️ Descargar patrones.json (contadores)",
                            data=json.dumps(st.session_state.pesos, indent=2, ensure_ascii=False),
                            file_name=f"patrones_{ahora_local().strftime('%Y%m%d_%H%M')}.json",
@@ -1367,10 +1367,12 @@ with st.expander("📈 Aprendizaje en vivo — así va aprendiendo la app"):
     # v3.17.1: la descarga del historial solo existia en el Respaldo, que
     # solo se muestra con sesion de Admin Master; con sesion de licencia
     # no se veia. Ahora tambien esta aqui, visible para todos.
+    # v3.17.2: key distinta obligatoria — sin ella, en sesion Admin este
+    # boton chocaba con el identico del Respaldo (StreamlitDuplicateElementId).
     st.download_button("⬇️ Descargar historial.json (operaciones reales)",
                        data=json.dumps(_hist, indent=2, ensure_ascii=False),
                        file_name=f"historial_{ahora_local().strftime('%Y%m%d_%H%M')}.json",
-                       mime="application/json", width="stretch")
+                       mime="application/json", width="stretch", key="dl_historial_aprendizaje")
     _validas = nucleo_ia.ops_validas_para_vivo(_hist)
     _n_val = len(_validas)
     _vivo = modelo_vivo_info()
