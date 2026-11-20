@@ -150,6 +150,21 @@
 #     reentrenamiento como pendiente y entrenar_vivo_pendiente() lo corre
 #     en el minuto par (fase 1), fuera de la ventana de expiracion. El
 #     juicio y el registro no cambian: solo se mueve el entrenamiento.
+# --- v3.19: PANEL EDGE/KELLY (pedido de Jose el 2026-11-20) ---
+# 37) Idea destilada de Freqtrade, probada el 2026-11-10 con las 5 fichas
+#     reales de entonces: Kelly 0,00% en todas por EV negativo; quedo EN
+#     COLA hasta que la primera ficha del Catalogador pasara a OPERABLE.
+#     El 2026-11-20 las dos fichas de EUR/USD estan OPERABLES en limpio
+#     (CALL 62,5% en 72 decisivas, PUT 55,2% en 58) y Jose pidio
+#     construirlo. Panel nuevo, solo Admin Master, debajo del Catalogador:
+#     por cada ficha (par x direccion, SOLO etiquetas limpias) muestra el
+#     acierto medido, el acierto encogido hacia el global limpio (k=20,
+#     igual que la memoria de patrones), el EV por $1 y la sugerencia de
+#     apuesta: 1/4 de Kelly con tope del 5% del bankroll por operacion.
+#     Sin ventaja medida la sugerencia es 0. El bankroll y la plataforma
+#     (IQ Option 86% / Exnova 95%) se eligen en el panel. SOLO MUESTRA:
+#     la app no apuesta ni ejecuta nada; Jose decide el monto. No toca
+#     senales, niveles, modelo ni aprendizaje.
 # ============================================================
 import streamlit as st
 import streamlit.components.v1 as components
@@ -1164,7 +1179,7 @@ st.markdown(CSS, unsafe_allow_html=True)
 # ---------------- Parte estatica (ya NO se recarga cada segundo) ----------------
 
 st.markdown('<div class="main-container">', unsafe_allow_html=True)
-st.markdown(f'<div class="header"><span class="badge-version">v3.18.2</span><h1>⚡ ZT TRADERS PRO</h1><p>User: {st.session_state.usuario_actual} · IA AUTO-APRENDIZAJE</p></div>', unsafe_allow_html=True)
+st.markdown(f'<div class="header"><span class="badge-version">v3.19</span><h1>⚡ ZT TRADERS PRO</h1><p>User: {st.session_state.usuario_actual} · IA AUTO-APRENDIZAJE</p></div>', unsafe_allow_html=True)
 if st.query_params.get("zt_token"):
     st.caption("✅ Este dispositivo está activado: guarda ESTA página en Favoritos o en la pantalla de inicio "
                "(con la dirección completa, tal como está arriba) y la próxima vez entrarás directo, sin escribir la clave.")
@@ -1727,6 +1742,60 @@ if st.session_state.usuario_actual.startswith("👑"):
                              width="stretch", hide_index=True)
             st.caption("🟢 OPERABLE = ≥20 ops y acierto ≥53,8% · 🔴 DESCANSAR = ≥15 ops y acierto <45% · "
                        "🟡 EN OBSERVACIÓN = muestra corta o acierto intermedio · ⚪ SIN MUESTRA = <10 ops (no concluir).")
+
+# ---------------- Panel Edge/Kelly (v3.19) ----------------
+# Gestion de apuesta tipo Edge/Kelly sobre las fichas REALES del Catalogador
+# (idea destilada de Freqtrade, probada el 2026-11-10: Kelly 0,00% en las
+# 5 fichas de entonces por EV negativo; quedo EN COLA hasta que la primera
+# ficha pasara a OPERABLE. El 2026-11-20 las dos fichas de EUR/USD estan
+# OPERABLES en limpio y Jose pidio construirlo.)
+# Prudencia: SOLO etiquetas limpias; acierto encogido hacia el global
+# limpio (k=20, igual que la memoria de patrones); 1/4 de Kelly; tope 5%
+# del bankroll por operacion; sin ventaja medida -> 0 (no apostar).
+# Solo MUESTRA: la app no apuesta ni ejecuta nada; Jose decide el monto.
+# Solo lo ve el Admin Master, como el Catalogador (v3.17.3).
+if st.session_state.usuario_actual.startswith("👑"):
+    with st.expander("📐 Tamaño de apuesta — Kelly (ventaja medida)", expanded=False):
+        st.caption("Cuánto arriesgar por operación, calculado de TU acierto medido — no de una corazonada. "
+                   "Solo etiquetas limpias (Twelve Data/Binance). La app nunca apuesta por ti: tú decides el monto.")
+        _k1, _k2 = st.columns(2)
+        with _k1:
+            _kelly_bank = st.number_input("💰 Tu bankroll (USD)", min_value=10.0, value=100.0, step=10.0, key="kelly_bankroll")
+        with _k2:
+            _kelly_plat = st.selectbox("Plataforma (payout)", ["IQ Option — 86%", "Exnova — 95%"], key="kelly_plataforma")
+        _kelly_b = 0.86 if "86%" in _kelly_plat else 0.95
+        _kelly_be = 100.0 / (1.0 + _kelly_b)
+        _cat_k = nucleo_ia.catalogo(st.session_state.hist_cache, solo_limpias=True, solo_tendencia=False)
+        _tot_k = sum(f["ops"] for f in _cat_k["filas"])
+        _gan_k = sum(f["ganadas"] for f in _cat_k["filas"])
+        if _tot_k < 20:
+            st.caption(f"Muestra insuficiente con etiquetas limpias: {_tot_k} operaciones decisivas. El panel se activa solo al llegar a 20.")
+        else:
+            _p_glob = _gan_k / _tot_k
+            _nombres_k = {v["codigo"]: k for k, v in PARES.items()}
+            _filas_k = []
+            for f in _cat_k["filas"]:
+                _n, _w = f["ops"], f["ganadas"]
+                _p_aj = (_w + 20 * _p_glob) / (_n + 20)
+                _ev = _p_aj * (1 + _kelly_b) - 1
+                if f["estado"].startswith("🟢") and _ev > 0:
+                    _f_kelly = (_p_aj * (1 + _kelly_b) - 1) / _kelly_b
+                    _f_sug = min(_f_kelly / 4.0, 0.05)
+                    _usd = _kelly_bank * _f_sug
+                    _sug = f"${_usd:,.2f} ({100 * _f_sug:.1f}%)"
+                else:
+                    _sug = "— sin ventaja —"
+                _filas_k.append({"Par": _nombres_k.get(f["par"], f["par"]), "Dirección": f["direccion"],
+                                 "Ops": _n, "Acierto %": f["acierto"],
+                                 "Acierto ajust. %": round(100 * _p_aj, 1),
+                                 "EV por $1": f"${_ev:+.2f}", "Sugerencia": _sug,
+                                 "Estado": f["estado"]})
+            st.dataframe(pd.DataFrame(_filas_k), width="stretch", hide_index=True)
+            st.caption(f"Equilibrio en {_kelly_plat.split(' — ')[0]}: {_kelly_be:.1f}% · Acierto global limpio: {100 * _p_glob:.1f}% en {_tot_k} decisivas. "
+                       "Kelly = ¼ del Kelly completo, con el acierto encogido hacia el global (k=20) y tope del 5% del bankroll por operación. "
+                       "Sin ventaja medida la sugerencia es 0: no apostar esa ficha.")
+            st.caption("⚠️ Una muestra de una sola noche puede ser ruido: si el acierto limpio cae bajo el equilibrio, la sugerencia cae a 0 sola. "
+                       "Re-mide con más operaciones antes de subir el monto.")
 
 # ---------------- Helpers de la zona dinamica ----------------
 
